@@ -1,0 +1,48 @@
+# Identity (id, class, make, model, location, tags, description) lives in DEVICE.md frontmatter.
+device:
+  notes: >
+    Anything an agent must know that is not in the operating procedure.
+
+physical:
+  mass_kg: 0
+  notes: Hot, sharp, heavy or fragile parts; keep-out zones.
+
+signals:
+  - name: example_temperature
+    type: number
+    unit: degC
+    notes: Where it is measured.
+  - name: door_closed
+    type: boolean
+    notes: Interlock source.
+
+settings:
+  - name: example_setpoint
+    type: number
+    unit: degC
+    limits: {min: 0, max: 100}
+    approval: auto
+    notes: What happens below min and above max.
+
+actions:
+  - name: example_run
+    duration: long
+    approval: auto
+    interlocks: [door_closed]
+    params:
+      minutes: number
+    limits:
+      minutes: [1, 600]
+    examples:
+      - {minutes: 30}
+    notes: What it does and what the owner watches for.
+  - name: open_door
+    duration: short
+    approval: confirm
+    notes: Why a human must be present.
+
+safety:
+  estop: true
+  interlocks: [door_closed]
+  watchdog_s: 10
+  notes: What e-stop physically does.

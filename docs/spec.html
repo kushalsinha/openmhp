@@ -1,0 +1,630 @@
+<title>Open Model Hardware Protocol</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F6F7F5; --bg2:#EBEEEC; --panel:#E7ECE9; --line:#CFD7D2; --ink:#171F23; --ink2:#3C4A50; --mute:#66757B;
+  --acc:#0B6B5C; --acc-bg:#DDEEE8; --amber:#B8690F; --amber-bg:#F7E9D6; --red:#A8362E; --code:#1B2428; --code-ink:#DCE5E0;
+  --kw:#7FD1BC; --str:#E7C07B; --num:#F0A56B;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121618; --bg2:#171D20; --panel:#1B2326; --line:#2B3538; --ink:#E4E9E6; --ink2:#B9C4BF; --mute:#8D9B96;
+    --acc:#46B79C; --acc-bg:#16302B; --amber:#E39A3B; --amber-bg:#33261A; --red:#E0776F; --code:#0D1113; --code-ink:#D5DED9;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121618; --bg2:#171D20; --panel:#1B2326; --line:#2B3538; --ink:#E4E9E6; --ink2:#B9C4BF; --mute:#8D9B96;
+  --acc:#46B79C; --acc-bg:#16302B; --amber:#E39A3B; --amber-bg:#33261A; --red:#E0776F; --code:#0D1113; --code-ink:#D5DED9;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Source Serif 4",Georgia,"Times New Roman",serif;font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4,.sans{font-family:"Instrument Sans","Helvetica Neue",Arial,sans-serif}
+h1,h2,h3{text-wrap:balance;line-height:1.15;letter-spacing:-0.01em}
+h1{font-size:clamp(34px,5vw,54px);font-weight:600;margin:0 0 10px}
+h2{font-size:26px;font-weight:600;margin:0 0 14px;padding-top:56px;border-top:1px solid var(--line)}
+h2 .n{color:var(--acc);font-weight:500;margin-right:10px;font-variant-numeric:tabular-nums}
+h3{font-size:18px;font-weight:600;margin:32px 0 8px}
+p{margin:0 0 16px;max-width:68ch}
+a{color:var(--acc);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--acc) 40%,transparent)}
+a:hover,a:focus-visible{border-bottom-color:var(--acc)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+code,pre,kbd{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+code{font-size:0.85em;background:var(--bg2);border:1px solid var(--line);border-radius:3px;padding:1px 5px}
+pre{background:var(--code);color:var(--code-ink);font-size:13px;line-height:1.55;padding:18px 20px;border-radius:6px;overflow-x:auto;margin:0 0 22px}
+pre code{background:none;border:0;padding:0;font-size:inherit;color:inherit}
+pre .c{color:#7E8F88}pre .k{color:var(--kw)}pre .s{color:var(--str)}pre .n{color:var(--num)}pre .arrow{color:#9CB7AE}
+.eyebrow{font-family:"Instrument Sans",sans-serif;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);font-weight:600;margin:0 0 14px}
+.wrap{display:grid;grid-template-columns:1fr;gap:0;max-width:1180px;margin:0 auto;padding:0 22px 96px}
+@media(min-width:1000px){.wrap{grid-template-columns:230px minmax(0,1fr);gap:56px}}
+nav.toc{display:none}
+@media(min-width:1000px){
+  nav.toc{display:block;position:sticky;top:0;align-self:start;padding:42px 0 40px;max-height:100vh;overflow:auto}
+}
+nav.toc .eyebrow{margin-bottom:10px}
+nav.toc ol{list-style:none;margin:0;padding:0;font-family:"Instrument Sans",sans-serif;font-size:13.5px;line-height:1.45}
+nav.toc li{margin:0;padding:0}
+nav.toc a{display:flex;gap:10px;padding:5px 0;color:var(--ink2);border:0}
+nav.toc a span.n{color:var(--mute);font-variant-numeric:tabular-nums;min-width:18px}
+nav.toc a:hover{color:var(--acc)}
+main{min-width:0;padding-top:42px}
+header.hero{padding:0 0 30px;border-bottom:1px solid var(--line);margin-bottom:8px}
+header .lede{font-size:20px;line-height:1.5;color:var(--ink2);max-width:60ch;margin:14px 0 22px}
+.meta{display:flex;flex-wrap:wrap;gap:8px 22px;font-family:"Instrument Sans",sans-serif;font-size:13px;color:var(--mute)}
+.meta b{color:var(--ink2);font-weight:500}
+.rules{display:grid;gap:14px;margin:8px 0 26px;padding:0;list-style:none;counter-reset:r}
+.rules li{counter-increment:r;display:grid;grid-template-columns:34px 1fr;gap:12px;padding:14px 16px;background:var(--bg2);border-radius:6px}
+.rules li::before{content:counter(r);font-family:"Instrument Sans",sans-serif;font-weight:600;color:var(--acc);font-size:20px;line-height:1.2}
+.rules b{font-family:"Instrument Sans",sans-serif;font-weight:600;display:block;margin-bottom:3px}
+.rules p{margin:0;font-size:15.5px;color:var(--ink2)}
+table{border-collapse:collapse;width:100%;font-size:15px;margin:0 0 24px;font-family:"Instrument Sans",sans-serif}
+.tablewrap{overflow-x:auto;margin:0 0 24px}
+.tablewrap table{margin:0;min-width:520px}
+th{text-align:left;font-weight:600;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);padding:8px 12px 8px 0;border-bottom:1px solid var(--ink2)}
+td{padding:9px 12px 9px 0;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45}
+td code{white-space:nowrap}
+td:first-child{white-space:nowrap}
+.num{font-variant-numeric:tabular-nums}
+.callout{border-left:3px solid var(--acc);background:var(--acc-bg);padding:14px 18px;border-radius:0 6px 6px 0;margin:0 0 22px;max-width:74ch}
+.callout.warn{border-left-color:var(--amber);background:var(--amber-bg)}
+.callout p{margin:0;font-size:15.5px}
+.callout p+p{margin-top:8px}
+.gates{list-style:none;margin:0 0 24px;padding:0;display:grid;gap:0;counter-reset:g;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.gates li{counter-increment:g;display:grid;grid-template-columns:44px 150px 1fr;align-items:baseline;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line);font-size:15px;background:var(--bg2)}
+.gates li:last-child{border-bottom:0}
+.gates li::before{content:counter(g);font-family:"Instrument Sans",sans-serif;font-weight:600;color:var(--acc);font-size:18px}
+.gates li b{font-family:"Instrument Sans",sans-serif;font-weight:600}
+.gates li code{color:var(--red);background:transparent;border:0;padding:0}
+.states{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 22px;font-family:"Instrument Sans",sans-serif;font-size:13px}
+.states span{padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--ink2)}
+.states span.idle{border-color:var(--acc);color:var(--acc)}
+.states span.estop{border-color:var(--red);color:var(--red)}
+.states span.fault{border-color:var(--amber);color:var(--amber)}
+.surfaces{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));margin:0 0 26px}
+.surfaces div{background:var(--bg2);border-radius:6px;padding:16px 18px}
+.surfaces h4{margin:0 0 6px;font-size:15px;font-weight:600}
+.surfaces p{margin:0;font-size:14.5px;color:var(--ink2)}
+figure{margin:0 0 24px}
+figure svg{width:100%;height:auto;display:block;background:var(--bg2);border-radius:6px}
+figcaption{font-family:"Instrument Sans",sans-serif;font-size:13px;color:var(--mute);margin-top:8px}
+.classes{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 22px}
+.classes code{background:var(--bg2)}
+footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);font-family:"Instrument Sans",sans-serif;font-size:13.5px;color:var(--mute);max-width:68ch}
+@media (prefers-reduced-motion: no-preference){html{scroll-behavior:smooth}}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p class="eyebrow">Contents</p>
+  <ol>
+    <li><a href="#why"><span class="n">1</span>Why MHP</a></li>
+    <li><a href="#arch"><span class="n">2</span>Architecture</a></li>
+    <li><a href="#scale"><span class="n">3</span>Scale</a></li>
+    <li><a href="#descriptor"><span class="n">4</span>Device package</a></li>
+    <li><a href="#primitives"><span class="n">5</span>Primitives</a></li>
+    <li><a href="#lifecycle"><span class="n">6</span>Lifecycle</a></li>
+    <li><a href="#safety"><span class="n">7</span>Safety model</a></li>
+    <li><a href="#notifications"><span class="n">8</span>Notifications</a></li>
+    <li><a href="#transports"><span class="n">9</span>Transports &amp; discovery</a></li>
+    <li><a href="#surfaces"><span class="n">10</span>Three control surfaces</a></li>
+    <li><a href="#authoring"><span class="n">11</span>Authoring descriptors</a></li>
+    <li><a href="#errors"><span class="n">12</span>Error codes</a></li>
+    <li><a href="#classes"><span class="n">13</span>Device classes</a></li>
+    <li><a href="#bridges"><span class="n">14</span>Bridging ecosystems</a></li>
+    <li><a href="#conformance"><span class="n">15</span>Conformance</a></li>
+    <li><a href="#later"><span class="n">16</span>Not in 0.1</a></li>
+    <li><a href="#impl"><span class="n">A</span>Reference implementation</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <p class="eyebrow">Open specification · draft for early partners</p>
+  <h1>Open Model Hardware Protocol</h1>
+  <p class="lede">An open protocol for AI agents to discover, understand and safely operate physical devices: microscopes, liquid handlers, robot arms, lasers, furnaces. Five primitives, one descriptor, enforced safety, and a context cost that stays flat from two devices to two thousand.</p>
+  <div class="meta"><span>Version <b>2026-09-09</b> (0.2)</span><span>Wire format <b>JSON-RPC 2.0</b></span><span>Transports <b>stdio · HTTP + SSE</b></span><span>Reference impl <b>openmhp</b> (Python, zero deps)</span></div>
+</header>
+
+<h2 id="why"><span class="n">1</span>Why MHP</h2>
+<p>Every instrument on a bench or factory floor has its own programming interface. Connecting them to each other is hard; connecting them to an AI agent is harder, because the agent needs three things no vendor API provides: a uniform way to <em>read and write</em> the device, a machine-readable account of <em>what the device is and how to use it safely</em>, and a way to <em>hand off long-running work</em> so the device can run without the agent reasoning at every step.</p>
+<p>MHP answers all three with one small protocol. It borrows the shape of the Model Context Protocol (MCP): JSON-RPC 2.0 messages, a short list of primitives, capability negotiation at connect time, and a host / client / server split. Where MCP exposes <em>tools, resources and prompts</em>, MHP exposes <em>signals, settings, actions and a safety envelope</em>, all described by one <strong>device descriptor</strong> that the driver serves and the agent reads before touching anything.</p>
+<p>Design rules, in priority order:</p>
+<ol class="rules">
+  <li><b>Safety is enforced by the driver, never by the agent.</b><p>Limits, interlocks and approval levels live in the descriptor and are checked on the device side of the wire. A wrong value from an agent is refused, not obeyed.</p></li>
+  <li><b>One descriptor is the whole manual.</b><p>Everything an agent needs, including the tacit knowledge that used to live in paper manuals and people's heads, is written in natural-language <code>notes</code> fields on the descriptor.</p></li>
+  <li><b>Five primitives, no more.</b><p>A device that speaks describe / signals / settings / actions / safety can be operated by any MHP host.</p></li>
+  <li><b>Bridge, don't replace.</b><p>SiLA 2, PyLabRobot, MADSci, OPC UA and ROS 2 devices become MHP devices through thin adapters. MHP is the layer the agent sees.</p></li>
+  <li><b>The agent's context is a resource the protocol protects.</b><p>A lab with two thousand devices costs the agent the same handful of tokens as a lab with two. Nothing is loaded that was not asked for (§3).</p></li>
+</ol>
+
+<h2 id="arch"><span class="n">2</span>Architecture</h2>
+<figure>
+<svg viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" font-family="Instrument Sans, Helvetica, Arial, sans-serif" font-size="13">
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--mute)"/></marker></defs>
+  <rect x="40" y="20" width="680" height="96" rx="6" fill="var(--bg)" stroke="var(--line)"/>
+  <text x="56" y="44" fill="var(--ink)" font-weight="600">Host · agent runtime</text>
+  <text x="56" y="64" fill="var(--mute)">Claude, a lab orchestrator, a scheduler, a notebook</text>
+  <rect x="220" y="76" width="130" height="28" rx="4" fill="var(--acc-bg)" stroke="var(--acc)"/><text x="285" y="95" text-anchor="middle" fill="var(--acc)" font-weight="600">MHP client</text>
+  <rect x="440" y="76" width="130" height="28" rx="4" fill="var(--acc-bg)" stroke="var(--acc)"/><text x="505" y="95" text-anchor="middle" fill="var(--acc)" font-weight="600">MHP client</text>
+  <text x="640" y="95" fill="var(--mute)">one per device</text>
+  <line x1="285" y1="104" x2="285" y2="176" stroke="var(--mute)" stroke-width="1.5" marker-end="url(#ah)" marker-start="url(#ah)"/>
+  <line x1="505" y1="104" x2="505" y2="176" stroke="var(--mute)" stroke-width="1.5" marker-end="url(#ah)" marker-start="url(#ah)"/>
+  <text x="296" y="145" fill="var(--mute)">JSON-RPC · stdio / HTTP</text>
+  <text x="516" y="145" fill="var(--mute)">JSON-RPC · stdio / HTTP</text>
+  <rect x="180" y="178" width="210" height="70" rx="6" fill="var(--bg)" stroke="var(--line)"/>
+  <text x="196" y="202" fill="var(--ink)" font-weight="600">MHP server · driver</text>
+  <text x="196" y="222" fill="var(--mute)">thermocycler-01, serial link</text>
+  <text x="196" y="238" fill="var(--mute)">gates, jobs, descriptor</text>
+  <rect x="400" y="178" width="210" height="70" rx="6" fill="var(--bg)" stroke="var(--line)"/>
+  <text x="416" y="202" fill="var(--ink)" font-weight="600">MHP server · adapter</text>
+  <text x="416" y="222" fill="var(--mute)">arm-01, wraps a SiLA 2 feature</text>
+  <text x="416" y="238" fill="var(--mute)">same gates, same descriptor</text>
+  <line x1="285" y1="248" x2="285" y2="288" stroke="var(--mute)" stroke-width="1.5" marker-end="url(#ah)"/>
+  <line x1="505" y1="248" x2="505" y2="288" stroke="var(--mute)" stroke-width="1.5" marker-end="url(#ah)"/>
+  <rect x="215" y="290" width="140" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/><text x="285" y="309" text-anchor="middle" fill="var(--ink2)">instrument</text>
+  <rect x="435" y="290" width="140" height="28" rx="14" fill="var(--panel)" stroke="var(--line)"/><text x="505" y="309" text-anchor="middle" fill="var(--ink2)">instrument</text>
+</svg>
+<figcaption>One server per device. The host sees no difference between a native driver and an adapter over another control layer.</figcaption>
+</figure>
+<div class="tablewrap"><table>
+<tr><th>Role</th><th>Responsibility</th></tr>
+<tr><td><b>Host</b></td><td>The agent runtime. Owns the conversation with the model, decides what to do, holds one client per device. Presents human confirmation prompts (elicitation).</td></tr>
+<tr><td><b>Client</b></td><td>One connection to one server. Sends requests, receives responses and notifications, tracks the lease.</td></tr>
+<tr><td><b>Server (driver)</b></td><td>Owns exactly one device. Serves the descriptor, enforces the safety envelope, translates primitives into vendor commands, runs jobs.</td></tr>
+<tr><td><b>Device</b></td><td>The physical thing. A single instrument, or a coordinated cell exposed as one logical device.</td></tr>
+<tr><td><b>Directory</b></td><td>A server whose role is finding devices rather than being one. Indexes cards, answers searches, holds no device connections (§3.2).</td></tr>
+</table></div>
+
+<h2 id="scale"><span class="n">3</span>Scale: one device among thousands</h2>
+<p>MCP's first year taught a specific lesson. Loading every tool definition up front cost about 55,000 tokens for five ordinary servers, and selection accuracy <em>fell</em> as the list grew. Anthropic's fixes, described in <a href="https://www.anthropic.com/engineering/advanced-tool-use">Advanced tool use</a>, were three: a tool search tool with deferred loading, programmatic tool calling so intermediate results never enter the model's context, and usage examples inside tool definitions. MHP builds all three in from the start, because a lab has more devices than a workspace has tools, and every device descriptor is longer than a tool schema.</p>
+<div class="tablewrap"><table class="num">
+<tr><th>MCP mechanism</th><th>Reported effect</th><th>MHP equivalent</th></tr>
+<tr><td>Tool search, deferred loading</td><td>85% fewer tokens; Opus 4 accuracy 49% → 74%</td><td>Descriptor detail tiers + <code>directory/search</code> (§3.1, §3.2)</td></tr>
+<tr><td>Programmatic tool calling</td><td>37% fewer tokens on research tasks</td><td><code>mhp_run</code> scripts against the Lab client (§3.4)</td></tr>
+<tr><td>Tool use examples</td><td>72% → 90% on complex parameters</td><td><code>examples</code> on actions; <code>input_examples</code> on every bridge tool (§3.5)</td></tr>
+</table></div>
+
+<h3>3.1 Descriptor detail tiers</h3>
+<p><code>device/describe</code> takes a <code>detail</code> parameter. A host never has to load the whole descriptor to decide whether it wants the device.</p>
+<div class="tablewrap"><table>
+<tr><th>Tier</th><th>Cost</th><th>Contents</th></tr>
+<tr><td><code>card</code></td><td class="num">~40 tokens</td><td>Level 1: the DEVICE.md frontmatter, live state, and the <em>names</em> of every signal, setting and action</td></tr>
+<tr><td><code>summary</code></td><td class="num">under 1k tokens</td><td>Level 2: card + the DEVICE.md operating instructions + every signal, setting and action with type, unit, limits, approval level and interlocks + the list of bundled resources</td></tr>
+<tr><td><code>full</code></td><td>unbounded</td><td>Level 3: the whole descriptor, including notes, params and examples</td></tr>
+</table></div>
+<p><code>select</code> fetches full specs for named items only: <code>{"select": {"actions": ["run_protocol"], "settings": ["target_temperature"]}}</code>. The normal path is <em>card, then summary, then select the two things you will use</em>. A host SHOULD default to <code>summary</code>; <code>full</code> is for authoring and debugging.</p>
+
+<h3>3.2 The directory</h3>
+<p>A directory is an MHP server whose role is finding devices rather than being one. It indexes cards, not descriptors, and keeps no open connection to the devices it lists.</p>
+<div class="tablewrap"><table>
+<tr><th>Method</th><th>Params</th><th>Returns</th></tr>
+<tr><td><code>directory/search</code></td><td><code>query</code> (free text), <code>class</code>, <code>tags</code>, <code>location</code>, <code>state</code>, <code>limit</code>, <code>live</code> (default true)</td><td>ranked cards with live <code>state</code>, each with a <code>target</code> the client can connect to</td></tr>
+<tr><td><code>directory/get</code></td><td><code>id</code></td><td>one card + target, state pinged now</td></tr>
+<tr><td><code>directory/stats</code></td><td></td><td>counts by class and state</td></tr>
+</table></div>
+<pre><code><span class="arrow">→</span> {"method":"directory/search","params":{"query":"heat a 96-well plate to 95 C for PCR in bay 12",
+                                          "class":"thermocycler","state":"idle","limit":3}}
+<span class="arrow">←</span> {"result":{"results":[
+     {"id":"thermocycler-0411","class":"thermocycler","make":"Bio-Rad","model":"C1000","location":"bay 12",
+      "tags":["pcr","heating"],"notes":"96-well block.","state":"idle",
+      "signals":["block_temperature","lid_temperature","lid_closed","cycle"],
+      "settings":["target_temperature","lid_heater"],"actions":["run_protocol","open_lid"],
+      "target":"http://bay12-bench3:18921","score":10.08}, ...]}}</code></pre>
+<p>Ranking is BM25 over id, class, make, model, location, tags, notes and the names of signals, settings and actions, so the query above finds thermocyclers in bay 12 without the agent knowing any ids. Filters are exact. <code>state</code> lets an agent ask for an idle instrument.</p>
+<p>A directory is built by asking each device for its card once, or from a manifest file the lab maintains. <strong>State is never served from the index.</strong> The index holds only what is static about a device: identity, location, tags, capability names. At query time the directory pings the top candidates in parallel with a short timeout, fills in each card's <code>state</code> from the answer, and only then applies the filter. <code>directory/get</code> always pings. A device that does not answer is reported as <code>unreachable</code> and never matches <code>state: "idle"</code>.</p>
+<div class="tablewrap"><table class="num">
+<tr><th>Reference directory</th><th>Value</th></tr>
+<tr><td>Ping timeout per device</td><td>500 ms</td></tr>
+<tr><td>Candidates pinged when a state filter is given</td><td>4 × limit</td></tr>
+<tr><td>A ping is reused for</td><td>2 s</td></tr>
+</table></div>
+<p>A client MAY pass <code>live: false</code> to skip pinging when it only wants identity, and MUST still treat the device's own describe or ping as authoritative before acting. Small labs need no directory: a client with an explicit name-to-target map scans its own devices' cards.</p>
+
+<h3>3.3 Constant tool surface</h3>
+<div class="callout"><p>An MCP host connected to an MHP lab sees <strong>eight tools regardless of device count</strong>: <code>mhp_find</code>, <code>mhp_describe</code>, <code>mhp_read</code>, <code>mhp_write</code>, <code>mhp_invoke</code>, <code>mhp_job</code>, <code>mhp_estop</code>, <code>mhp_run</code>. There are never per-device tools. Bridges MUST NOT enumerate devices into the tool list or the resource list at startup; resources list only the devices the session has opened.</p></div>
+
+<h3>3.4 Programmatic runs</h3>
+<p><code>mhp_run</code> executes an orchestration script against the lab and returns only what it prints, capped. A script that takes five hundred temperature readings and reports a mean puts one line in the model's context, not five hundred numbers. The script sees the same Lab client as §10.3, and every call it makes passes the same safety gates as a direct tool call. Hosts SHOULD sandbox script execution; the reference implementation runs scripts in-process so simulated device state is shared, and says so.</p>
+<pre><code><span class="c"># mhp_run: 500 readings in, one line out</span>
+t = lab[<span class="s">"thermocycler-0411"</span>]
+<span class="k">with</span> t:
+    j = t.wait(t.invoke(<span class="s">"run_protocol"</span>, steps=[{<span class="s">"temp"</span>: <span class="n">95</span>, <span class="s">"hold_s"</span>: <span class="n">30</span>}], cycles=<span class="n">5</span>))
+    rs = [t.read(<span class="s">"block_temperature"</span>) <span class="k">for</span> _ <span class="k">in</span> range(<span class="n">500</span>)]
+print(<span class="s">"cycles"</span>, j[<span class="s">"result"</span>][<span class="s">"cycles_completed"</span>], <span class="s">"mean"</span>, sum(rs) / len(rs))</code></pre>
+
+<h3>3.5 Examples in the descriptor</h3>
+<p>Actions MAY carry <code>examples</code>, an array of realistic parameter objects. Bridges MUST forward them, and the reference bridge's own tools ship <code>input_examples</code>. A schema says what is valid; an example says what is normal.</p>
+
+<h3>3.6 Measured</h3>
+<p>The reference scale demo builds 2,000 simulated devices across 8 classes and 40 bays, then runs the query above.</p>
+<div class="tablewrap"><table>
+<tr><th>Approach</th><th>Tokens in agent context</th></tr>
+<tr><td>Every descriptor loaded up front</td><td class="num">937,845</td></tr>
+<tr><td><code>mhp_find</code> (5 cards) + summary of the chosen device + full spec of the 2 items used</td><td class="num">1,087</td></tr>
+</table></div>
+<p>That is 0.11% of the naive cost, with search taking well under a millisecond. The device is then operated through exactly the same primitives as in a two-device lab.</p>
+
+<h2 id="descriptor"><span class="n">4</span>The device package</h2>
+<p>A device is described the way an Agent Skill is: a folder whose contents load in three levels, each only when the agent needs it. This is the same progressive disclosure that lets a harness hold hundreds of skills at about a hundred tokens each, applied to hardware.</p>
+<pre><code>thermocycler-01/
+├── DEVICE.md          <span class="c">Level 1: YAML frontmatter, the card            (always cheap)</span>
+│                      <span class="c">Level 2: Markdown body, operating instructions (when the device is chosen)</span>
+├── descriptor.yaml    <span class="c">Level 3: full machine-readable spec: limits, params, examples</span>
+├── driver.py          <span class="c">Level 3: code, a Driver subclass or an adapter's DEVICE object</span>
+├── references/        <span class="c">Level 3: manual excerpts, SOPs, calibration tables</span>
+└── scripts/           <span class="c">Level 3: ready-made orchestration scripts for mhp_run</span></code></pre>
+<div class="tablewrap"><table>
+<tr><th>Level</th><th>Content</th><th>Served by</th><th>Loaded when</th></tr>
+<tr><td class="num">1</td><td>frontmatter: id, class, make, model, location, tags, description</td><td><code>device/describe {detail: "card"}</code>, <code>directory/search</code></td><td>search results; about 40 tokens per device</td></tr>
+<tr><td class="num">2</td><td>DEVICE.md body: how to operate it, what to check, what never to do</td><td><code>device/describe {detail: "summary"}</code> with a slim capability table</td><td>the agent picks this device; under 1k tokens</td></tr>
+<tr><td class="num">3</td><td>descriptor items, references, scripts, driver</td><td><code>device/describe {select}</code>, <code>resources/list</code>, <code>resources/read {path}</code></td><td>the agent needs that item; none until asked</td></tr>
+</table></div>
+
+<h3>4.1 DEVICE.md</h3>
+<p>The frontmatter is the card. <code>description</code> is what a directory ranks and what an agent matches its task against, so it must say both what the device is and when to pick it, in under 1,024 characters. The body is written for the agent that has just chosen the device: an operating procedure, what to watch, and pointers to the resources it may need.</p>
+<pre><code>---
+<span class="k">mhp</span>: <span class="s">"2026-09-09"</span>
+<span class="k">id</span>: thermocycler-01
+<span class="k">class</span>: thermocycler
+<span class="k">make</span>: SimBio
+<span class="k">model</span>: TC-96
+<span class="k">location</span>: bay 3, bench 3
+<span class="k">tags</span>: [pcr, heating, 96-well]
+<span class="k">description</span>: 96-well PCR thermocycler with heated lid, 4 to 105 degC block. Use for PCR,
+  denaturation, ligation holds and any timed temperature program on a 96-well SBS plate.
+  Not for tubes, not for cooling below 4 degC.
+<span class="k">driver</span>: driver.py:SimThermocycler
+---
+
+<span class="k"># Thermocycler-01</span>
+
+Sits on bench 3 in bay 3, left of the liquid handler; the plate arm reaches it at `thermocycler`.
+The block ramps about 4 °C/s. Turn `lid_heater` on ~40 s before loading to avoid condensation.
+
+<span class="k">## Operating procedure</span>
+1. Confirm `lid_closed` is true; `run_protocol` refuses otherwise.
+2. Set `lid_heater` true; wait for `lid_temperature` above 100 °C.
+3. Invoke `run_protocol`; poll the job. 30 cycles of three steps take ~75 minutes.
+4. Write `target_temperature` 4 to hold. Open the lid only below 60 °C (needs a human).
+
+<span class="k">## Resources</span>
+- `references/protocols.md`: standard programs per polymerase.
+- `scripts/pcr.py`: complete run through `mhp_run`, including the 4 °C hold.</code></pre>
+
+<h3>4.2 descriptor.yaml</h3>
+<p>The machine-readable part. Identity fields live in the frontmatter and are merged in; everything below is enforced or served by the driver.</p>
+<pre><code><span class="k">device</span>:
+  <span class="k">notes</span>: &gt;
+    96-well block on bench 3, left of the liquid handler. Lid must be closed
+    before any run. Block ramps ~4 °C/s; lid heater takes ~40 s to reach 105 °C.
+
+<span class="k">physical</span>:                        <span class="c"># anything the agent cannot infer from code</span>
+  <span class="k">mass_kg</span>: <span class="n">12.5</span>
+  <span class="k">footprint_mm</span>: [<span class="n">331</span>, <span class="n">461</span>, <span class="n">251</span>]
+  <span class="k">power_w</span>: <span class="n">851</span>
+  <span class="k">notes</span>: Bench-mounted, do not relocate while running. Hot lid surface up to 110 °C.
+
+<span class="k">signals</span>:                         <span class="c"># READ</span>
+  - <span class="k">name</span>: block_temperature
+    <span class="k">type</span>: number
+    <span class="k">unit</span>: degC
+    <span class="k">notes</span>: Measured at block centre; edge wells lag by ~0.5 °C.
+  - <span class="k">name</span>: lid_closed
+    <span class="k">type</span>: boolean
+    <span class="k">notes</span>: True when the lid latch is engaged.
+
+<span class="k">settings</span>:                        <span class="c"># WRITE</span>
+  - <span class="k">name</span>: target_temperature
+    <span class="k">type</span>: number
+    <span class="k">unit</span>: degC
+    <span class="k">limits</span>: {min: <span class="n">5</span>, max: <span class="n">106</span>}   <span class="c"># enforced by the driver</span>
+    <span class="k">approval</span>: auto               <span class="c"># auto | confirm | forbid</span>
+    <span class="k">notes</span>: Below 4 °C condensation forms; above 105 °C the seal fails.
+
+<span class="k">actions</span>:                         <span class="c"># INVOKE -&gt; job</span>
+  - <span class="k">name</span>: run_protocol
+    <span class="k">duration</span>: long               <span class="c"># short | long</span>
+    <span class="k">approval</span>: auto
+    <span class="k">interlocks</span>: [lid_closed]     <span class="c"># signals that must be truthy</span>
+    <span class="k">params</span>:
+      <span class="k">steps</span>: array of {temp: degC, hold_s: number}
+      <span class="k">cycles</span>: integer
+    <span class="k">notes</span>: Runs a cycling program; steps are repeated `cycles` times.
+    <span class="k">examples</span>:                    <span class="c"># what normal usage looks like, §3.5</span>
+      - {steps: [{temp: <span class="n">95</span>, hold_s: <span class="n">30</span>}, {temp: <span class="n">58</span>, hold_s: <span class="n">30</span>}, {temp: <span class="n">72</span>, hold_s: <span class="n">45</span>}], cycles: <span class="n">30</span>}
+  - <span class="k">name</span>: open_lid
+    <span class="k">duration</span>: short
+    <span class="k">approval</span>: confirm            <span class="c"># a human must confirm each invocation</span>
+    <span class="k">notes</span>: Lid may be hot; a human should be present.
+
+<span class="k">safety</span>:
+  <span class="k">estop</span>: <span class="n">true</span>                    <span class="c"># driver implements safety/estop</span>
+  <span class="k">interlocks</span>: [lid_closed]
+  <span class="k">watchdog_s</span>: <span class="n">11</span>                 <span class="c"># driver fails safe if no ping within this window</span>
+  <span class="k">notes</span>: E-stop cuts block and lid heaters; the block cools passively.</code></pre>
+
+<h3>4.3 Resources</h3>
+<p><code>resources/list</code> returns the relative paths of every file in the package except DEVICE.md. <code>resources/read {path}</code> returns a text file's contents, capped, and MUST refuse paths outside the package. Scripts under <code>scripts/</code> are written for <code>mhp_run</code> and see <code>lab</code>: an agent reads one, adapts the constants, and runs it, so the device owner's tested procedure is what executes.</p>
+
+<h3>4.4 Field rules</h3>
+<div class="tablewrap"><table>
+<tr><th>Field</th><th>Rule</th></tr>
+<tr><td><code>device.id</code></td><td>MUST be unique within a host's set of devices. <code>class</code> is an open string; §13 lists the initial vocabulary.</td></tr>
+<tr><td><code>device.description</code></td><td>Frontmatter. SHOULD state what the device is and when to pick it, at most 1,024 characters. It is the ranking text for directories and the card text for agents.</td></tr>
+<tr><td><code>notes</code></td><td>Any object may carry one. Notes are natural language for the agent, the mechanism by which tacit knowledge enters the protocol. Drivers MUST pass them through unchanged.</td></tr>
+<tr><td><code>type</code>, <code>unit</code></td><td><code>number | integer | boolean | string | object | array</code>. Units SHOULD be UCUM codes or common spellings (<code>degC</code>, <code>mm</code>, <code>percent</code>, <code>N</code>, <code>rpm</code>).</td></tr>
+<tr><td><code>limits</code> (setting)</td><td><code>{min, max}</code> for numbers, <code>{enum: [...]}</code> for strings. The driver MUST refuse writes outside limits with <code>LimitViolation</code>.</td></tr>
+<tr><td><code>limits</code> (action)</td><td>A map from parameter name to <code>[min, max]</code>. Drivers SHOULD enforce these inside the action.</td></tr>
+<tr><td><code>approval</code></td><td><code>auto</code>: the agent may act. <code>confirm</code>: each call needs <code>approved: true</code>, which the host may set only after human confirmation. <code>forbid</code>: never agent-operable; listed so the agent knows the capability exists and why it is off-limits.</td></tr>
+<tr><td><code>interlocks</code></td><td>Boolean signals that MUST read truthy at the moment of the write or invoke; otherwise <code>InterlockOpen</code>.</td></tr>
+<tr><td><code>duration</code></td><td><code>short</code> actions finish within seconds and hosts MAY block on them. <code>long</code> actions run as jobs; the host SHOULD poll or subscribe.</td></tr>
+<tr><td><code>location</code>, <code>tags</code>, <code>examples</code></td><td>Optional but SHOULD be set. Location and tags are what a directory filters on; <code>examples</code> on an action is an array of parameter objects.</td></tr>
+<tr><td>unknown keys</td><td>Permitted at top level (for example <code>locations</code> on a robot arm) and MUST be preserved by adapters and bridges.</td></tr>
+</table></div>
+
+<h2 id="primitives"><span class="n">5</span>Primitives</h2>
+<p>All requests are JSON-RPC 2.0. Method names are namespaced with <code>/</code>, as in MCP.</p>
+<div class="tablewrap"><table>
+<tr><th>Primitive</th><th>Methods</th><th>Direction</th></tr>
+<tr><td>Lifecycle</td><td><code>initialize</code>, <code>ping</code></td><td>client → server</td></tr>
+<tr><td>Describe</td><td><code>device/describe {detail, select}</code></td><td>client → server</td></tr>
+<tr><td>Resources</td><td><code>resources/list</code>, <code>resources/read {path}</code></td><td>client → server</td></tr>
+<tr><td>Directory</td><td><code>directory/search</code>, <code>directory/get</code>, <code>directory/stats</code></td><td>client → directory server</td></tr>
+<tr><td>Signals</td><td><code>signals/list</code>, <code>signals/read</code>, <code>signals/subscribe</code></td><td>client → server</td></tr>
+<tr><td>Settings</td><td><code>settings/list</code>, <code>settings/write</code></td><td>client → server</td></tr>
+<tr><td>Actions</td><td><code>actions/list</code>, <code>actions/invoke</code>, <code>jobs/status</code>, <code>jobs/list</code>, <code>jobs/cancel</code></td><td>client → server</td></tr>
+<tr><td>Safety</td><td><code>safety/limits</code>, <code>safety/estop</code>, <code>safety/reset</code></td><td>client → server</td></tr>
+<tr><td>Session</td><td><code>session/acquire</code>, <code>session/release</code></td><td>client → server</td></tr>
+<tr><td>Notifications</td><td><code>notifications/signals/update</code>, <code>notifications/settings/changed</code>, <code>notifications/jobs/*</code>, <code>notifications/safety/*</code></td><td>server → client</td></tr>
+<tr><td>Elicitation</td><td><code>elicitation/confirm</code> (optional, §7.2)</td><td>server → client</td></tr>
+</table></div>
+
+<h3>5.1 initialize</h3>
+<pre><code><span class="arrow">→</span> {"jsonrpc":"2.0","id":1,"method":"initialize",
+   "params":{"protocolVersion":"2026-09-09","clientInfo":{"name":"claude-lab","version":"1.0"}}}
+<span class="arrow">←</span> {"jsonrpc":"2.0","id":1,"result":{
+     "protocolVersion":"2026-09-09",
+     "device":{"id":"thermocycler-01","class":"thermocycler","make":"SimBio","model":"TC-96"},
+     "capabilities":{"signals":true,"settings":true,"actions":true,
+                     "subscribe":true,"lease":true,"estop":true}}}</code></pre>
+<p>Servers MUST respond to <code>initialize</code> before any other method. Capabilities are booleans; a client MUST NOT call a method whose capability is false.</p>
+
+<h3>5.2 device/describe</h3>
+<p>Returns the descriptor (§4) at the requested <code>detail</code> tier (<code>card</code>, <code>summary</code> or <code>full</code>, §3.1) or the named items in <code>select</code>, plus <code>state</code>, one of <code>idle</code>, <code>busy</code>, <code>fault</code>, <code>estop</code>. Hosts SHOULD call this with <code>summary</code> before operating a device, then <code>select</code> the items they will use.</p>
+
+<h3>5.3 Signals: read</h3>
+<pre><code><span class="arrow">→</span> {"method":"signals/read","params":{"names":["block_temperature","lid_closed"]}}
+<span class="arrow">←</span> {"result":{"values":{"block_temperature":22.0,"lid_closed":true},"ts":1788991266.5}}</code></pre>
+<p>Omitting <code>names</code> reads every signal. <code>signals/subscribe</code> asks the server to push <code>notifications/signals/update</code> for the named signals; over HTTP these arrive on the <code>/events</code> stream, over stdio as interleaved notification lines.</p>
+
+<h3>5.4 Settings: write</h3>
+<pre><code><span class="arrow">→</span> {"method":"settings/write","params":{"name":"target_temperature","value":95}}
+<span class="arrow">←</span> {"result":{"ok":true,"name":"target_temperature","value":95}}
+
+<span class="arrow">→</span> {"method":"settings/write","params":{"name":"target_temperature","value":200}}
+<span class="arrow">←</span> {"error":{"code":-32010,"message":"target_temperature=200 above max 105","data":{"min":4,"max":105}}}</code></pre>
+<p>Optional params: <code>approved: true</code> for <code>confirm</code> settings, and <code>dryRun: true</code> to run every gate, touch nothing, and return what would have been written.</p>
+
+<h3>5.5 Actions and jobs</h3>
+<p><code>actions/invoke</code> returns immediately with a <strong>job</strong>. The device does the work; the agent polls or subscribes.</p>
+<pre><code><span class="arrow">→</span> {"method":"actions/invoke","params":{"name":"run_protocol",
+     "params":{"steps":[{"temp":95,"hold_s":30},{"temp":58,"hold_s":30},{"temp":72,"hold_s":45}],"cycles":30}}}
+<span class="arrow">←</span> {"result":{"job":{"id":"job_04324008","action":"run_protocol","state":"queued","progress":0.0}}}
+
+<span class="arrow">→</span> {"method":"jobs/status","params":{"id":"job_04324008"}}
+<span class="arrow">←</span> {"result":{"job":{"id":"job_04324008","state":"running","progress":0.43}}}
+
+   <span class="c">... later, unprompted ...</span>
+<span class="arrow">←</span> {"method":"notifications/jobs/finished","params":{"job":{"id":"job_04324008","state":"done",
+     "progress":1.0,"result":{"cycles_completed":30,"final_block_temperature":72}}}}</code></pre>
+<p>Job states run <code>queued → running → done | failed | cancelled</code>. A failed job puts the device in <code>fault</code> until <code>safety/reset</code>. A busy device refuses a second non-concurrent invoke with <code>DeviceBusy</code>.</p>
+
+<h3>5.6 Safety</h3>
+<p><code>safety/limits</code> returns the effective limits, interlocks and approval levels in one call, for hosts that want to show the envelope to a human.</p>
+<p><code>safety/estop</code> MUST stop all motion and energy output as fast as the hardware allows, cancel every running job, and put the device in <code>estop</code>. It MUST succeed regardless of lease, approval level or interlock state. It is the one call an agent may always make.</p>
+<p><code>safety/reset</code> returns the device to <code>idle</code> after <code>estop</code> or <code>fault</code>. It MUST fail with <code>DeviceBusy</code> while any job is still running.</p>
+
+<h3>5.7 Session leases</h3>
+<p><code>session/acquire {ttl}</code> gives the calling client exclusive write and invoke rights until <code>ttl</code> seconds elapse or <code>session/release</code>. Reads, <code>ping</code>, <code>describe</code> and <code>estop</code> are never blocked by a lease. Leases let an orchestration script own several devices for the duration of a protocol without a second agent interleaving commands.</p>
+
+<h2 id="lifecycle"><span class="n">6</span>Lifecycle</h2>
+<pre><code>client                                server
+  │── initialize ───────────────────────▶│  version + capabilities
+  │── device/describe ──────────────────▶│  descriptor into agent context
+  │── session/acquire {ttl:600} ────────▶│  optional exclusive control
+  │── signals/subscribe ────────────────▶│  optional streaming
+  │── settings/write / actions/invoke ──▶│  operate, gated by §7
+  │◀─ notifications/... ─────────────────│
+  │── ping (within watchdog_s) ─────────▶│  keeps the watchdog fed
+  │── session/release ──────────────────▶│</code></pre>
+<p><strong>Watchdog.</strong> If the descriptor declares <code>safety.watchdog_s</code>, the server MUST fail safe (the device-specific equivalent of e-stop, or at minimum refusing further writes) when it has received no request from the lease holder within that window. This is what protects the lab when the agent process dies mid-protocol.</p>
+<p><strong>Versioning.</strong> <code>protocolVersion</code> is a date string, as in MCP. A server MUST answer with the highest version it supports that is not newer than the client's; a client that receives an older version MUST either speak it or disconnect.</p>
+
+<h2 id="safety"><span class="n">7</span>Safety model</h2>
+<p>The safety model is the reason MHP exists as a separate protocol rather than a set of MCP tools. Every rule below is enforced in the server, on the device side of the network, so it holds even when the agent is wrong, compromised, or has lost context.</p>
+
+<h3>7.1 Gate order</h3>
+<p>On every <code>settings/write</code> and <code>actions/invoke</code> the server evaluates, in this order, and stops at the first failure:</p>
+<ol class="gates">
+  <li><b>State</b><span><code>EStopActive</code> if in estop, <code>DeviceFault</code> if in fault.</span></li>
+  <li><b>Approval</b><span><code>Forbidden</code> for forbid items; <code>ApprovalRequired</code> for confirm items sent without <code>approved: true</code>.</span></li>
+  <li><b>Interlocks</b><span>Each named signal is read live at that moment. Any falsy value: <code>InterlockOpen</code>.</span></li>
+  <li><b>Limits</b><span>Numeric range or enum: <code>LimitViolation</code>, with the limits in <code>data</code>.</span></li>
+  <li><b>Lease</b><span>Another client holds an unexpired lease: <code>NotLeased</code>.</span></li>
+  <li><b>Busy</b><span>A non-concurrent job is running: <code>DeviceBusy</code>.</span></li>
+</ol>
+<p>Only after all six pass does vendor code run. <code>dryRun: true</code> stops after the sixth gate and reports what would have happened.</p>
+<div class="states"><span class="idle">idle</span><span>busy</span><span class="fault">fault</span><span class="estop">estop</span></div>
+
+<h3>7.2 Approval levels and elicitation</h3>
+<p><code>confirm</code> is the bridge between agent autonomy and human oversight. The intended flow: the agent invokes <code>open_lid</code> and receives <code>ApprovalRequired</code>. The host shows the human a confirmation using the action's own notes ("Lid may be hot; a human should be present."). The human confirms, and the host re-sends the call with <code>approved: true</code>.</p>
+<div class="callout warn"><p>A host MUST NOT set <code>approved: true</code> on the model's say-so alone. Servers that can reach a human directly, through a touchscreen on the instrument or a physical key switch, MAY instead implement <code>elicitation/confirm</code> as a server-initiated request and wait for the answer in-band.</p></div>
+
+<h3>7.3 Fail closed</h3>
+<p>Any exception inside vendor code during a job moves the device to <code>fault</code>. Both <code>fault</code> and <code>estop</code> block all writes and invokes until an explicit <code>safety/reset</code>. There is no automatic recovery: a human or the agent must decide the device is safe to resume.</p>
+
+<h3>7.4 Defence in depth</h3>
+<p>Descriptor limits protect setpoints. Action parameters (a PCR step at 200 °C inside an otherwise valid protocol) are the driver's responsibility. Drivers SHOULD validate parameters against the same physical limits and MAY publish them under <code>actions[].limits</code>. The reference thermocycler does both.</p>
+
+<h3>7.5 What MHP does not do</h3>
+<div class="callout"><p>MHP is not a functional-safety system in the IEC 61508 sense. Hard-wired e-stops, light curtains and PLC safety logic remain the primary layer. MHP is the layer that keeps an agent from <em>asking</em> for something unsafe, and gives it a standard way to stop everything when it sees something wrong.</p></div>
+
+<h2 id="notifications"><span class="n">8</span>Notifications</h2>
+<p>Servers push notifications (JSON-RPC requests without <code>id</code>) for anything a supervising agent needs to react to.</p>
+<div class="tablewrap"><table>
+<tr><th>Method</th><th>Params</th><th>When</th></tr>
+<tr><td><code>notifications/signals/update</code></td><td><code>{name, value, ts}</code></td><td>a subscribed or driver-chosen signal changes</td></tr>
+<tr><td><code>notifications/settings/changed</code></td><td><code>{name, value, by}</code></td><td>any client writes a setting</td></tr>
+<tr><td><code>notifications/jobs/started</code></td><td><code>{job}</code></td><td>job leaves the queue</td></tr>
+<tr><td><code>notifications/jobs/progress</code></td><td><code>{job, ...extra}</code></td><td>driver reports progress; extra keys are device-specific</td></tr>
+<tr><td><code>notifications/jobs/finished</code></td><td><code>{job}</code></td><td>job reaches done, failed or cancelled</td></tr>
+<tr><td><code>notifications/safety/estop</code></td><td><code>{by, reason}</code></td><td>e-stop engaged by any client</td></tr>
+<tr><td><code>notifications/safety/reset</code></td><td><code>{by}</code></td><td>device returned to idle</td></tr>
+</table></div>
+
+<h2 id="transports"><span class="n">9</span>Transports and discovery</h2>
+<p>MHP defines two transports, mirroring MCP.</p>
+<p><strong>stdio.</strong> Newline-delimited JSON-RPC on the driver process's stdin and stdout. For a driver running on the bench PC, launched by the host.</p>
+<p><strong>HTTP.</strong> <code>POST /rpc</code> for requests. <code>GET /events</code> is a Server-Sent Events stream of notifications. <code>GET /mhp.json</code> returns the descriptor with no handshake, so an agent, or a person with <code>curl</code>, can learn what a device is from its URL alone. Clients SHOULD send an <code>X-MHP-Client</code> header so leases and audit logs can name them.</p>
+<p><strong>Network discovery.</strong> Servers SHOULD advertise via mDNS / DNS-SD as <code>_mhp._tcp</code> with TXT records <code>id</code>, <code>class</code> and <code>path=/mhp.json</code>. Labs MAY additionally run a registry that lists device URLs. The reference client accepts a plain name-to-URL map, so no registry is required to start.</p>
+<p><strong>Authentication</strong> is transport-level and out of scope for 0.1. HTTP deployments SHOULD sit behind TLS with bearer tokens or mutual TLS. The protocol reserves <code>params.auth</code> for a future in-band scheme.</p>
+
+<h2 id="surfaces"><span class="n">10</span>Three control surfaces</h2>
+<p>The same five primitives are reachable three ways. They compose: an agent uses MCP to explore and decide, writes a code file for the parts that must run fast or long, and uses the CLI to check on it.</p>
+<div class="surfaces">
+  <div><h4 class="sans">MCP bridge</h4><p>Eight generic tools, constant in the number of devices. The descriptor is the tool documentation, loaded on demand, so no per-device tool code is written.</p></div>
+  <div><h4 class="sans">Command line</h4><p>The debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool.</p></div>
+  <div><h4 class="sans">Code files</h4><p>For work that must run for hours or faster than the model's reasoning loop. The devices execute; the model reads the result.</p></div>
+</div>
+
+<h3>10.1 MCP bridge</h3>
+<div class="tablewrap"><table>
+<tr><th>MCP tool</th><th>MHP call</th></tr>
+<tr><td><code>mhp_find</code></td><td><code>directory/search</code>, or a scan of cards in a small lab</td></tr>
+<tr><td><code>mhp_describe</code></td><td><code>device/describe {detail, select}</code>, default <code>summary</code>; with <code>resource=</code> it calls <code>resources/read</code></td></tr>
+<tr><td><code>mhp_read</code></td><td><code>signals/read</code></td></tr>
+<tr><td><code>mhp_write</code></td><td><code>settings/write</code></td></tr>
+<tr><td><code>mhp_invoke</code></td><td><code>actions/invoke</code>, optionally waiting for the job</td></tr>
+<tr><td><code>mhp_job</code></td><td><code>jobs/status</code> or <code>jobs/cancel</code></td></tr>
+<tr><td><code>mhp_estop</code></td><td><code>safety/estop</code> on one device, or every device this session touched</td></tr>
+<tr><td><code>mhp_run</code></td><td>runs a script against the Lab client; returns stdout only (§3.4)</td></tr>
+<tr><td>resources <code>mhp://&lt;id&gt;/descriptor</code>, <code>mhp://&lt;id&gt;/&lt;path&gt;</code></td><td>descriptor and package files of devices this session has opened</td></tr>
+</table></div>
+<p>Every tool ships <code>input_examples</code>. MHP errors surface as MCP tool results with <code>isError: true</code> and the structured <code>mhpError</code> body, so the model sees why a write was refused and can adjust. A refused call inside an <code>mhp_run</code> script returns the same body.</p>
+<pre><code><span class="c"># Claude Desktop / Claude Code, big lab: nothing loaded until searched</span>
+{"mcpServers": {"lab": {"command": "mhp-mcp", "args": ["--directory", "http://directory:18900"]}}}
+
+<span class="c"># small lab: cards indexed at start, connections still lazy</span>
+{"mcpServers": {"lab": {"command": "mhp-mcp",
+                        "args": ["thermo=http://bench-pc:18921", "arm=http://arm-pc:18921"]}}}
+
+<span class="c"># remote harnesses: the same bridge over MCP Streamable HTTP</span>
+mhp-mcp --directory http://directory:18900 --http 18800      <span class="c"># POST http://host:18800/mcp</span></code></pre>
+<p>The bridge is the lab's MCP server. Any harness that speaks MCP over stdio or HTTP connects to it and sees the same eight tools.</p>
+
+<h3>10.2 Command line</h3>
+<pre><code>mhp http://bench:18921 describe
+mhp http://bench:18921 read block_temperature lid_closed
+mhp http://bench:18921 write target_temperature 95
+mhp http://bench:18921 invoke run_protocol '{"steps":[...],"cycles":30}' --wait
+mhp http://bench:18921 invoke open_lid --approved      <span class="c"># after a human said yes</span>
+mhp http://bench:18921 estop "smoke from lid"</code></pre>
+
+<h3>10.3 Code files</h3>
+<pre><code><span class="k">from</span> openmhp.client <span class="k">import</span> Lab
+
+lab = Lab({<span class="s">"arm"</span>: <span class="s">"http://arm-pc:18921"</span>, <span class="s">"thermo"</span>: <span class="s">"http://bench:18921"</span>})
+arm, thermo = lab[<span class="s">"arm"</span>], lab[<span class="s">"thermo"</span>]
+
+<span class="k">with</span> arm, thermo:                                    <span class="c"># leases on both</span>
+    arm.write(<span class="s">"speed"</span>, <span class="n">31</span>)
+    arm.wait(arm.invoke(<span class="s">"pick_plate"</span>, location=<span class="s">"deck_A1"</span>))
+    arm.wait(arm.invoke(<span class="s">"place_plate"</span>, location=<span class="s">"thermocycler"</span>))
+    result = thermo.wait(thermo.invoke(<span class="s">"run_protocol"</span>, steps=PCR, cycles=<span class="n">31</span>))
+    arm.wait(arm.invoke(<span class="s">"pick_plate"</span>, location=<span class="s">"thermocycler"</span>))</code></pre>
+
+<h2 id="authoring"><span class="n">11</span>Authoring descriptors</h2>
+<p>Two paths, same output: a device package (§4). <strong>By hand:</strong> copy the package template, fill in the frontmatter and limits, write the operating procedure in DEVICE.md. <strong>By interview:</strong> the agent asks the owner a short set of questions and writes the package.</p>
+<div class="callout"><p><em>What is it and when should an agent pick it? Where does it sit? What is heavy, hot, sharp or fragile about it? How do you run it, step by step? What must be true before it runs? What values would you never set? What should always need a human?</em></p><p>The first answer becomes <code>description</code>, the procedure becomes the DEVICE.md body, and the rest become <code>notes</code>, <code>interlocks</code>, <code>limits</code> and <code>approval</code> levels in descriptor.yaml. Existing SOPs and manual excerpts go under <code>references/</code>. The owner reviews the package before it is served.</p></div>
+<p>Packages are versioned folders checked into the lab's repository. Changing a limit is a code review, not a runtime action.</p>
+
+<h2 id="errors"><span class="n">12</span>Error codes</h2>
+<div class="tablewrap"><table class="num">
+<tr><th>Code</th><th>Name</th><th>Meaning</th></tr>
+<tr><td>-32601</td><td><code>MethodNotFound</code></td><td>unknown method</td></tr>
+<tr><td>-32602</td><td><code>InvalidParams</code></td><td>missing or invalid params</td></tr>
+<tr><td>-32010</td><td><code>LimitViolation</code></td><td>value outside descriptor limits; <code>data</code> carries the limits</td></tr>
+<tr><td>-32011</td><td><code>InterlockOpen</code></td><td>a required interlock signal is falsy; <code>data.interlock</code> names it</td></tr>
+<tr><td>-32012</td><td><code>ApprovalRequired</code></td><td>confirm item called without <code>approved: true</code></td></tr>
+<tr><td>-32013</td><td><code>Forbidden</code></td><td>forbid item</td></tr>
+<tr><td>-32020</td><td><code>DeviceFault</code></td><td>device in fault; reset required</td></tr>
+<tr><td>-32021</td><td><code>DeviceBusy</code></td><td>non-concurrent job running, or reset attempted mid-job</td></tr>
+<tr><td>-32022</td><td><code>EStopActive</code></td><td>device in estop; reset required</td></tr>
+<tr><td>-32030</td><td><code>NotLeased</code></td><td>another client holds the lease; <code>data.holder</code> names it</td></tr>
+<tr><td>-32040</td><td><code>UnknownName</code></td><td>no such signal, setting or action</td></tr>
+<tr><td>-32041</td><td><code>JobNotFound</code></td><td>no such job id</td></tr>
+</table></div>
+
+<h2 id="classes"><span class="n">13</span>Device classes</h2>
+<p>Initial vocabulary. A class is a hint for the agent and a namespace for conventions: a <code>robot_arm</code> SHOULD have a <code>locations</code> map, a <code>microscope</code> SHOULD expose an <code>acquire</code> action returning an image URI. Classes are not enforced by the protocol.</p>
+<div class="classes"><code>thermocycler</code><code>liquid_handler</code><code>robot_arm</code><code>microscope</code><code>plate_reader</code><code>centrifuge</code><code>incubator</code><code>hotplate</code><code>balance</code><code>pump</code><code>valve</code><code>spectrometer</code><code>laser</code><code>stage</code><code>cnc</code><code>3d_printer</code><code>oven</code><code>power_supply</code><code>camera</code><code>generic</code></div>
+
+<h2 id="bridges"><span class="n">14</span>Bridging existing ecosystems</h2>
+<p>MHP is deliberately thin enough to sit on top of the control layers labs already run. The reference implementation ships an adapter for each, built on one mechanism: <strong>bindings</strong>. A binding pairs an MHP name with a callable into the foreign layer, and <code>BoundDriver</code> turns three lists of bindings into a complete MHP driver with every gate, tier, job and notification inherited.</p>
+<pre><code><span class="k">from</span> openmhp.adapters <span class="k">import</span> BoundDriver, Signal, Setting, Action
+dev = BoundDriver(
+    device={<span class="s">"id"</span>: <span class="s">"hotplate-01"</span>, <span class="s">"class"</span>: <span class="s">"hotplate"</span>, <span class="s">"notes"</span>: <span class="s">"Fume hood 2."</span>},
+    signals=[Signal(<span class="s">"plate_temperature"</span>, read=<span class="k">lambda</span>: plc.read(<span class="n">0x10</span>), unit=<span class="s">"degC"</span>)],
+    settings=[Setting(<span class="s">"target_temperature"</span>, write=<span class="k">lambda</span> v: plc.write(<span class="n">0x20</span>, v), limits={<span class="s">"min"</span>: <span class="n">20</span>, <span class="s">"max"</span>: <span class="n">300</span>})],
+    actions=[Action(<span class="s">"shutdown"</span>, run=<span class="k">lambda</span> job, p: plc.write(<span class="n">0x21</span>, <span class="n">0</span>), approval=<span class="s">"confirm"</span>)],
+    estop=<span class="k">lambda</span>: plc.write(<span class="n">0x21</span>, <span class="n">0</span>))</code></pre>
+<div class="tablewrap"><table>
+<tr><th>Layer</th><th>Adapter</th><th>Mapping</th></tr>
+<tr><td><b>SiLA 2</b></td><td><code>sila_device(host, port, …)</code></td><td>Property → signal. One-parameter unobservable command → setting. Command → action; observable commands stream progress and accept cancel. Any stop command → estop. Leases replace LockController.</td></tr>
+<tr><td><b>PyLabRobot</b></td><td><code>plr_device(machine, …)</code></td><td>Every public coroutine on a Machine → action with <code>params</code> from its signature. <code>setup()</code> on start, <code>stop()</code> on estop. Coroutines run on a private event loop.</td></tr>
+<tr><td><b>MADSci</b></td><td><code>madsci_node(url, …)</code></td><td>Self-describing: <code>/info</code> actions → actions with params and notes; <code>/state</code> keys → signals; <code>/status</code> busy → ping state; <code>/action</code> plus polling → jobs; <code>/admin/safety_stop</code> → estop. No binding map needed.</td></tr>
+<tr><td><b>OPC UA / Modbus</b></td><td><code>opcua_device(url, …)</code></td><td>Variable node → signal or setting. Method node → action with positional args. Abort method → estop. Modbus uses BoundDriver with two register callables.</td></tr>
+<tr><td><b>ROS 2</b></td><td><code>ros2_device(node, …)</code></td><td>Topic subscription → signal. Topic publication → setting. Action server → action with feedback → progress and cancel. Trigger service → estop.</td></tr>
+</table></div>
+<div class="callout warn"><p>Adapters MUST implement the gates in §7 themselves. Wrapping a layer that lacks limits does not exempt the MHP server from enforcing them. The reference adapters get this for free from BoundDriver, and are tested against injected fakes so the mapping logic is verified without vendor libraries or hardware.</p></div>
+
+<h3>14.1 Agent Skills</h3>
+<p>MHP ships three <a href="https://agentskills.io">Agent Skills</a> so that any skills-capable harness can bring hardware under the protocol and operate it without bespoke prompting. Skills follow the same progressive-disclosure design as the protocol: a harness holds only their names and descriptions until a task matches.</p>
+<div class="tablewrap"><table>
+<tr><th>Skill</th><th>Activates when</th><th>Does</th></tr>
+<tr><td><code>openmhp-onboard-device</code></td><td>one instrument to connect</td><td>interviews the owner, writes descriptor and driver, validates, serves, registers</td></tr>
+<tr><td><code>openmhp-adapt-fleet</code></td><td>a SiLA 2, PyLabRobot, MADSci, OPC UA or ROS 2 fleet</td><td>one adapter file per device, manifest, directory, <code>mhp-mcp</code> config, proof checklist</td></tr>
+<tr><td><code>openmhp-operate</code></td><td>any task on connected hardware</td><td>the find, describe, check, dry-run, act, verify loop; refusal handling; e-stop rules</td></tr>
+</table></div>
+
+<h2 id="conformance"><span class="n">15</span>Conformance</h2>
+<div class="tablewrap"><table>
+<tr><th>Level</th><th>Requirements</th></tr>
+<tr><td><b>MHP Core</b></td><td><code>initialize</code>, <code>ping</code>, <code>device/describe</code> (all three tiers and <code>select</code>), <code>resources/*</code>, <code>signals/read</code>, <code>settings/write</code> with limit enforcement, the error codes in §12.</td></tr>
+<tr><td><b>MHP Actions</b></td><td>Core plus <code>actions/invoke</code>, <code>jobs/*</code>, <code>notifications/jobs/*</code>, interlock and approval gates.</td></tr>
+<tr><td><b>MHP Safe</b></td><td>Actions plus <code>safety/estop</code>, <code>safety/reset</code>, watchdog, fail-closed state machine, <code>session/*</code> leases.</td></tr>
+<tr><td><b>MHP Directory</b></td><td>Server role: <code>initialize</code> with <code>role: "directory"</code>, <code>directory/search</code>, <code>directory/get</code>, <code>directory/stats</code>. Indexes cards only.</td></tr>
+</table></div>
+<p>Devices that carry stored energy or can move SHOULD NOT be exposed below MHP Safe. All device levels MUST support <code>detail</code> and <code>select</code> on <code>device/describe</code>.</p>
+
+<h2 id="later"><span class="n">16</span>Not in 0.1</h2>
+<p>Bulk data transfer (images, spectra) beyond a URI in a job result; in-band authentication; multi-device transactions; descriptor signing; a hosted registry. Each has a natural home in the protocol (a <code>data/</code> primitive, <code>params.auth</code>, a <code>transaction/</code> namespace) and will be specified with partner input.</p>
+
+<h2 id="impl"><span class="n">A</span>Reference implementation</h2>
+<p><code>openmhp</code> is a Python implementation of everything above, with PyYAML as its only dependency: the Driver base class with all six gates and the detail tiers, the device package loader, the live-pinging Directory, stdio and HTTP + SSE transports, the lazy Lab client SDK, the <code>mhp</code> CLI, the eight-tool <code>mhp-mcp</code> bridge over stdio or HTTP, BoundDriver and the five ecosystem adapters, three Agent Skills, two simulated devices, adapter tests against injected fakes, and the 2,000-device scale demo. Writing a new driver is a descriptor plus three hooks.</p>
+<pre><code><span class="k">class</span> MyHotplate(Driver):
+    descriptor = {...}                                  <span class="c"># §4</span>
+    <span class="k">def</span> on_read(self, name):          <span class="k">return</span> float(self.dev.query(<span class="s">"IN_PV_1"</span>))
+    <span class="k">def</span> on_write(self, name, value):  self.dev.write(<span class="s">f"OUT_SP_1 {value}"</span>)
+    <span class="k">def</span> on_invoke(self, job):         self.dev.write(<span class="s">"STOP"</span>)
+    <span class="k">def</span> on_estop(self):               self.dev.write(<span class="s">"STOP"</span>)</code></pre>
+<pre><code>pip install -e .
+python examples/pcr_run.py                                          <span class="c"># arm + thermocycler, in-process</span>
+python examples/scale_demo.py                                       <span class="c"># 2,000 devices, 1,087 tokens</span>
+python tests/test_adapters.py                                       <span class="c"># adapters + live directory, no hardware</span>
+mhp serve local:openmhp.devices.sim_thermocycler:SimThermocycler --http 18921
+curl localhost:18921/mhp.json
+mhp-mcp thermo=http://localhost:18921 arm=local:openmhp.devices.sim_arm:SimArm</code></pre>
+
+<footer>Open Model Hardware Protocol, version 2026-09-09. Draft for early partner labs and manufacturers. Comments and adapter contributions welcome.</footer>
+</main>
+</div>
