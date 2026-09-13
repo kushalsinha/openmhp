@@ -1,0 +1,46 @@
+physical:
+  mass_kg: 4.0
+  footprint_mm: [220, 330, 105]
+  notes: Ceramic plate up to 500 degC. Keep solvents capped. Do not move while hot.
+
+signals:
+  - {name: plate_temperature, type: number, unit: degC, notes: Plate probe (PV of channel 1).}
+  - {name: temperature_setpoint_actual, type: number, unit: degC, notes: Setpoint the instrument holds (SP of channel 1).}
+  - {name: stir_rpm_actual, type: number, unit: rpm, notes: Measured stirring speed (PV of channel 4).}
+
+settings:
+  - {name: target_temperature, type: number, unit: degC, limits: {min: 20, max: 300}, approval: auto,
+     notes: Plate setpoint. The instrument allows up to 500; this package caps at 300 for glassware.}
+  - {name: stir_rpm, type: number, unit: rpm, limits: {min: 0, max: 1500}, approval: auto}
+
+actions:
+  - {name: start_heating, duration: short, approval: auto, notes: Enables the heater at the current setpoint.}
+  - {name: stop_heating, duration: short, approval: auto}
+  - {name: start_stirring, duration: short, approval: auto}
+  - {name: stop_stirring, duration: short, approval: auto}
+  - {name: shutdown, duration: short, approval: confirm, notes: Stops heater and stirrer. Plate stays hot.}
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 30
+  notes: E-stop sends STOP_1 and STOP_4 (heater and stirrer off). The plate cools passively.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600
+  eol: "\r\n"
+  read:
+    plate_temperature: IN_PV_1
+    temperature_setpoint_actual: IN_SP_1
+    stir_rpm_actual: IN_PV_4
+  write:
+    target_temperature: "OUT_SP_1 {value}"
+    stir_rpm: "OUT_SP_4 {value}"
+  actions:
+    start_heating: [START_1]
+    stop_heating: [STOP_1]
+    start_stirring: [START_4]
+    stop_stirring: [STOP_4]
+    shutdown: [STOP_1, STOP_4]
+  estop: [STOP_1, STOP_4]

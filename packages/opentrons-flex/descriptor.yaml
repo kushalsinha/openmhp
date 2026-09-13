@@ -1,0 +1,7 @@
+physical:
+  mass_kg: 70
+  notes: Enclosed deck; gripper moves plates. Keep hands out while any action runs.
+safety:
+  estop: true
+  watchdog_s: 30
+  notes: E-stop calls PyLabRobot stop(), which halts the robot.

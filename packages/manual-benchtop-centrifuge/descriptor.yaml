@@ -1,0 +1,17 @@
+signals:
+  - {name: balanced, type: boolean, notes: A person confirms tubes are balanced within 0.1 g.}
+  - {name: door_open, type: boolean}
+  - {name: actual_speed, type: number, unit: rpm, notes: Read off the display by the operator.}
+settings:
+  - {name: speed, type: number, unit: rpm, limits: {min: 100, max: 15000}, approval: auto}
+  - {name: duration_s, type: number, unit: s, limits: {min: 5, max: 3600}, approval: auto}
+actions:
+  - {name: spin, duration: long, approval: auto, interlocks: [balanced],
+     notes: The operator starts the run at the set speed and time and acknowledges when it has finished.}
+  - {name: open_door, duration: short, approval: confirm, notes: Only after the rotor has stopped.}
+safety:
+  estop: false
+  estop_kind: operator
+  interlocks: [balanced]
+  watchdog_s: null
+  notes: Operator-run. Stopping is a request to the person at the instrument, who presses STOP; nothing stops automatically.
