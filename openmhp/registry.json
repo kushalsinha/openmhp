@@ -1,0 +1,13 @@
+{
+  "packages": [
+    {"name": "ika-c-mag-hs7", "class": "hotplate", "make": "IKA", "model": "C-MAG HS 7", "kind": "serial",
+     "description": "IKA C-MAG HS 7 magnetic stirrer hotplate over its USB/RS-232 port (NAMUR command set). Heating to 500 C, stirring to 1500 rpm.",
+     "tags": ["heating", "stirring", "chemistry"], "target": "github:kushalsinha/openmhp/packages/ika-c-mag-hs7", "sim": true},
+    {"name": "opentrons-flex", "class": "liquid_handler", "make": "Opentrons", "model": "Flex", "kind": "adapter",
+     "description": "Opentrons Flex liquid handler through PyLabRobot's Opentrons backend. Pipetting, tips, plate moves with the gripper.",
+     "tags": ["pipetting", "plates", "biology"], "target": "github:kushalsinha/openmhp/packages/opentrons-flex", "sim": true},
+    {"name": "manual-benchtop-centrifuge", "class": "centrifuge", "make": "generic", "model": "benchtop", "kind": "manual",
+     "description": "Any benchtop centrifuge operated by a person. The agent instructs the operator (balance, speed, time) and records results. A template to copy for your own model.",
+     "tags": ["spin", "biology", "manual"], "target": "github:kushalsinha/openmhp/packages/manual-benchtop-centrifuge", "sim": true}
+  ]
+}
