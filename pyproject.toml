@@ -1,0 +1,28 @@
+[project]
+name = "openmhp"
+version = "0.8.0"
+description = "OpenMHP: reference implementation of the Open Model Hardware Protocol (MHP), an open protocol for AI agents to operate physical devices safely."
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6"]
+license = {text = "Apache-2.0"}
+readme = "README.md"
+
+[project.scripts]
+mhp = "openmhp.cli:main"
+mhp-mcp = "openmhp.mcp_bridge:main"
+mhp-validate = "openmhp.validate:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+openmhp = ["skills/**/*", "devices/*/*", "devices/*/*/*", "recipes/*.py", "registry.json"]
+
+[project.optional-dependencies]
+discovery = ["zeroconf>=0.130"]
+serial = ["pyserial>=3.5"]
+all = ["zeroconf>=0.130", "pyserial>=3.5"]
+
+[tool.setuptools.packages.find]
+include = ["openmhp*"]
