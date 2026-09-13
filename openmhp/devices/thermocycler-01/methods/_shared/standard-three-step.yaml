@@ -1,0 +1,26 @@
+name: standard-three-step
+project: _shared
+action: run_protocol
+params:
+  steps:
+  - temp: 95
+    hold_s: 30
+  - temp: 58
+    hold_s: 30
+  - temp: 72
+    hold_s: 45
+  cycles: 30
+compounds:
+- generic-dna
+version: 1
+hash: 89678982615a
+created: 1757600000.0
+updated: 1757600000.0
+validated: null
+status: active
+author: package author
+notes: Standard three-step PCR for a typical polymerase; adjust the annealing step
+  per primer pair.
+source:
+  kind: manual
+  ref: references/protocols.md

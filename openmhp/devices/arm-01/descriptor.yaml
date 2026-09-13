@@ -1,0 +1,89 @@
+device:
+  notes: >
+    Plate-handling arm between the liquid handler and thermocycler-01. Reach 850 mm.
+    Gripper is for SBS microplates only; it will crush PCR tubes.
+
+physical:
+  mass_kg: 21.0
+  payload_kg: 1.5
+  reach_mm: 850
+  dof: 6
+  notes: >
+    Floor-standing on a 600x600 mm base. Anyone inside the 1 m keep-out ring trips the
+    light curtain, which opens the `safe_zone_clear` interlock.
+
+signals:
+  - name: position
+    type: object
+    unit: mm
+    notes: "{x,y,z} of the gripper centre."
+  - name: gripper_closed
+    type: boolean
+  - name: holding_plate
+    type: boolean
+  - name: safe_zone_clear
+    type: boolean
+    notes: Light-curtain interlock; false when a person is inside.
+  - name: homed
+    type: boolean
+
+settings:
+  - name: speed
+    type: number
+    unit: percent
+    limits: {min: 1, max: 100}
+    notes: 100% is 1.2 m/s at the tool centre point. Use <=30% near people or open plates.
+  - name: gripper_force
+    type: number
+    unit: N
+    limits: {min: 5, max: 40}
+    notes: Above 25 N deforms polypropylene plates.
+
+actions:
+  - name: home
+    duration: short
+    approval: auto
+    interlocks: [safe_zone_clear]
+  - name: move_to
+    duration: short
+    approval: auto
+    interlocks: [safe_zone_clear]
+    params: {x: mm, y: mm, z: mm}
+    required: [x, y, z]
+    limits: {x: [-850, 850], y: [-850, 850], z: [0, 900]}
+  - name: pick_plate
+    duration: short
+    approval: auto
+    interlocks: [safe_zone_clear]
+    params: {location: "named position, e.g. 'deck_A1' or 'thermocycler'"}
+    required: [location]
+    limits: {location: {enum: [deck_A1, deck_A2, thermocycler]}}
+    examples: [{location: deck_A1}, {location: thermocycler}]
+  - name: place_plate
+    duration: short
+    approval: auto
+    interlocks: [safe_zone_clear]
+    params: {location: named position}
+    required: [location]
+    limits: {location: {enum: [deck_A1, deck_A2, thermocycler]}}
+    examples: [{location: thermocycler}, {location: deck_A2}]
+  - name: free_drive
+    duration: long
+    approval: forbid
+    notes: Manual teach mode; never agent-operated.
+
+safety:
+  estop: true
+  interlocks: [safe_zone_clear]
+  watchdog_s: 2
+  notes: E-stop engages joint brakes within 50 ms; the gripper keeps its state.
+
+locations:
+  deck_A1: [120, 340, 80]
+  deck_A2: [250, 340, 80]
+  thermocycler: [-410, 90, 120]
+
+# Locations that belong to another instrument. Recipes use these bindings to pick the
+# right instrument, and the simulator checks the instrument's state before moving in.
+handoffs:
+  thermocycler: thermocycler-01

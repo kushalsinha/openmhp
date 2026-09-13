@@ -1,0 +1,74 @@
+device:
+  notes: >
+    96-well PCR thermocycler on bench 3, left of the liquid handler. Lid must be closed
+    before any run. Block ramps ~4 degC/s; lid heater takes ~40 s to reach 105 degC.
+
+physical:
+  mass_kg: 12.5
+  footprint_mm: [330, 460, 250]
+  power_w: 850
+  notes: Bench-mounted, do not relocate while running. Hot lid surface up to 110 degC.
+
+signals:
+  - name: block_temperature
+    type: number
+    unit: degC
+    notes: Measured at block centre; edge wells lag by ~0.5 degC.
+  - name: lid_temperature
+    type: number
+    unit: degC
+  - name: lid_closed
+    type: boolean
+    notes: True when the lid latch is engaged.
+  - name: lid_cool
+    type: boolean
+    notes: True when the lid is below 60 degC and safe to open.
+  - name: cycle
+    type: integer
+    notes: Current PCR cycle during run_protocol.
+
+settings:
+  - name: target_temperature
+    type: number
+    unit: degC
+    limits: {min: 4, max: 105}
+    approval: auto
+    notes: Block setpoint. Below 4 degC condensation forms; above 105 the seal fails.
+  - name: lid_heater
+    type: boolean
+    approval: auto
+
+actions:
+  - name: run_protocol
+    duration: long
+    approval: auto
+    interlocks: [lid_closed]
+    params:
+      steps: "array of {temp: degC 4..105, hold_s: seconds 0..3600}"
+      cycles: "integer 1..100"
+    required: [steps, cycles]
+    limits:
+      cycles: [1, 100]
+    pausable: true
+    methods: true                # a PCR program is a method: kept per project under methods/ (SPEC 4.5)
+    notes: Runs a cycling program. Every step is checked against the block limits before the first one starts.
+    examples:
+      - steps: [{temp: 95, hold_s: 30}, {temp: 58, hold_s: 30}, {temp: 72, hold_s: 45}]
+        cycles: 30
+      - steps: [{temp: 98, hold_s: 10}, {temp: 65, hold_s: 15}]
+        cycles: 35
+  - name: open_lid
+    duration: short
+    approval: confirm
+    interlocks: [lid_cool]
+    notes: A person confirms each time. Refused while the lid is above 60 degC.
+  - name: close_lid
+    duration: short
+    approval: auto
+    notes: Make sure the plate arm is clear of the lid first.
+
+safety:
+  estop: true
+  interlocks: [lid_closed, lid_cool]
+  watchdog_s: 10
+  notes: E-stop cuts block and lid heaters; the block cools passively.

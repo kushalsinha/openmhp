@@ -1,0 +1,30 @@
+name: solvent-screen
+project: _shared
+action: run_method
+params:
+  oven_program:
+  - temp: 60
+    hold_s: 60
+  - temp: 200
+    ramp_c_min: 20
+    hold_s: 30
+  injection_volume_ul: 1
+  carrier_flow_ml_min: 1.5
+  sample: acetone ethanol isopropanol toluene
+compounds:
+- acetone
+- ethanol
+- isopropanol
+- toluene
+version: 1
+hash: 3e9ecb47f960
+created: 1757600000.0
+updated: 1757600000.0
+validated: null
+status: active
+author: package author
+notes: 'General solvent screen: fast ramp, 1 uL. Close-boiling pairs (ethanol/isopropanol)
+  need a lower flow or a slower ramp.'
+source:
+  kind: vendor_file
+  ref: SimChrom application note GC-7/AN-12

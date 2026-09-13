@@ -1,0 +1,85 @@
+device:
+  notes: >
+    Gas chromatograph with a split/splitless inlet and a flame ionisation detector. Each injection
+    runs one method (an oven program plus inlet, flow and injection settings) and produces a
+    chromatogram. Results are pushed to subscribers the moment a run finishes.
+
+physical:
+  mass_kg: 48
+  footprint_mm: [580, 560, 490]
+  power_w: 2200
+  notes: Oven exhaust at the back reaches 60 degC. Hydrogen and air supplies for the FID must be on.
+
+signals:
+  - name: oven_temperature
+    type: number
+    unit: degC
+  - name: carrier_flow
+    type: number
+    unit: mL/min
+    notes: Measured column flow.
+  - name: column_pressure
+    type: number
+    unit: kPa
+  - name: detector_ready
+    type: boolean
+    notes: True when the FID flame is lit and the detector is at temperature.
+  - name: injections_today
+    type: integer
+  - name: last_result
+    type: object
+    notes: Summary of the most recent run (peaks, resolution, run time). Pushed as a signal update when a run finishes.
+
+settings:
+  - name: carrier_flow_setpoint
+    type: number
+    unit: mL/min
+    limits: {min: 0.5, max: 5}
+    approval: auto
+    notes: Column flow between runs. A method may override it per run with carrier_flow_ml_min.
+  - name: inlet_temperature
+    type: number
+    unit: degC
+    limits: {min: 50, max: 350}
+    approval: auto
+  - name: detector_temperature
+    type: number
+    unit: degC
+    limits: {min: 100, max: 350}
+    approval: auto
+
+actions:
+  - name: run_method
+    duration: long
+    approval: auto
+    interlocks: [detector_ready]
+    params:
+      oven_program: "array of {temp: degC 40..320, hold_s: 0..3600, ramp_c_min: 1..50 (omit on the first step)}"
+      injection_volume_ul: "number 0.1..5"
+      carrier_flow_ml_min: "number 0.5..5 (optional; else the carrier_flow_setpoint)"
+      sample: "string: what is being injected (for the record)"
+    required: [oven_program, injection_volume_ul]
+    limits:
+      injection_volume_ul: [0.1, 5]
+      carrier_flow_ml_min: [0.5, 5]
+    methods: true                # runs saved methods, kept per project under methods/ (SPEC 4.5)
+    cancellable: true
+    notes: >
+      Runs one injection with the given method. The whole oven program is checked against the column
+      limits before the injection. The job result carries the peaks (name, retention time, area, width),
+      the resolution between neighbouring peaks, and a compact chromatogram trace.
+    examples:
+      - oven_program: [{temp: 60, hold_s: 60}, {temp: 200, ramp_c_min: 20, hold_s: 30}]
+        injection_volume_ul: 1
+        sample: solvent mix
+  - name: bakeout
+    duration: long
+    approval: confirm
+    interlocks: [detector_ready]
+    notes: Holds the oven at 300 degC for 30 minutes to clean the column. A person confirms.
+
+safety:
+  estop: true
+  interlocks: [detector_ready]
+  watchdog_s: 30
+  notes: E-stop cuts the oven and inlet heaters and closes the carrier gas valve; the FID flame goes out.
