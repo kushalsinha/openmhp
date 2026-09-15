@@ -19,11 +19,11 @@ Get from the user, per control layer: how to reach it (hosts, ports, node names,
 list of devices with the four facts a card needs: id, class, location, one-line notes. Read the
 matching reference before writing code:
 
-- SiLA 2: [references/sila2.md](references/sila2.md)
-- PyLabRobot: [references/pylabrobot.md](references/pylabrobot.md)
-- MADSci: [references/madsci.md](references/madsci.md)
 - OPC UA / PLCs: [references/opcua.md](references/opcua.md)
 - ROS 2: [references/ros2.md](references/ros2.md)
+- SiLA 2: [references/sila2.md](references/sila2.md)
+- MADSci: [references/madsci.md](references/madsci.md)
+- PyLabRobot: [references/pylabrobot.md](references/pylabrobot.md)
 
 MADSci nodes describe themselves; the other four need a short binding map per device. Ask
 the owner the safety questions from the `openmhp-onboard-device` skill (limits, interlocks,

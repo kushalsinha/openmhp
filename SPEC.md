@@ -15,8 +15,8 @@ Design rules, in priority order:
 
 1. **Safety is enforced by the driver, never by the agent.** Limits, interlocks and approval levels live in the descriptor and are checked on the device side of the wire. A wrong value from an agent is refused, not obeyed.
 2. **One descriptor is the whole manual.** Everything an agent needs, including the tacit knowledge that used to live in paper manuals and people's heads, is written in natural-language `notes` fields on the descriptor.
-3. **Five primitives, no more.** A device that speaks describe / signals / settings / actions / safety can be operated by any MHP host.
-4. **Bridge, don't replace.** SiLA 2, PyLabRobot, MADSci, OPC UA and ROS 2 devices become MHP devices through thin adapters; MHP is the layer the agent sees.
+3. **Six primitives, no more.** A device that speaks describe / signals / settings / actions / safety / methods can be operated by any MHP host.
+4. **Bridge, don't replace.** OPC UA, ROS 2, SiLA 2, MADSci and PyLabRobot devices become MHP devices through thin adapters; MHP is the layer the agent sees.
 5. **The agent's context is a resource the protocol protects.** A lab with two thousand devices costs the agent the same handful of tokens as a lab with two. Nothing is loaded that was not asked for (§3).
 
 ---
@@ -51,7 +51,7 @@ Design rules, in priority order:
 | **Server (driver)** | Owns exactly one device. Serves the descriptor, enforces the safety envelope, translates primitives into vendor commands, runs jobs. |
 | **Device** | The physical thing. May be a single instrument or a coordinated cell exposed as one logical device. |
 
-A server MAY be an **adapter** that wraps another control layer (SiLA 2 feature, PyLabRobot backend, MADSci node) rather than raw hardware. From the host's point of view there is no difference.
+A server MAY be an **adapter** that wraps another control layer (an OPC UA server, a SiLA 2 feature, a MADSci node) rather than raw hardware. From the host's point of view there is no difference.
 
 ---
 
@@ -89,7 +89,7 @@ Small labs need no directory: a client with an explicit name-to-target map scans
 
 ### 3.3 Constant tool surface
 
-An MCP host connected to an MHP lab sees **eight operating tools regardless of device count**: `mhp_find`, `mhp_describe`, `mhp_read`, `mhp_write`, `mhp_invoke`, `mhp_job`, `mhp_estop`, `mhp_run`, plus two for the lab itself, `mhp_lab` (§9.1) and `mhp_data` (§3.5). There are never per-device tools. The device descriptor, loaded on demand, is the documentation. Bridges MUST NOT enumerate devices into the tool list or the resource list at startup; resources list only the devices the session has opened.
+An MCP host connected to an MHP lab sees **eight operating tools regardless of device count**: `mhp_find`, `mhp_describe`, `mhp_read`, `mhp_write`, `mhp_invoke`, `mhp_job`, `mhp_estop`, `mhp_run`, plus three for the lab itself: `mhp_lab` (§9.1), `mhp_data` (§3.5) and `mhp_method` (§5.8) — eleven in total. There are never per-device tools. The device descriptor, loaded on demand, is the documentation. Bridges MUST NOT enumerate devices into the tool list or the resource list at startup; resources list only the devices the session has opened.
 
 ### 3.4 Programmatic runs
 
@@ -119,10 +119,10 @@ The reference `examples/scale_demo.py` builds 2,000 simulated devices across 8 c
 
 | | Tokens in agent context |
 |---|---|
-| Every descriptor loaded up front | 937,845 |
-| `mhp_find` (5 cards) + summary of the chosen device (with its operating instructions) + full spec of the 2 items used | 1,087 |
+| Every descriptor loaded up front | 1,224,382 |
+| `mhp_find` (5 cards) + summary of the chosen device (with its operating instructions) + full spec of the 2 items used | 1,270 |
 
-That is 0.11% of the naive cost, with search taking well under a millisecond. The device is then operated through exactly the same primitives as in a two-device lab.
+That is 0.10% of the naive cost, with search taking well under a millisecond. The device is then operated through exactly the same primitives as in a two-device lab.
 
 ---
 
@@ -615,7 +615,7 @@ This is how a scientist adds an instrument without leaving the conversation: *"f
 
 ## 10. Three control surfaces
 
-The same five primitives are reachable three ways. They compose: an agent uses MCP to explore and decide, writes a code file for the parts that must run fast or long, and uses the CLI to check on it.
+The same six primitives are reachable three ways. They compose: an agent uses MCP to explore and decide, writes a code file for the parts that must run fast or long, and uses the CLI to check on it.
 
 ### 10.1 MCP bridge
 
@@ -738,11 +738,11 @@ dev = BoundDriver(device={"id": "hotplate-01", "class": "hotplate", "notes": "Fu
 
 | Layer | Adapter | Mapping |
 |---|---|---|
-| **SiLA 2** | `sila_device(host, port, ...)` | property → signal; one-parameter unobservable command → setting; command → action, observable commands stream progress and accept cancel; any stop command → estop. Leases replace LockController. |
-| **PyLabRobot** | `plr_device(machine, ...)` | every public coroutine on a `Machine` → action with `params` from its signature and enforced `limits`; `setup()` on start, `stop()` on estop; coroutines run on a private event loop. Actions cannot be cancelled mid-move (use e-stop); an operation that times out is cancelled and faults the device. |
-| **MADSci** | `madsci_node(url, ...)` | self-describing: `/info` actions → actions with params and notes; `/state` keys → signals; `/status` busy → `ping` state; `/action` + polling → jobs; cancel is sent to the node and the job ends only on a terminal status, and a node that keeps running after a cancel faults the device; `/admin/safety_stop` → estop. No binding map needed. |
 | **OPC UA / Modbus** | `opcua_device(url, ...)` | variable node → signal or setting; method node → action with positional args; abort method → estop. Modbus uses `BoundDriver` with two register callables. |
 | **ROS 2** | `ros2_device(node, ...)` | topic subscription → signal; topic publication → setting; action server → action with feedback → progress and cancel, reporting the goal's terminal status (aborted is a failure); signals older than `max_age_s` read as no value; Trigger service → estop, with its result checked. |
+| **SiLA 2** | `sila_device(host, port, ...)` | property → signal; one-parameter unobservable command → setting; command → action, observable commands stream progress and accept cancel; any stop command → estop. Leases replace LockController. |
+| **MADSci** | `madsci_node(url, ...)` | self-describing: `/info` actions → actions with params and notes; `/state` keys → signals; `/status` busy → `ping` state; `/action` + polling → jobs; cancel is sent to the node and the job ends only on a terminal status, and a node that keeps running after a cancel faults the device; `/admin/safety_stop` → estop. No binding map needed. |
+| **PyLabRobot** | `plr_device(machine, ...)` | every public coroutine on a `Machine` → action with `params` from its signature and enforced `limits`; `setup()` on start, `stop()` on estop; coroutines run on a private event loop. Actions cannot be cancelled mid-move (use e-stop); an operation that times out is cancelled and faults the device. |
 
 Each adapter is a few lines per device; the `openmhp-adapt-fleet` skill (§14.1) walks a harness through a whole fleet. Adapters MUST implement the safety gates in §7 themselves; wrapping a layer that lacks limits does not exempt the MHP server from enforcing them. The reference adapters get this for free from `BoundDriver`. They are tested against fakes of each client library; no vendor system has been exercised yet.
 
@@ -753,7 +753,7 @@ MHP ships three [Agent Skills](https://agentskills.io) so that any skills-capabl
 | Skill | When it activates | What it does |
 |---|---|---|
 | `openmhp-onboard-device` | one instrument to connect | interviews the owner, writes descriptor + driver, validates, serves, registers |
-| `openmhp-adapt-fleet` | SiLA 2 / PyLabRobot / MADSci / OPC UA / ROS 2 fleet | one adapter file per device, manifest, directory, `mhp-mcp` config, proof checklist |
+| `openmhp-adapt-fleet` | OPC UA / ROS 2 / SiLA 2 / MADSci / PyLabRobot fleet | one adapter file per device, manifest, directory, `mhp-mcp` config, proof checklist |
 | `openmhp-operate` | any task on connected hardware | the find → describe → check → dry-run → act → verify loop; refusal handling; e-stop rules |
 
 Skills follow the progressive-disclosure design of the protocol itself: a harness holds only their names and descriptions until a task matches.

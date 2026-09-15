@@ -15,7 +15,7 @@ Driver kinds a non-programmer can finish:
   serial   ASCII commands over a serial/USB port, declared in the descriptor
            (openmhp.drivers.serial_ascii). The owner pastes commands from the manual.
   mhp      the instrument already speaks MHP at a URL: just add it.
-  adapter  SiLA 2 / OPC UA / MADSci / PyLabRobot / ROS 2 bindings (a technician's job;
+  adapter  OPC UA / ROS 2 / SiLA 2 / MADSci / PyLabRobot bindings (a technician's job;
            the interview collects what it can and leaves driver.py for the adapt-fleet skill).
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ QUESTIONS = [
     ("kind", True,
      "How is it controlled today? (a) someone operates it by hand at the bench, (b) it has a serial/USB "
      "port with text commands (there is usually a command list in the manual), (c) it already has an OpenMHP "
-     "address on the network, (d) it is driven by SiLA 2, OPC UA, MADSci, PyLabRobot or ROS 2.",
+     "address on the network, (d) it is driven by OPC UA, ROS 2, SiLA 2, MADSci or PyLabRobot.",
      {"kind": "one of manual | serial | mhp | adapter", "url": "str, only for mhp", "port": "str, only for serial, e.g. /dev/ttyUSB0 or COM3",
       "baud": "int, only for serial, default 9600", "layer": "str, only for adapter"}),
     ("purpose", True,

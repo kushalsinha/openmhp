@@ -48,7 +48,7 @@ Before writing anything, run `mhp_lab op='scan'` (or `mhp lab scan`): if the ins
 
 ## Step 1. Decide the driver path
 
-- **Already controlled by SiLA 2, PyLabRobot, MADSci, OPC UA or ROS 2?** Use `openmhp-adapt-fleet`
+- **Already controlled by OPC UA, ROS 2, SiLA 2, MADSci or PyLabRobot?** Use `openmhp-adapt-fleet`
   for driver.py; still write DEVICE.md and descriptor.yaml here.
 - **Vendor API, serial protocol or SDK?** Native Driver from [assets/driver_template.py](assets/driver_template.py).
 - **A Python callable or two?** `BoundDriver` bindings (shown at the end).
