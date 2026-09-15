@@ -1,218 +1,132 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
-    <img src="assets/hero.svg" alt="OpenMHP" width="520">
-  </picture>
-</p>
+<div align="center">
 
-<h3 align="center">The open protocol for AI agents to run lab instruments</h3>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
+  <img src="assets/hero.svg" alt="OpenMHP" width="480">
+</picture>
 
-<p align="center">Install it once. Tell your agent to find your instruments, onboard the rest by interview, rehearse a procedure, and run it within limits the instrument itself enforces.</p>
+<br/>
+<br/>
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/openmhp-cli"><img alt="npm" src="https://img.shields.io/npm/v/openmhp-cli?label=openmhp-cli&color=3FB59A"></a>
-  <a href="https://pypi.org/project/openmhp/"><img alt="PyPI" src="https://img.shields.io/pypi/v/openmhp?label=openmhp&color=3FB59A"></a>
-  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache%202.0-blue"></a>
-  <a href="https://openmhp.com"><img alt="docs" src="https://img.shields.io/badge/docs-openmhp.com-2B8F78"></a>
-</p>
+**The open protocol that lets any AI agent find, understand and safely run lab instruments.**
 
-<p align="center">
-  <a href="https://openmhp.com/quickstart">Get started</a> ·
-  <a href="https://openmhp.com/features">Features</a> ·
-  <a href="https://openmhp.com/design">Design principles</a> ·
-  <a href="https://openmhp.com/cookbook">Cookbook</a> ·
-  <a href="https://openmhp.com/instruments">Instruments</a> ·
-  <a href="https://openmhp.com/spec">Specification</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a>
-</p>
+Describe an instrument once, in plain language. Any agent harness can then find it, learn how to use it from the people who own it, rehearse a procedure, and run it — within limits the instrument itself enforces, not the agent's judgment.
 
----
+<br/>
 
-**OpenMHP (Open Model Hardware Protocol)** is MCP for lab equipment. It gives any AI agent
-harness one way to find a physical device among thousands, learn how to use it from the
-people who own it, operate it safely, and hand it long-running work.
+[![npm](https://img.shields.io/npm/v/openmhp-cli?label=openmhp-cli&color=3FB59A)](https://www.npmjs.com/package/openmhp-cli)
+[![PyPI](https://img.shields.io/pypi/v/openmhp?label=openmhp&color=3FB59A)](https://pypi.org/project/openmhp/)
+[![license](https://img.shields.io/badge/license-Apache%202.0-1f1f1f.svg)](LICENSE)
+[![docs](https://img.shields.io/badge/docs-openmhp.com-2B8F78)](https://openmhp.com)
+
+[Quickstart](https://openmhp.com/quickstart) · [Features](https://openmhp.com/features) · [Design principles](https://openmhp.com/design) · [Cookbook](https://openmhp.com/cookbook) · [Instruments](https://openmhp.com/instruments) · [Specification](https://openmhp.com/spec) · [Contributing](CONTRIBUTING.md)
+
+</div>
+
+<br/>
+
+## What it is
+
+OpenMHP (Open Model Hardware Protocol) is MCP for lab and factory hardware. MCP gave AI applications one standard way to reach software tools; OpenMHP does the same for physical instruments. An instrument described once can be operated by any agent harness, and an agent that speaks OpenMHP can operate any instrument, without a bespoke integration for every pair.
+
+It is built for the part of running an instrument that is real work but not the science: finding what's on the bench, learning its limits and quirks, checking interlocks, rehearsing a procedure before committing reagent or time to it, and watching a long run without babysitting it.
+
+- **Safety lives in the driver, not the agent.** Limits, interlocks and approval levels are written by the instrument's owner and checked on the device side of the wire on every call — an agent cannot talk its way past them.
+- **An instrument teaches like a colleague would.** Descriptions are written in plain language, load progressively like an Agent Skill, and cost an agent's context about the same whether the lab has two devices or two thousand.
+- **Nothing moves without a plan.** Plan mode rehearses a whole procedure through every safety gate first, so a person sees exactly what will happen before anything heats, moves, or spends a sample.
+- **Long runs don't need babysitting.** Jobs, a per-lease watchdog, and pushed events mean a thirty-cycle PCR program or an overnight monitor reports back on its own.
+- **Bridges what you already run.** SiLA 2, PyLabRobot, MADSci, OPC UA and ROS 2 devices join in a few lines; nothing is replaced underneath.
+
+## Status
+
+Experimental preview. The runtime is tested against simulators and against fakes of each vendor client library — no physical instrument or vendor system has been exercised yet. Use it on real hardware only under supervision, with hardwired safety systems in place. [§16 of SPEC.md](SPEC.md) lists what is not yet specified.
+
+## Install
 
 ```bash
 npx openmhp-cli setup
 ```
 
-Then, in Claude Code, Codex, OpenClaw, Hermes, Claude Science, Open Science or any MCP client:
+This installs the runtime and registers the MCP server with whatever agent harness it finds. Try it with nothing plugged in first:
+
+```bash
+npx openmhp-cli demo      # adds two simulated instruments: a thermocycler and a plate arm
+```
+
+Python only, no npm:
+
+```bash
+pip install "openmhp[all]"      # [all] adds mDNS discovery and serial support
+```
+
+## First task
+
+Open your agent harness — Claude Code, Codex, OpenClaw, Hermes, Claude Science, Open Science, or any MCP client — and just talk to it:
+
+```text
+Onboard my hotplate, then run a reflux at 80 °C for two minutes, stirring at 400 rpm.
+```
+
+The agent interviews you about the instrument (what it is, where it sits, what can be set, how to stop it), writes and validates the device package itself, reads you a safety card, then rehearses the procedure and shows you the plan before running anything. Nothing about this needs code from you.
+
+## What you can do
 
 | You say | What happens |
 |---|---|
-| "find the instruments on my network" | scans for devices that speak MHP and lists them |
-| "onboard my hotplate" | the server interviews you, writes the device package itself, validates it, reads you a safety card, adds it. Hand-operated and USB-serial instruments need no code |
-| "run a 30-cycle PCR at 95/58/72 and hold at 4 °C" | finds a recipe, rehearses it in plan mode and shows every step, then runs it and reports what it read |
-| "watch the incubator overnight" | a background run logs readings and alerts; in the morning, ask what happened |
+| "find the instruments on my network" | Scans for devices that speak MHP and lists them, with what each one is for. |
+| "onboard my hotplate" | The server interviews you, writes the device package, validates it, reads you a safety card, and adds it. Hand-operated and USB-serial instruments need no code at all. |
+| "run a 30-cycle PCR at 95/58/72 and hold at 4 °C" | Finds a matching recipe, rehearses it in plan mode with every step shown, then runs it and reports what it actually read. |
+| "which method should I use for ethanol on the GC?" | Asks the instrument for the methods filed under your project; one match runs, several get put to you, none gets you asked for parameters to save. |
+| "watch the incubator overnight" | A background run logs readings as the instrument pushes them, and raises alerts; in the morning, ask what happened. |
+| "stop everything, now" | Emergency-stops every device the session has touched, at once, regardless of what else is going on. |
 
-Try it with nothing plugged in: `npx openmhp-cli demo` adds two simulated instruments.
+## How it works
 
-## Status
+```
+┌──────────────────────────────────┐
+│  Host  (agent runtime)           │
+│   Claude / lab orchestrator /    │
+│   scheduler / notebook           │
+│  ┌──────────┐  ┌──────────┐      │        one server per device
+│  │MHP client│  │MHP client│ ...  │
+└──┴────┬─────┴──┴────┬─────┴──────┘
+        │ JSON-RPC     │ JSON-RPC
+   stdio / HTTP   stdio / HTTP
+        │             │
+┌───────▼──────┐ ┌────▼─────────┐
+│ MHP server   │ │ MHP server   │
+│ (driver)     │ │ (adapter)    │
+│ thermocycler │ │ SiLA 2 arm   │
+└───────┬──────┘ └────┬─────────┘
+   serial/USB      SiLA gRPC
+        │             │
+   [instrument]   [instrument]
+```
 
-Experimental preview. The runtime is tested against simulators and against fakes of each vendor client library; no physical instrument or vendor system has been exercised yet. Use it on real hardware only under supervision, with hardwired safety systems in place. §16 of [SPEC.md](SPEC.md) lists what is not yet specified.
+- **Six safety gates, one fixed order**, on every write and invoke: state → approval → interlocks → typed value or params → lease → busy. Whatever the agent asks for, only the driver decides what actually happens.
+- **The host is trusted, the model is not.** `approved: true` means a person confirmed *this exact request*, set only by the host after real MCP elicitation — never something the model can assert about itself.
+- **Fail closed.** An uncertain write outcome, or a controlling process going silent past a declared watchdog window, latches the device safe rather than guessing it's fine. Emergency stop always wins.
+- **Every device pushes.** Signal updates, job progress and completion, and safety events arrive without being asked, over whatever transport connects it — an agent reads them instead of polling.
 
-## Why
-
-Every instrument has its own interface, and the knowledge that makes it safe to use lives in
-manuals and people's heads. OpenMHP takes the shape of MCP and Agent Skills and applies it to
-hardware, so that an instrument described once can be operated by any agent, and an agent that
-speaks OpenMHP can operate any instrument, without a bespoke integration for each pair.
-
-The full story, in prose, is [Design principles](#design-principles) below and at
-[openmhp.com/design](https://openmhp.com/design); the normative contract is [SPEC.md](SPEC.md).
+The full reasoning behind these choices is in [Design principles](https://openmhp.com/design); the normative contract is [SPEC.md](SPEC.md).
 
 ## Features
 
-**Protocol core**
-- Five primitives — describe, signals (read), settings (write), actions (jobs), safety — plus
-  **methods** as a sixth: named, versioned parameter sets for instruments that run a different
-  procedure per project or compound (HPLC, GC, MS, PXRD, PCR programs), kept and validated on the
-  device itself (SPEC §4.5).
-- JSON-RPC 2.0 over stdio or HTTP, the same shape MCP uses, with capability negotiation on connect
-  and progressive protocol-version fallback.
-- Three-tier progressive disclosure of a device's descriptor (card → summary → full, plus `select`
-  for named items), so a search result costs about the same whether the lab has two devices or two
-  thousand.
+Six primitives (describe, signals, settings, actions, safety, and **methods** for instruments that run a named procedure per project or compound), device packages shaped like Agent Skills, plan mode with virtual time, a per-lease watchdog, pause and resume, evidence-based safety cards, server-run onboarding, simulated twins, adapters for SiLA 2/PyLabRobot/MADSci/OPC UA/ROS 2, a community package registry, and a tool surface that stays at eleven calls whether the lab has two devices or two thousand.
 
-**Safety, enforced in the driver, never by the agent**
-- Six safety gates, always in the same order: state → approval → interlocks → typed value or
-  params → lease → busy. A value is type-checked, bounded and rejected if non-finite or malformed
-  *before* any vendor code runs, and the same check applies to a dry run.
-- Approval levels (`auto` / `confirm` / `forbid`) written by the device's owner; `confirm` is
-  enforced through MCP elicitation, and a model cannot set `approved: true` itself — only the host
-  can, and only after a person actually confirmed that exact request.
-- Fail-closed state machine: any exception mid-job, or a write whose outcome is uncertain, latches
-  the device in `fault` with `outcome: unknown`; recovery needs a `safety/reset` that verifies the
-  device rather than just clearing a flag.
-- A per-lease **watchdog**, armed automatically whenever a session holds control: if the holder
-  goes silent longer than the declared window, the device fails safe on its own. The reference
-  client renews it with a heartbeat, so correct use is invisible and silence is the only way to
-  trip it.
-- **Emergency stop** that is always allowed, runs outside the request lock so it never waits behind
-  vendor I/O, and can be sent to every device a session has touched at once.
+The full list, grouped by what each piece is for, is at **[openmhp.com/features](https://openmhp.com/features)**.
 
-**Human in the loop**
-- Pause and resume on long-running jobs, so a person can step in without a full e-stop.
-- Operator-run ("manual") instruments: an action waits in `waiting_operator` until a person
-  acknowledges it — completion is never claimed before they act.
-- A **safety card** that reports evidence per probe (passed / failed / not exercised) instead of a
-  verdict, and says plainly that it is not a safety certification.
+## Documentation
 
-**Long-running work, data and events as first-class citizens**
-- Jobs: an action returns immediately and runs on the device; poll it or subscribe to it, with
-  states covering `waiting_operator` and an uncertain `outcome`.
-- **Every device pushes** signal updates, job progress and completion, and safety events without
-  being asked, over whatever transport connects it (in-process, HTTP Server-Sent Events, or
-  stdio) — an agent reads `mhp_data op='updates'` instead of polling.
-- Background runs get their own directory, saved files, and an `events.jsonl` of everything a
-  device pushed while that run used it; a restart-safe, append-only run log keeps history across a
-  bridge restart.
-- **Plan mode** rehearses a whole script: every write and invoke becomes a dry run through all six
-  gates, time is virtual so a 30-minute wait costs nothing to rehearse, a step budget bounds a
-  runaway loop, and a strict read-only allowlist keeps the escape hatch (raw RPC) from ever
-  actuating anything for real.
+| Topic | Guides |
+|---|---|
+| First use | [Quickstart](https://openmhp.com/quickstart), [Features](https://openmhp.com/features), [Design principles](https://openmhp.com/design) |
+| Connect an instrument | [Add an instrument](https://openmhp.com/add-a-device), [Adapters](https://openmhp.com/adapters), [Instruments supported](https://openmhp.com/instruments) |
+| Run something | [Recipes](https://openmhp.com/recipes), [Cookbook](https://openmhp.com/cookbook) |
+| Reference | [Specification](https://openmhp.com/spec), one page per section |
+| Project | [Roadmap](https://openmhp.com/roadmap) — what's shipped, what's next, what stays out of scope |
 
-**Getting instruments connected**
-- **Server-run onboarding**: an interview in plain language that writes the whole device package —
-  DEVICE.md, descriptor.yaml, and for manual or serial instruments, a working driver — with no code
-  from the person answering questions.
-- No-code drivers for hand-operated ("manual") and USB/serial ASCII-command instruments.
-- **Adapters** that bridge the ecosystems labs already run — SiLA 2, PyLabRobot, MADSci, OPC UA,
-  ROS 2 — in a few lines each, on top of a shared `BoundDriver` scaffold.
-- **Simulated twins** (`sim.py`) for every bundled and community package, so a procedure can be
-  rehearsed or demoed with nothing plugged in.
-- A **community registry** of contributed packages, added by `github:` target, so one contributed
-  package is one every other lab doesn't have to write.
-
-**Scale and harness ergonomics**
-- A **directory** that indexes cards (not descriptors) with BM25 search, pinging live state only
-  for the candidates a query actually needs.
-- A tool surface that never grows: **eleven tools** whether the lab has two devices or two
-  thousand, with worked `input_examples` on every one of them.
-- **Recipes**: tested, parameterized scripts an agent finds and adapts instead of writing from
-  scratch, runnable directly or rehearsed through plan mode first.
-- Three ready-made **Agent Skills** matching the three real workflows: onboarding a device,
-  adapting an existing fleet, and day-to-day operation.
-- Three control surfaces over one enforced protocol: the **MCP bridge** (stdio or bearer-token,
-  Origin-checked HTTP), a **CLI** for scripting and debugging, and a **Python SDK** for code that
-  chains steps across devices faster or longer than an agent should reason about live.
-
-## Design principles
-
-The high-level thought process behind the protocol, in the order decisions actually got made:
-
-1. **Where it came from.** Anthropic solved the equivalent problem for software with the Model
-   Context Protocol, and showed how to package procedural knowledge with Agent Skills. OpenMHP is
-   the same idea carried to hardware: one open, shared way for any AI agent to connect to lab and
-   factory instruments the way MCP connected agents to digital tools.
-2. **The agent is not the enforcement point.** Everything that keeps a run safe — limits,
-   interlocks, approval, lease ownership, whether an outcome is even certain — is checked in the
-   driver, on the device side of the wire, on every call including a dry run. An agent can ask for
-   anything; only the driver decides what actually happens. Changing a limit is a code review, not
-   something reachable at run time.
-3. **The host is trusted, the model is not.** `approved: true` means a person confirmed *this exact
-   request*. It is stripped from whatever the model sends and set only by the host, after MCP
-   elicitation. This one rule is what makes "confirm-gated" mean something instead of being a
-   suggestion the model could talk itself past.
-4. **An instrument should teach an agent the way a colleague would.** A device package is written
-   in the owner's own words, with the tacit knowledge that used to live in a manual or in someone's
-   head — what a lid's cool-down actually feels like, what a value "usually" is, what to never do.
-   It loads the way an Agent Skill does: a ~40-token card in search results, the operating summary
-   once chosen, full detail only for the item about to be used. An agent's context is a resource
-   the protocol protects, the same lesson MCP's own tool-search work taught about long tool lists.
-5. **Fail closed, always.** An uncertain outcome is worse than a stopped one, so a failure latches
-   the device rather than guessing it's fine. A watchdog protects against a controlling process
-   going silent, not just against malice. E-stop always wins regardless of lease, approval or
-   interlock state. Physical actions are not idempotent, so retries are the caller's job, never
-   automatic.
-6. **Show the plan before doing the thing.** Plan mode exists so an agent can rehearse a whole
-   procedure — every gate evaluated, nothing physically moving — and hand a person something
-   concrete to say yes to, rather than narrating an intention in prose.
-7. **Physical work does not fit inside one request/response turn.** Jobs, leases, background runs
-   and pushed events all exist because chemistry and mechanics run on their own clock. An agent
-   should have results pushed to it and a run should survive a restart, not require babysitting a
-   poll loop for the length of a PCR program.
-8. **Methods are data, owned by the project, not baked into the instrument.** The same GC runs a
-   different method per compound and per project; hard-coding one method into a driver would be
-   wrong on day one. So a method is a versioned record the device validates and keeps, and the
-   protocol's first move for a method-driven action is "ask which one," not "guess."
-9. **Bridge existing ecosystems; don't compete with them.** SiLA 2, PyLabRobot, MADSci, OPC UA and
-   ROS 2 represent years of vendor and lab investment. OpenMHP's job is to be the layer an agent
-   sees, translating what already works underneath, not replacing it.
-10. **The protocol is the product, not any one implementation.** A written, versioned SPEC.md,
-    JSON-RPC 2.0 as an ordinary wire format, and conformance defined behaviorally — pass an
-    equivalent test suite — so a second, independent implementation is possible and welcome, on
-    any language or platform.
-
-## For developers
-
-```bash
-pip install "openmhp[all]"                     # runtime; [all] adds mDNS discovery and serial
-python examples/pcr_run.py                     # orchestrate a robot arm and a thermocycler
-python examples/scale_demo.py                  # 2,000 devices, ~1k tokens
-python tests/test_adapters.py && python tests/test_runs.py && python tests/test_safety_gates.py && python tests/test_methods.py
-mhp serve pkg:openmhp/devices/thermocycler-01 --http 18921     # serve a device package on the LAN
-mhp-mcp --http 18800                           # the MCP bridge over HTTP: bearer token from ~/.openmhp/http_token
-```
-
-A device is a folder:
-
-```
-devices/hotplate-01/
-├── DEVICE.md          card (YAML frontmatter) + operating instructions
-├── descriptor.yaml    signals, settings with limits, actions, interlocks, safety
-├── driver.py          code: a Driver subclass, a BoundDriver, or an adapter
-├── sim.py             optional simulated twin
-├── references/        SOPs, manual excerpts
-├── scripts/           tested mhp_run scripts
-└── methods/           optional: saved methods per project, for actions marked methods: true (SPEC 4.5)
-```
-
-Adapters: `openmhp.adapters.sila2`, `.pylabrobot`, `.madsci`, `.opcua`, `.ros2`, and `BoundDriver`
-for any Python callable. Community packages live in [`packages/`](packages/); recipes in
-[`openmhp/recipes/`](openmhp/recipes/); Agent Skills in [`openmhp/skills/`](openmhp/skills/).
-
-## Layout
+## Repository
 
 ```
 openmhp/driver.py        Driver base class: primitives, six safety gates, jobs (pause/resume), detail tiers, resources, methods/*
@@ -238,6 +152,38 @@ packages/                community packages: ika-c-mag-hs7, opentrons-flex, manu
 npm/                     the npx openmhp-cli launcher
 ```
 
+A device package itself is a folder:
+
+```
+devices/hotplate-01/
+├── DEVICE.md          card (YAML frontmatter) + operating instructions
+├── descriptor.yaml    signals, settings with limits, actions, interlocks, safety
+├── driver.py          code: a Driver subclass, a BoundDriver, or an adapter
+├── sim.py             optional simulated twin
+├── references/        SOPs, manual excerpts
+├── scripts/           tested mhp_run scripts
+└── methods/           optional: saved methods per project, for actions marked methods: true (SPEC 4.5)
+```
+
+```bash
+git clone https://github.com/kushalsinha/openmhp && cd openmhp && pip install -e ".[all]"
+python examples/pcr_run.py                     # orchestrate a robot arm and a thermocycler
+python examples/scale_demo.py                  # 2,000 devices, ~1k tokens
+python tests/test_adapters.py && python tests/test_runs.py && python tests/test_safety_gates.py && python tests/test_methods.py
+mhp serve pkg:openmhp/devices/thermocycler-01 --http 18921     # serve a device package on the LAN
+mhp-mcp --http 18800                           # the MCP bridge over HTTP: bearer token from ~/.openmhp/http_token
+```
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the checks a pull request needs and how to add a device package, an adapter, or a recipe.
+
+## Community and support
+
+Bugs and feature requests: [GitHub Issues](https://github.com/kushalsinha/openmhp/issues) — a good report includes the device package or script that reproduces it. Questions about using OpenMHP in your lab or connecting a specific instrument are welcome there too.
+
+This is a pre-1.0, experimental protocol: expect breaking changes between minor versions until it settles, tracked in [SPEC.md](SPEC.md) and the [roadmap](https://openmhp.com/roadmap).
+
 ## License
 
-Apache 2.0. See [CONTRIBUTING.md](CONTRIBUTING.md) to add a device package or a recipe.
+Apache License 2.0. See [LICENSE](LICENSE).
+
+OpenMHP is an independent, community-driven project. It is not affiliated with, endorsed by, or sponsored by Anthropic, the SiLA Consortium, PyLabRobot, MADSci, the OPC Foundation, Open Robotics, or any instrument vendor. Names are used only to describe compatibility.
