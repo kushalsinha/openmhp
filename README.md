@@ -15,6 +15,7 @@ Describe an instrument once, in plain language. Any agent harness can then find 
 <br/>
 
 [![npm](https://img.shields.io/npm/v/openmhp-cli?label=openmhp-cli&color=3FB59A)](https://www.npmjs.com/package/openmhp-cli)
+[![npm](https://img.shields.io/npm/v/openmhp-node?label=openmhp-node&color=3FB59A)](https://www.npmjs.com/package/openmhp-node)
 [![PyPI](https://img.shields.io/pypi/v/openmhp?label=openmhp&color=3FB59A)](https://pypi.org/project/openmhp/)
 [![license](https://img.shields.io/badge/license-Apache%202.0-1f1f1f.svg)](LICENSE)
 [![docs](https://img.shields.io/badge/docs-openmhp.com-2B8F78)](https://openmhp.com)

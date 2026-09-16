@@ -1,6 +1,6 @@
 {
   "name": "openmhp-node",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Turn a lab bench computer into an OpenMHP node: serve its instruments in the background, discoverable and safely operable by any AI agent. A thin, single-purpose companion to openmhp-cli.",
   "bin": { "openmhp-node": "bin/openmhp-node.js" },
   "files": ["bin", "README.md"],

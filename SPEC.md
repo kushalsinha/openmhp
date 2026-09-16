@@ -1,6 +1,6 @@
 # Open Model Hardware Protocol (MHP)
 
-**Version 2026-09-12 (0.8, draft for early partners)** · rendered at [openmhp.com/spec](https://openmhp.com/spec)
+**Version 2026-09-12 (0.9, draft for early partners)** · rendered at [openmhp.com/spec](https://openmhp.com/spec)
 An open protocol for AI agents to discover, understand and safely operate physical devices.
 
 ---
