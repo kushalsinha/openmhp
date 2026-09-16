@@ -45,3 +45,8 @@ by a person.
 
 Be direct and kind. Assume the other person is a scientist with a broken instrument and a
 deadline.
+
+## How this code was written
+
+Parts of this codebase were written with Claude (Anthropic) as a coding collaborator, working
+from the maintainers' design decisions. Commits carry co-author trailers where that applies.
