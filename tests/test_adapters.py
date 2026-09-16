@@ -492,6 +492,67 @@ def test_mqtt_adapter():
     assert fake.published[-1][0] == "lab/incubator/cmd/stop" and fake.published[-1][2] == 2
 
 
+# ---------------------------------------------------------------- service ---- #
+def test_service_install_uninstall_status_never_touch_the_real_machine():
+    """openmhp.service's install/uninstall/status, with target_path() and subprocess redirected to a
+    scratch area -- this must never write to the developer's or CI machine's actual service manager."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    from openmhp import service as svc
+
+    scratch = Path(tempfile.mkdtemp())
+    fake_target = scratch / "openmhp-node.service"
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        import types as _types
+        return _types.SimpleNamespace(returncode=0, stdout="active\n", stderr="")
+
+    orig_target, orig_run, orig_system = svc.target_path, subprocess.run, svc.platform.system
+    svc.target_path = lambda: fake_target
+    subprocess.run = fake_run
+    svc.platform.system = lambda: "Linux"
+    try:
+        assert svc.status()["installed"] is False
+
+        r = svc.install("openmhp/devices", 18990, dry_run=True)
+        assert r["dry_run"] and not fake_target.exists() and "ExecStart=" in r["content"]
+
+        r = svc.install("openmhp/devices", 18990)
+        assert r["ok"] and fake_target.is_file()
+        assert "18990" in fake_target.read_text() and str(Path("openmhp/devices").resolve()) in fake_target.read_text()
+        assert any("daemon-reload" in " ".join(c) for c in calls) and any("enable" in " ".join(c) for c in calls)
+
+        st = svc.status()
+        assert st["installed"] and st["running"] is True
+
+        r = svc.uninstall()
+        assert r["ok"] and not fake_target.exists()
+        assert svc.status()["installed"] is False
+    finally:
+        svc.target_path, subprocess.run, svc.platform.system = orig_target, orig_run, orig_system
+        import shutil
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def test_service_content_is_pure_and_platform_specific():
+    """The three content generators take no OS action; each names the right entry point for its
+    platform and carries the exact node command that will run at login/boot."""
+    from pathlib import Path
+    from openmhp import service as svc
+
+    unit = svc.systemd_unit("/srv/instruments", 18900)
+    assert "[Unit]" in unit and "ExecStart=" in unit and "openmhp.cli node" in unit and "18900" in unit
+
+    plist = svc.launchd_plist("/srv/instruments", 18900, Path("/tmp/node.log"))
+    assert "<key>Label</key><string>com.openmhp.node</string>" in plist and "RunAtLoad" in plist
+
+    bat = svc.windows_startup_script("C:\\instruments", 18900)
+    assert bat.startswith("@echo off") and "/min" in bat and "18900" in bat
+
+
 def test_cli_node_serves_every_package_in_a_directory():
     """`mhp node <dir>` is the lightweight per-machine host: every package folder under `dir`,
     each on its own port from a base, one process, auto-advertised. A broken package is skipped,

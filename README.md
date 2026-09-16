@@ -53,6 +53,15 @@ This installs the runtime and registers the MCP server with whatever agent harne
 npx openmhp-cli demo      # adds two simulated instruments: a thermocycler and a plate arm
 ```
 
+On the computer actually wired to an instrument — not a scientist's laptop, its own bench PC —
+run the companion launcher instead. It installs a lightweight background service that keeps
+serving whatever's plugged in, across reboots, with no terminal left open and no agent needed on
+that machine at all:
+
+```bash
+npx openmhp-node setup    # asks for a packages folder and a port, then installs the service
+```
+
 Python only, no npm:
 
 ```bash
@@ -144,7 +153,8 @@ openmhp/registry.py      community package index
 openmhp/mcp_bridge.py    mhp-mcp: eleven tools, elicitation, prompts, logging, pushed-event relay; stdio or HTTP
 openmhp/transport.py     stdio and HTTP(+SSE) device transports; /mhp.json discovery
 openmhp/client.py        Device / Lab client SDK
-openmhp/cli.py           mhp: lab, validate, skills, serve, serve-directory, device verbs
+openmhp/cli.py           mhp: lab, validate, skills, serve, node, serve-directory, device verbs
+openmhp/service.py       mhp node --install-service: a systemd unit, a LaunchAgent, or a Windows Startup entry
 openmhp/adapters/        BoundDriver; sila2, pylabrobot, madsci, opcua, ros2, mqtt
 openmhp/skills/          Agent Skills: onboard-device, adapt-fleet, operate
 openmhp/devices/         bundled simulated thermocycler, arm and gas chromatograph, as packages
@@ -172,6 +182,7 @@ python examples/scale_demo.py                  # 2,000 devices, ~1k tokens
 python tests/test_adapters.py && python tests/test_runs.py && python tests/test_safety_gates.py && python tests/test_methods.py
 mhp serve pkg:openmhp/devices/thermocycler-01 --http 18921     # serve a device package on the LAN
 mhp node ~/instruments --http 18900                            # every package under a folder, one process, auto-advertised
+mhp node ~/instruments --http 18900 --install-service           # ...and keep doing that across reboots, no terminal needed
 mhp-mcp --http 18800                           # the MCP bridge over HTTP: bearer token from ~/.openmhp/http_token
 ```
 

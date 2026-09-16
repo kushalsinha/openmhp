@@ -44,6 +44,10 @@ def main(argv=None):
     ap.add_argument("--sim", action="store_true", help="(lab add) use the package's simulated twin")
     ap.add_argument("--location", help="(lab add) where the instrument stands, e.g. \"bay 3, fume hood 2\"")
     ap.add_argument("--http", type=int, metavar="PORT", help="(serve) listen on HTTP instead of stdio; (node) base port, one per package")
+    ap.add_argument("--install-service", action="store_true", help="(node) run in the background from now on, across reboots, with no terminal open")
+    ap.add_argument("--uninstall-service", action="store_true", help="(node) remove a service installed with --install-service")
+    ap.add_argument("--service-status", action="store_true", help="(node) is a service installed, and is it running")
+    ap.add_argument("--dry-run-service", action="store_true", help="(node --install-service) print what would be written and run, but do neither")
     a = ap.parse_args(argv)
 
     if a.target == "serve":
@@ -51,16 +55,50 @@ def main(argv=None):
         drv = _load_driver(a.verb)
         return serve_http(drv, port=a.http) if a.http else serve_stdio(drv)
 
-    if a.target == "node":                  # mhp node <packages-dir> [--http BASE_PORT]
+    if a.target == "node":                  # mhp node <packages-dir> [--http BASE_PORT] [--install-service | ...]
         import threading
         from pathlib import Path
         from .package import load_driver
         from .transport import serve_http
+        from . import service as svc
+
+        if a.uninstall_service:
+            r = svc.uninstall()
+            for step in r["steps"]:
+                print(f"  {step}", file=sys.stderr)
+            print(("removed" if r["ok"] else "FAILED: " + r.get("error", "")), file=sys.stderr)
+            return 0 if r["ok"] else 1
+        if a.service_status:
+            r = svc.status()
+            if not r["installed"]:
+                print(f"no service installed ({r['path']})", file=sys.stderr)
+                return 1
+            state = "running" if r["running"] else ("stopped" if r["running"] is False else "unknown")
+            print(f"installed at {r['path']}: {state}" + (f" ({r['note']})" if r.get("note") else ""), file=sys.stderr)
+            return 0
+
         base = a.http or 18900
         root = Path(a.verb or ".").expanduser()
         folders = sorted(p.parent for p in root.glob("*/DEVICE.md"))
         if not folders:
             ap.error(f"no device packages under {root} (looked for */DEVICE.md)")
+
+        if a.install_service or a.dry_run_service:
+            r = svc.install(root, base, dry_run=a.dry_run_service)
+            print(f"--- {r['path']} ---", file=sys.stderr)
+            print(r["content"], file=sys.stderr)
+            for step in r.get("steps", []):
+                print(f"  {step}", file=sys.stderr)
+            if r["dry_run"]:
+                print(f"dry run: nothing written. Command it would run at login/boot:\n  {' '.join(svc._command(root, base))}", file=sys.stderr)
+            elif r["ok"]:
+                print(f"installed. {r.get('note', '')}", file=sys.stderr)
+                print(f"check any time with:  mhp node --service-status\nremove with:           mhp node --uninstall-service", file=sys.stderr)
+            else:
+                print(f"FAILED: {r.get('error') or 'see steps above'}", file=sys.stderr)
+                return 1
+            return 0
+
         print(f"serving {len(folders)} package(s) from {root}, ports {base}..{base + len(folders) - 1}", file=sys.stderr)
         for i, folder in enumerate(folders):
             port = base + i

@@ -6,4 +6,4 @@ safely, reads from it, writes to it, and runs long-running actions on it.
 """
 
 PROTOCOL_VERSION = "2026-09-12"
-__version__ = "0.8.0"
+__version__ = "0.9.0"
