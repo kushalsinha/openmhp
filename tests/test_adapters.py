@@ -3,6 +3,7 @@
     PYTHONPATH=. python -m pytest tests -q      (or: python tests/test_adapters.py)
 """
 import asyncio
+import json
 import sys
 import time
 import types
@@ -11,6 +12,7 @@ sys.path.insert(0, ".")
 
 from openmhp.adapters import Action, BoundDriver, Setting, Signal          # noqa: E402
 from openmhp.adapters.madsci import madsci_node                            # noqa: E402
+from openmhp.adapters.mqtt import mqtt_device                              # noqa: E402
 from openmhp.adapters.opcua import opcua_device                            # noqa: E402
 from openmhp.adapters.pylabrobot import plr_device                         # noqa: E402
 from openmhp.adapters.sila2 import sila_device                             # noqa: E402
@@ -400,6 +402,139 @@ def test_location_is_recorded_when_a_device_is_installed():
             fleet.set_location("centrifuge-01", bad); assert False, "empty location accepted"
         except ValueError:
             pass
+
+
+# --------------------------------------------------------------- mqtt ---- #
+class _FakeMqttClient:
+    """Enough of paho.mqtt.client.Client's surface for mqtt_device: subscribe/publish record what
+    happened, and .deliver(topic, obj) simulates a broker message arriving on on_message."""
+    def __init__(self):
+        self.published: list[tuple[str, bytes, int]] = []
+        self.subscriptions: list[str] = []
+        self.on_message = None
+        self.on_connect = None
+
+    def subscribe(self, topic, qos=0):
+        self.subscriptions.append(topic)
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        self.published.append((topic, payload, qos))
+        return types.SimpleNamespace()                     # no wait_for_publish: adapter skips it via hasattr
+
+    def deliver(self, topic, obj):
+        raw = obj if isinstance(obj, (bytes, str)) else json.dumps(obj)
+        msg = types.SimpleNamespace(topic=topic, payload=raw.encode() if isinstance(raw, str) else raw)
+        if self.on_message:
+            self.on_message(self, None, msg)
+
+
+def test_mqtt_adapter():
+    fake = _FakeMqttClient()
+    drv = mqtt_device(device={"id": "incubator-07", "class": "incubator"}, client=fake,
+                      signals={"temperature": ("lab/incubator/temperature", "degC", 5),
+                               "door_closed": ("lab/incubator/door", "boolean")},
+                      settings={"setpoint": ("lab/incubator/cmd/setpoint", {"min": 4, "max": 55}, "degC")},
+                      actions={"purge": ("lab/incubator/cmd/purge", "lab/incubator/evt/purge", {"approval": "auto"}),
+                               "vent": ("lab/incubator/cmd/vent", None, {"approval": "auto"})},
+                      estop=("lab/incubator/cmd/stop", None))
+    d = LocalDevice(drv)
+    assert "lab/incubator/temperature" in fake.subscriptions and "lab/incubator/evt/purge" in fake.subscriptions
+
+    # a signal reads None until a message has actually arrived (never a stale guess)
+    assert d.read("temperature") is None
+    fake.deliver("lab/incubator/temperature", 37.2)
+    assert d.read("temperature") == 37.2
+    fake.deliver("lab/incubator/door", True)
+    assert d.read("door_closed") is True
+
+    # a setting publishes the value, JSON-encoded
+    d.write("setpoint", 40)
+    topic, payload, qos = fake.published[-1]
+    assert topic == "lab/incubator/cmd/setpoint" and json.loads(payload) == 40 and qos == 1
+
+    # an action with a reply topic: publishes, blocks on the correlated reply, then returns it
+    job = d.invoke("purge")
+    deadline = time.time() + 2
+    corr = None
+    while time.time() < deadline and corr is None:
+        hits = [p for p in fake.published if p[0] == "lab/incubator/cmd/purge"]
+        if hits:
+            corr = json.loads(hits[-1][1])["job"]
+        else:
+            time.sleep(0.02)
+    assert corr and d.status(job)["state"] == "running"       # still waiting: no reply yet
+    fake.deliver("lab/incubator/evt/purge", {"job": corr, "status": "done", "cleared": True})
+    assert d.wait(job)["result"] == {"job": corr, "status": "done", "cleared": True}
+
+    # a failed/cancelled status on the reply maps to the matching MHP outcome
+    job2 = d.invoke("purge")
+    deadline = time.time() + 2
+    corr2 = None
+    while time.time() < deadline and corr2 is None:
+        hits = [p for p in fake.published if p[0] == "lab/incubator/cmd/purge"]
+        if len(hits) > 1:
+            corr2 = json.loads(hits[-1][1])["job"]
+        else:
+            time.sleep(0.02)
+    fake.deliver("lab/incubator/evt/purge", {"job": corr2, "status": "failed", "error": "valve stuck"})
+    try:
+        d.wait(job2); assert False
+    except RemoteError as e:
+        assert "valve stuck" in e.message
+
+    d.reset()                                                  # the failed purge latched fault; verify recovery first
+    # no reply_topic: fire-and-forget, returns once the broker publish is done
+    j3 = d.wait(d.invoke("vent"))
+    assert j3["state"] == "done" and j3["result"]["published"] is True
+
+    # estop publishes at QoS 2
+    d.estop()
+    assert fake.published[-1][0] == "lab/incubator/cmd/stop" and fake.published[-1][2] == 2
+
+
+def test_cli_node_serves_every_package_in_a_directory():
+    """`mhp node <dir>` is the lightweight per-machine host: every package folder under `dir`,
+    each on its own port from a base, one process, auto-advertised. A broken package is skipped,
+    not fatal to the others."""
+    import json
+    import os
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+    import time
+    import urllib.error
+    import urllib.request
+
+    root = tempfile.mkdtemp()
+    shutil.copytree("openmhp/devices/arm-01", os.path.join(root, "arm-01"))
+    os.makedirs(os.path.join(root, "broken"))
+    with open(os.path.join(root, "broken", "DEVICE.md"), "w") as f:
+        f.write("not: [valid")
+
+    port = 18980
+    proc = subprocess.Popen([sys.executable, "-m", "openmhp.cli", "node", root, "--http", str(port)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=".")
+    try:
+        deadline = time.time() + 5
+        last_err = None
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=1) as r:
+                    doc = json.loads(r.read())
+                assert doc["device"]["id"] == "arm-01"
+                break
+            except (urllib.error.URLError, ConnectionError) as e:
+                last_err = e
+                time.sleep(0.2)
+        else:
+            raise AssertionError(f"node never came up: {last_err}")
+    finally:
+        proc.terminate()
+        _, err = proc.communicate(timeout=5)
+    assert "broken" in err and "SKIPPED" in err                    # the bad package didn't take the process down
+    assert f"arm-01" in err and f"http://0.0.0.0:{port}" in err
+    shutil.rmtree(root, ignore_errors=True)
 
 
 if __name__ == "__main__":

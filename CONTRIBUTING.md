@@ -20,7 +20,7 @@ needed.
 
 Routes: `openmhp.drivers.serial_ascii` for text commands (declare them in `descriptor.yaml`),
 `openmhp.drivers.manual` for operator-run instruments, the adapters in `openmhp/adapters/` for
-OPC UA, ROS 2, SiLA 2, MADSci and PyLabRobot, or a `Driver` subclass for a vendor SDK.
+OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot and MQTT, or a `Driver` subclass for a vendor SDK.
 
 ## A recipe
 

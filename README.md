@@ -35,7 +35,7 @@ It is built for the part of running an instrument that is real work but not the 
 - **An instrument teaches like a colleague would.** Descriptions are written in plain language, load progressively like an Agent Skill, and cost an agent's context about the same whether the lab has two devices or two thousand.
 - **Nothing moves without a plan.** Plan mode rehearses a whole procedure through every safety gate first, so a person sees exactly what will happen before anything heats, moves, or spends a sample.
 - **Long runs don't need babysitting.** Jobs, a per-lease watchdog, and pushed events mean a thirty-cycle PCR program or an overnight monitor reports back on its own.
-- **Bridges what you already run.** OPC UA, ROS 2, SiLA 2, MADSci and PyLabRobot devices join in a few lines; nothing is replaced underneath.
+- **Bridges what you already run.** OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot and MQTT devices join in a few lines; nothing is replaced underneath.
 
 ## Status
 
@@ -112,7 +112,7 @@ The full reasoning behind these choices is in [Design principles](https://openmh
 
 ## Features
 
-Six primitives (describe, signals, settings, actions, safety, and **methods** for instruments that run a named procedure per project or compound), device packages shaped like Agent Skills, plan mode with virtual time, a per-lease watchdog, pause and resume, evidence-based safety cards, server-run onboarding, simulated twins, adapters for OPC UA/ROS 2/SiLA 2/MADSci/PyLabRobot, a community package registry, and a tool surface that stays at eleven calls whether the lab has two devices or two thousand.
+Six primitives (describe, signals, settings, actions, safety, and **methods** for instruments that run a named procedure per project or compound), device packages shaped like Agent Skills, plan mode with virtual time, a per-lease watchdog, pause and resume, evidence-based safety cards, server-run onboarding, simulated twins, adapters for OPC UA/ROS 2/SiLA 2/MADSci/PyLabRobot/MQTT, a community package registry, and a tool surface that stays at eleven calls whether the lab has two devices or two thousand.
 
 The full list, grouped by what each piece is for, is at **[openmhp.com/features](https://openmhp.com/features)**.
 
@@ -145,7 +145,7 @@ openmhp/mcp_bridge.py    mhp-mcp: eleven tools, elicitation, prompts, logging, p
 openmhp/transport.py     stdio and HTTP(+SSE) device transports; /mhp.json discovery
 openmhp/client.py        Device / Lab client SDK
 openmhp/cli.py           mhp: lab, validate, skills, serve, serve-directory, device verbs
-openmhp/adapters/        BoundDriver; sila2, pylabrobot, madsci, opcua, ros2
+openmhp/adapters/        BoundDriver; sila2, pylabrobot, madsci, opcua, ros2, mqtt
 openmhp/skills/          Agent Skills: onboard-device, adapt-fleet, operate
 openmhp/devices/         bundled simulated thermocycler, arm and gas chromatograph, as packages
 packages/                community packages: ika-c-mag-hs7, opentrons-flex, manual-benchtop-centrifuge
@@ -171,6 +171,7 @@ python examples/pcr_run.py                     # orchestrate a robot arm and a t
 python examples/scale_demo.py                  # 2,000 devices, ~1k tokens
 python tests/test_adapters.py && python tests/test_runs.py && python tests/test_safety_gates.py && python tests/test_methods.py
 mhp serve pkg:openmhp/devices/thermocycler-01 --http 18921     # serve a device package on the LAN
+mhp node ~/instruments --http 18900                            # every package under a folder, one process, auto-advertised
 mhp-mcp --http 18800                           # the MCP bridge over HTTP: bearer token from ~/.openmhp/http_token
 ```
 

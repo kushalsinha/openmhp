@@ -6,6 +6,7 @@
     from openmhp.adapters.sila2 import sila_device                      # SiLA 2 servers
     from openmhp.adapters.madsci import madsci_node                     # MADSci nodes
     from openmhp.adapters.pylabrobot import plr_device                  # PyLabRobot machines
+    from openmhp.adapters.mqtt import mqtt_device                       # anything publishing over MQTT
 
 Each returns a Driver; serve it with `mhp serve`, register it in a Directory,
 or expose it through `mhp-mcp` like any native MHP device.

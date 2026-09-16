@@ -22,7 +22,8 @@ openmhp = ["skills/**/*", "devices/*/*", "devices/*/*/*", "recipes/*.py", "regis
 [project.optional-dependencies]
 discovery = ["zeroconf>=0.130"]
 serial = ["pyserial>=3.5"]
-all = ["zeroconf>=0.130", "pyserial>=3.5"]
+mqtt = ["paho-mqtt>=2"]
+all = ["zeroconf>=0.130", "pyserial>=3.5", "paho-mqtt>=2"]
 
 [tool.setuptools.packages.find]
 include = ["openmhp*"]
