@@ -34,6 +34,33 @@ OpenMHP:  lease ─► job ─► live telemetry and events ─► result ─►
 
 ![AI agents connect through MCP and OpenMHP to physical devices, with safety enforced at the device and live telemetry flowing back](assets/openmhp-overview.png)
 
+## Each device loads like an Agent Skill
+
+MCP standardized how agents discover and call software tools. Anthropic's
+[Agent Skills](https://agentskills.io) use a complementary pattern for packaging procedural
+knowledge and loading it only when the task needs it. OpenMHP applies that pattern to physical
+devices.
+
+A device package captures the instrument owner's knowledge in three levels:
+
+1. **Search the lab:** the agent sees only a compact device card: what the instrument is,
+   where it is, and when to use it.
+2. **Choose a device:** the agent loads that device's operating instructions: how to run it,
+   what to watch, and what never to do.
+3. **Prepare an action:** the agent requests only the exact signals, settings, actions,
+   references, or tested scripts needed for the task.
+
+![A device package loads progressively: a compact card during search, operating instructions after selection, and exact specifications or procedures on demand](assets/device-as-agent-skill.png)
+
+This progressive disclosure keeps the agent's context small without making the device package
+shallow. In the included 2,000-device scale demo, finding five candidates, opening one device,
+and loading the two items used takes about 1,270 tokens, compared with about 1.22 million tokens
+for loading every descriptor up front.
+
+Context is for helping the agent reason; it is not the safety boundary. The driver remains
+beside the hardware and enforces limits, interlocks, approvals, leases, and device state on
+every call, whether or not those rules are currently in the model's context.
+
 ## Why OpenMHP?
 
 Connecting an AI agent to a database or ticketing system is mostly an API problem: send a
@@ -62,7 +89,8 @@ The design follows a few rules:
 - **Keep safety at the edge.** The server beside the instrument checks state, approvals,
   interlocks, typed parameters, leases, and busy state before calling vendor code.
 - **Wrap what the lab already has.** OpenMHP is an agent-facing layer over existing drivers and
-  control systems like OPC UA, ROS 2, SiLA 2, MadSci, pyLabRobot, not a replacement for them.
+  control systems such as OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, and MQTT. It preserves
+  those investments instead of replacing them.
 
 An agent may propose an action. The device server decides whether it is allowed to run.
 OpenMHP complements hardwired e-stops, light curtains, PLC safety logic, and normal lab
@@ -254,7 +282,8 @@ many existing devices, see [Adapters](https://openmhp.com/adapters) and
 
 ## Device packages
 
-A package contains what an agent needs to choose and operate one device:
+A package contains the owner's knowledge needed to choose and operate one device. Its layout
+supports the three disclosure levels above while keeping enforceable rules beside the hardware:
 
 ```text
 devices/hotplate-01/
