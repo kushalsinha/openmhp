@@ -6,6 +6,15 @@ requires-python = ">=3.10"
 dependencies = ["pyyaml>=6"]
 license = {text = "Apache-2.0"}
 readme = "README.md"
+authors = [{name = "Kushal Sinha", email = "kushal.sinha@kortana.io"}]
+keywords = ["mcp", "agents", "laboratory", "instruments", "hardware", "robotics", "automation", "openmhp"]
+classifiers = ["Development Status :: 3 - Alpha", "Intended Audience :: Developers", "Intended Audience :: Science/Research", "License :: OSI Approved :: Apache Software License", "Programming Language :: Python :: 3", "Programming Language :: Python :: 3.10", "Programming Language :: Python :: 3.11", "Programming Language :: Python :: 3.12", "Topic :: Scientific/Engineering", "Topic :: System :: Hardware"]
+
+[project.urls]
+Homepage = "https://openmhp.com"
+Repository = "https://github.com/kushalsinha/openmhp"
+Documentation = "https://openmhp.com"
+Issues = "https://github.com/kushalsinha/openmhp/issues"
 
 [project.scripts]
 mhp = "openmhp.cli:main"
