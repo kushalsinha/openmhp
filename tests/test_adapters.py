@@ -560,11 +560,11 @@ def test_cli_node_serves_every_package_in_a_directory():
     import json
     import os
     import shutil
+    import socket
     import subprocess
     import sys
     import tempfile
     import time
-    import urllib.error
     import urllib.request
 
     root = tempfile.mkdtemp()
@@ -573,21 +573,25 @@ def test_cli_node_serves_every_package_in_a_directory():
     with open(os.path.join(root, "broken", "DEVICE.md"), "w") as f:
         f.write("not: [valid")
 
-    port = 18980
+    with socket.socket() as s:                 # a free port, not a fixed one: CI runners are shared
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
     proc = subprocess.Popen([sys.executable, "-m", "openmhp.cli", "node", root, "--http", str(port)],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=".")
     try:
-        deadline = time.time() + 5
+        deadline = time.time() + 30            # a cold CI runner spends seconds just importing
         last_err = None
         while time.time() < deadline:
+            if proc.poll() is not None:        # died on startup: say so now, don't wait out the clock
+                raise AssertionError(f"node exited {proc.returncode} during startup")
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=1) as r:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=2) as r:
                     doc = json.loads(r.read())
                 assert doc["device"]["id"] == "arm-01"
                 break
-            except (urllib.error.URLError, ConnectionError) as e:
-                last_err = e
-                time.sleep(0.2)
+            except OSError as e:               # URLError, ConnectionError and TimeoutError are all
+                last_err = e                   # OSError; catching the first two let a slow first
+                time.sleep(0.2)                # response kill the run instead of being retried
         else:
             raise AssertionError(f"node never came up: {last_err}")
     finally:
@@ -596,6 +600,52 @@ def test_cli_node_serves_every_package_in_a_directory():
     assert "broken" in err and "SKIPPED" in err                    # the bad package didn't take the process down
     assert f"arm-01" in err and f"http://0.0.0.0:{port}" in err
     shutil.rmtree(root, ignore_errors=True)
+
+
+def test_http_answers_as_soon_as_it_accepts_even_when_discovery_stalls():
+    """ThreadingHTTPServer binds AND listens in its constructor, so the kernel completes a
+    client's TCP handshake from that moment on. Anything slow between there and serve_forever()
+    therefore leaves a client connected to a socket nobody is reading -- it sees no refusal to
+    retry on, just a hang until its own timeout. mDNS registration is exactly that: it probes for
+    name conflicts and waits those timeouts out on a network with no responder. Discovery is
+    best-effort and must never gate serving."""
+    import json
+    import socket
+    import threading
+    import time
+    import urllib.request
+
+    from openmhp import discovery, transport
+    from openmhp.package import load_driver
+
+    driver = load_driver("openmhp/devices/arm-01")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    STALL = 3.0
+    real_advertise = discovery.advertise
+    discovery.advertise = lambda *a, **k: (time.sleep(STALL), False)[1]
+    try:
+        threading.Thread(target=transport.serve_http, args=(driver, "127.0.0.1", port),
+                         daemon=True).start()
+        t0 = time.time()
+        deadline = t0 + STALL * 3
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=1) as r:
+                    doc = json.loads(r.read())
+                break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            raise AssertionError("never answered while discovery was stalled")
+        served_in = time.time() - t0
+    finally:
+        discovery.advertise = real_advertise
+
+    assert doc["device"]["id"] == "arm-01"
+    assert served_in < STALL, f"serving waited on discovery: first response took {served_in:.1f}s"
 
 
 if __name__ == "__main__":
