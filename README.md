@@ -62,7 +62,7 @@ The design follows a few rules:
 - **Keep safety at the edge.** The server beside the instrument checks state, approvals,
   interlocks, typed parameters, leases, and busy state before calling vendor code.
 - **Wrap what the lab already has.** OpenMHP is an agent-facing layer over existing drivers and
-  control systems, not a replacement for them.
+  control systems like OPC UA, ROS 2, SiLA 2, MadSci, pyLabRobot, not a replacement for them.
 
 An agent may propose an action. The device server decides whether it is allowed to run.
 OpenMHP complements hardwired e-stops, light curtains, PLC safety logic, and normal lab
