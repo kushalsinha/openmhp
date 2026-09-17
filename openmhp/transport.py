@@ -111,12 +111,21 @@ def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765) -> Non
             resp = dispatch(driver, msg, client)
             self._json(200, resp if resp is not None else {})
 
-    srv = ThreadingHTTPServer((host, port), Handler)
+    srv = ThreadingHTTPServer((host, port), Handler)   # binds AND listens: we are accepting from here on
     print(f"MHP {driver.descriptor['device']['id']} listening on http://{host}:{port}", file=sys.stderr)
-    try:
-        from .discovery import advertise
-        if advertise(driver.descriptor["device"], port, host):
-            print("  advertised as _mhp._tcp on the LAN", file=sys.stderr)
-    except Exception as e:                           # noqa: BLE001  discovery is best-effort
-        print(f"  (mDNS advertise skipped: {e})", file=sys.stderr)
+
+    def _advertise() -> None:
+        """Off the startup path on purpose. The socket accepts connections the moment the line
+        above runs, so anything slow between there and serve_forever() leaves a client connected
+        with nobody reading it. mDNS registration probes for name conflicts and waits out those
+        timeouts on a network with no responder, which is seconds. Discovery is best-effort;
+        answering the instrument's own port is not."""
+        try:
+            from .discovery import advertise
+            if advertise(driver.descriptor["device"], port, host):
+                print("  advertised as _mhp._tcp on the LAN", file=sys.stderr)
+        except Exception as e:                       # noqa: BLE001  discovery is best-effort
+            print(f"  (mDNS advertise skipped: {e})", file=sys.stderr)
+
+    threading.Thread(target=_advertise, daemon=True).start()
     srv.serve_forever()
