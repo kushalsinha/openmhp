@@ -17,7 +17,7 @@ response. OpenMHP extends that model for physical work that may run for minutes,
 [![license](https://img.shields.io/badge/license-Apache%202.0-1f1f1f.svg)](LICENSE)
 [![docs](https://img.shields.io/badge/docs-openmhp.com-2B8F78)](https://openmhp.com)
 
-[Quickstart](https://openmhp.com/quickstart) · [Design](https://openmhp.com/design) · [Add an instrument](https://openmhp.com/add-a-device) · [Cookbook](https://openmhp.com/cookbook) · [Specification](SPEC.md) · [Contributing](CONTRIBUTING.md)
+[Quickstart](https://openmhp.com/quickstart) · [Design](https://openmhp.com/design) · [Architecture](https://openmhp.com/architecture) · [Roadmap](https://openmhp.com/roadmap) · [Specification](SPEC.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -189,6 +189,24 @@ device server / lab node
 physical instrument
 ```
 
+### Built to bridge the automation stack you already have
+
+Labs have invested years in control systems such as **ROS 2, OPC UA, SiLA 2, MADSci,
+PyLabRobot, and MQTT**. OpenMHP does not ask them to replace that work. It adds a common
+agent-facing layer above it:
+
+- OPC UA variables and methods become OpenMHP signals, settings, and actions.
+- ROS 2 topics, services, and actions keep their native feedback and control paths.
+- SiLA 2 properties and commands retain observable progress and cancellation.
+- MADSci nodes expose their existing actions, status, and safety controls.
+- PyLabRobot machines expose their existing operations through the same job model.
+- MQTT topics connect existing telemetry and command channels to the device model.
+
+The adapter translates each technology into the same discovery, job, lease, telemetry, and
+safety contract. The agent gets one way to interact with the lab while the lab keeps its
+existing drivers, orchestration, and operational knowledge. See the
+[adapter guide](https://openmhp.com/adapters) for the supported mappings.
+
 Read the rationale in the [design principles](https://openmhp.com/design), see the components
 in the [architecture guide](https://openmhp.com/architecture), and use [SPEC.md](SPEC.md) as the
 normative protocol contract.
@@ -253,14 +271,33 @@ devices/hotplate-01/
 parts the runtime can enforce. A typical driver only implements the hardware-specific hooks;
 the base driver supplies the common protocol, job handling, notifications, and safety gates.
 
-Browse the bundled examples in [`openmhp/devices`](openmhp/devices) and community packages in
-[`packages`](packages).
+Device packages and recipes normally belong to the lab that owns the instruments and operating
+procedures. Keep them in your lab's own repository, review limit changes like code, and deploy
+them to the bench computers that serve those devices. The packages in
+[`openmhp/devices`](openmhp/devices) and [`packages`](packages) are reference examples for
+learning and testing the protocol.
 
 ## Contributing
 
-The most useful contributions are device packages for instruments you know and recipes for
-procedures you actually run. Core protocol, runtime, adapter, documentation, and test changes
-are welcome too.
+OpenMHP is developed like a protocol project. Contributions should make the protocol clearer,
+more interoperable, easier to implement, or better tested. Lab-specific device packages,
+private SOPs, and recipes usually belong in the lab's own repository rather than upstream.
+
+Useful contributions include:
+
+- proposals that resolve an open protocol or architecture question;
+- work on items in the [published roadmap](https://openmhp.com/roadmap);
+- improvements to the reference server, client, MCP bridge, discovery, jobs, events, leases,
+  or safety behavior;
+- adapter and interoperability improvements for ROS 2, OPC UA, SiLA 2, MADSci, PyLabRobot,
+  MQTT, and other established automation systems;
+- conformance tests that help independent OpenMHP implementations agree on behavior; and
+- documentation, examples, and security reviews that make the protocol easier to implement
+  correctly.
+
+Before starting a substantial change, open an issue describing the protocol problem, the
+affected implementations, and the behavior you propose. This gives the design discussion a
+place to happen before code fixes one interpretation into the reference implementation.
 
 ### Set up a development checkout
 
@@ -281,38 +318,17 @@ python tests/test_safety_gates.py
 python tests/test_methods.py
 ```
 
-### Contribute a device package
-
-1. Create `packages/<make-model>/` with `DEVICE.md`, `descriptor.yaml`, and `driver.py`.
-2. Add `sim.py` when possible so maintainers can exercise it without the instrument.
-3. Put the relevant manual excerpt or SOP under `references/`, with permission to redistribute it.
-4. Give every numeric setting limits. Give every energetic action an interlock or human approval.
-5. Validate the package, add its simulated twin, and prove its safety gates:
-
-```bash
-mhp validate packages/<make-model>
-mhp lab add packages/<make-model> --sim
-```
-
-6. Add the package to `openmhp/registry.json` and include the safety-card and simulator results
-   in the pull request.
-
-### Contribute a recipe
-
-Add a script under `openmhp/recipes/` with `recipe`, `needs`, `asks`, and `summary` headers.
-Choose devices by capability, hold leases while operating them, save files under `run_dir`, and
-print a concise result. Test the recipe in plan mode and against simulated twins.
-
 ### Contribution principles
 
-- Put enforceable facts in the descriptor and practical operating knowledge in `DEVICE.md`.
+- Start from a protocol or interoperability need, not a one-off lab customization.
+- Keep the specification, reference implementation, and conformance tests aligned.
 - Fail closed when hardware state or command outcome is uncertain.
 - Preserve the fixed, device-independent tool surface.
 - Add regression coverage for changes to safety, state, concurrency, or transport behavior.
-- Never hide a refusal or report an intended setpoint as a measured result.
+- Document compatibility expectations for every adapter or wire-level change.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the complete package checklist and pull-request
-expectations. Bugs, feature requests, integration questions, and design proposals belong in
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for proposal and pull-request expectations. Protocol
+questions, roadmap work, interoperability gaps, bugs, and design proposals belong in
 [GitHub Issues](https://github.com/kushalsinha/openmhp/issues).
 
 ## Repository guide
@@ -328,7 +344,7 @@ expectations. Bugs, feature requests, integration questions, and design proposal
 | `openmhp/adapters/` | OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT, and callable bindings |
 | `openmhp/devices/` | Bundled reference devices and simulated twins |
 | `openmhp/recipes/` | Reusable multi-step procedures |
-| `packages/` | Community device packages |
+| `packages/` | Reference device packages used as implementation examples |
 | `tests/` | Simulator and fake-client coverage |
 
 ## Project status
