@@ -6,7 +6,9 @@
   "files": ["bin", "lib", "README.md"],
   "engines": { "node": ">=18" },
   "license": "Apache-2.0",
+  "author": "Kushal Sinha",
   "repository": { "type": "git", "url": "https://github.com/kushalsinha/openmhp" },
+  "bugs": "https://github.com/kushalsinha/openmhp/issues",
   "homepage": "https://openmhp.com",
   "keywords": ["mcp", "agents", "laboratory", "instruments", "hardware", "robotics", "openmhp"]
 }
