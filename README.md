@@ -34,33 +34,6 @@ OpenMHP:  lease ─► job ─► live telemetry and events ─► result ─►
 
 ![AI agents connect through MCP and OpenMHP to physical devices, with safety enforced at the device and live telemetry flowing back](assets/openmhp-overview.png)
 
-## Each device loads like an Agent Skill
-
-MCP standardized how agents discover and call software tools. Anthropic's
-[Agent Skills](https://agentskills.io) use a complementary pattern for packaging procedural
-knowledge and loading it only when the task needs it. OpenMHP applies that pattern to physical
-devices.
-
-A device package captures the instrument owner's knowledge in three levels:
-
-1. **Search the lab:** the agent sees only a compact device card: what the instrument is,
-   where it is, and when to use it.
-2. **Choose a device:** the agent loads that device's operating instructions: how to run it,
-   what to watch, and what never to do.
-3. **Prepare an action:** the agent requests only the exact signals, settings, actions,
-   references, or tested scripts needed for the task.
-
-![A device package loads progressively: a compact card during search, operating instructions after selection, and exact specifications or procedures on demand](assets/device-as-agent-skill.png)
-
-This progressive disclosure keeps the agent's context small without making the device package
-shallow. In the included 2,000-device scale demo, finding five candidates, opening one device,
-and loading the two items used takes about 1,270 tokens, compared with about 1.22 million tokens
-for loading every descriptor up front.
-
-Context is for helping the agent reason; it is not the safety boundary. The driver remains
-beside the hardware and enforces limits, interlocks, approvals, leases, and device state on
-every call, whether or not those rules are currently in the model's context.
-
 ## Why OpenMHP?
 
 Connecting an AI agent to a database or ticketing system is mostly an API problem: send a
@@ -239,6 +212,56 @@ Read the rationale in the [design principles](https://openmhp.com/design), see t
 in the [architecture guide](https://openmhp.com/architecture), and use [SPEC.md](SPEC.md) as the
 normative protocol contract.
 
+## Device packages
+
+OpenMHP treats each device package the way Anthropic's
+[Agent Skills](https://agentskills.io) treat procedural knowledge: the agent loads more detail
+only as the task narrows. The package can hold everything the instrument owner wants an agent
+to know without placing all of it in the model's context at once.
+
+The package loads in three levels:
+
+1. **Search the lab:** the agent sees only a compact device card: what the instrument is,
+   where it is, and when to use it.
+2. **Choose a device:** the agent loads that device's operating instructions: how to run it,
+   what to watch, and what never to do.
+3. **Prepare an action:** the agent requests only the exact signals, settings, actions,
+   references, or tested scripts needed for the task.
+
+![A device package loads progressively: a compact card during search, operating instructions after selection, and exact specifications or procedures on demand](assets/device-as-agent-skill.png)
+
+This progressive disclosure keeps context small as the lab grows. In the included 2,000-device
+scale demo, finding five candidates, opening one device, and loading the two items used takes
+about 1,270 tokens, compared with about 1.22 million tokens for loading every descriptor up
+front.
+
+A package keeps human guidance and machine-enforced behavior together:
+
+```text
+devices/hotplate-01/
+├── DEVICE.md          searchable card + operating instructions
+├── descriptor.yaml    signals, settings, actions, limits, interlocks, safety
+├── driver.py          native driver, BoundDriver, or adapter
+├── sim.py             simulated twin (recommended)
+├── references/        SOPs, manual excerpts, calibration notes
+├── scripts/           tested end-to-end procedures
+└── methods/           optional versioned methods for named procedures
+```
+
+`DEVICE.md` is readable by people and agents. `descriptor.yaml` contains the parts the runtime
+can validate and enforce. The driver implements the hardware-specific hooks while the base
+driver supplies the common protocol, job handling, notifications, and safety gates.
+
+The model's context helps it reason; it is not the safety boundary. The driver remains beside
+the hardware and checks limits, interlocks, approvals, leases, and device state on every call,
+whether or not those rules are currently in the model's context.
+
+Device packages and recipes normally belong to the lab that owns the instruments and operating
+procedures. Keep them in your lab's repository, review limit changes like code, and deploy them
+to the bench computers that serve those devices. The packages in
+[`openmhp/devices`](openmhp/devices) and [`packages`](packages) are reference examples for
+learning and testing the protocol.
+
 ## Connect a real instrument
 
 Start with the route that matches the hardware:
@@ -279,32 +302,6 @@ hardware deployments.
 The full walkthrough is [Add an instrument](https://openmhp.com/add-a-device). For a lab with
 many existing devices, see [Adapters](https://openmhp.com/adapters) and
 [Lab nodes](https://openmhp.com/lab-nodes).
-
-## Device packages
-
-A package contains the owner's knowledge needed to choose and operate one device. Its layout
-supports the three disclosure levels above while keeping enforceable rules beside the hardware:
-
-```text
-devices/hotplate-01/
-├── DEVICE.md          searchable card + operating instructions
-├── descriptor.yaml    signals, settings, actions, limits, interlocks, safety
-├── driver.py          native driver, BoundDriver, or adapter
-├── sim.py             simulated twin (recommended)
-├── references/        SOPs, manual excerpts, calibration notes
-├── scripts/           tested end-to-end procedures
-└── methods/           optional versioned methods for named procedures
-```
-
-`DEVICE.md` is deliberately readable by both people and agents. `descriptor.yaml` contains the
-parts the runtime can enforce. A typical driver only implements the hardware-specific hooks;
-the base driver supplies the common protocol, job handling, notifications, and safety gates.
-
-Device packages and recipes normally belong to the lab that owns the instruments and operating
-procedures. Keep them in your lab's own repository, review limit changes like code, and deploy
-them to the bench computers that serve those devices. The packages in
-[`openmhp/devices`](openmhp/devices) and [`packages`](packages) are reference examples for
-learning and testing the protocol.
 
 ## Contributing
 
