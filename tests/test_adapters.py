@@ -648,6 +648,66 @@ def test_http_answers_as_soon_as_it_accepts_even_when_discovery_stalls():
     assert served_in < STALL, f"serving waited on discovery: first response took {served_in:.1f}s"
 
 
+def test_electrochemistry_packages_validate_and_rehearse():
+    """The vendor-SDK packages (Elveflow, BioLogic, Wasatch, SRI) load without their SDKs, and their
+    simulated twins pass through the same gates as the real drivers."""
+    import os
+    from openmhp.package import load_driver
+    from openmhp.validate import validate_path
+    os.environ["OPENMHP_SIM_TIME_SCALE"] = "0.0005"
+    names = ["elveflow-ob1", "elveflow-mux-distributor", "biologic-sp300", "wasatch-raman-blaze", "sri-8610c-gc"]
+    for name in names:
+        v = validate_path(f"packages/{name}")
+        assert v["ok"], (name, v["errors"])
+        real = LocalDevice(load_driver(f"packages/{name}"))                 # no SDK, no config.json
+        assert real.read("connected") is False
+
+    def twin(name):
+        c = LocalDevice(load_driver(f"packages/{name}", sim=True))
+        assert c.read("connected") is True
+        return c
+
+    def refused(code, fn):
+        try:
+            fn(); raise AssertionError("expected a refusal")
+        except RemoteError as e:
+            assert e.code == code, e
+
+    ob1 = twin("elveflow-ob1")
+    refused(-32010, lambda: ob1.write("pressure_setpoint_ch1", 2500))
+    ob1.write("pressure_setpoint_ch1", 300)
+    assert ob1.wait(ob1.invoke("set_flow", channel=1, flow_ul_min=800))["state"] == "done"
+    assert abs(ob1.read("flow_ch1") - 800) < 40
+    assert ob1.wait(ob1.invoke("vent"))["result"]["vented"] is True
+
+    mux = twin("elveflow-mux-distributor")
+    refused(-32010, lambda: mux.invoke("select_port", port=14))
+    assert mux.wait(mux.invoke("select_port", port=2))["result"]["valve_position"] == 2
+
+    pot = twin("biologic-sp300")
+    refused(-32010, lambda: pot.invoke("cp_pulsed", i_reduction_mA=-900, i_oxidation_mA=10, t_reduction_s=2,
+                                       t_oxidation_s=2, duration_s=60))
+    r = pot.wait(pot.invoke("cp_pulsed", i_reduction_mA=-150, i_oxidation_mA=10, t_reduction_s=2, t_oxidation_s=2,
+                            duration_s=120))["result"]
+    assert r["points"] > 1000 and r["v_reduction_median_V"] < -1 < 0 < r["v_oxidation_median_V"]
+    assert abs(r["charge_reduction_C"] - 0.150 * 60) < 0.5
+
+    raman = twin("wasatch-raman-blaze")
+    refused(-32012, lambda: raman.write("laser_enable", True))              # a person turns the laser on
+    dark = raman.wait(raman.invoke("acquire"))["result"]
+    raman.write("laser_enable", True, approved=True)
+    lit = raman.wait(raman.invoke("acquire"))["result"]
+    assert lit["bands"]["149"] > 5 * max(1.0, dark["bands"]["149"]) and lit["laser_enabled"] is True
+    raman.estop()
+    assert raman.read("laser_enabled") is False
+
+    gc = twin("sri-8610c-gc")
+    refused(-32014, lambda: gc.invoke("run_method", control_file="../x.con"))
+    g = gc.wait(gc.invoke("run_method", control_file="gas.con", run_time_s=600))["result"]
+    assert [p["component"] for p in g["peaks"]] == ["H2", "CO", "CH4", "C2H4"]
+    assert len(g["chromatograms"]["TCD01.ASC"]["peaks"]) == 4
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

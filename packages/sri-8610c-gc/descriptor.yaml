@@ -1,0 +1,39 @@
+device:
+  notes: >
+    Online gas chromatograph. One run = one injection through the gas sampling valve with a saved
+    PeakSimple control file. Results are pushed as last_result when a run finishes.
+
+physical:
+  notes: Hot column oven and detectors; hydrogen or helium carrier gas. Only a person changes gases, columns or temperatures.
+
+signals:
+  - {name: connected, type: boolean, notes: True when PeakSimple answers the connector.}
+  - {name: running, type: boolean, notes: True while a run started from here is in progress.}
+  - {name: runs_today, type: integer}
+  - {name: last_result, type: object, notes: Peak table of the most recent run. Pushed when a run finishes.}
+
+settings: []
+
+actions:
+  - name: run_method
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      control_file: "string: name of a PeakSimple control file (.con) in the method folder; a name, not a path"
+      run_time_s: "number (optional): expected run length; read from the control file when omitted"
+      sample: "string (optional): what is being analysed, for the record"
+    required: [control_file]
+    limits:
+      run_time_s: [30, 3600]
+    notes: Loads the control file into PeakSimple and starts the run, which fires the gas sampling valve as the method programs it. The job ends when PeakSimple reports the run finished; the result carries peaks from each saved chromatogram and from PeakSimple's result file.
+    examples:
+      - {control_file: co2rr_gas.con, run_time_s: 600, sample: "cathode outlet, pCO2R -150 mA/cm2"}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: null
+  notes: E-stop ends the running acquisition. It does not cool the oven or shut off gases.

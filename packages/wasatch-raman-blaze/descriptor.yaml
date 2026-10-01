@@ -1,0 +1,67 @@
+device:
+  notes: Raman spectrometer with an immersion/window probe. Returns band intensities, and saves full spectra to disk.
+
+physical:
+  notes: Class 3B laser at the probe tip. Eye hazard if the probe is out of the cell or the beam path is open.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the spectrometer answers on USB.}
+  - {name: laser_enabled, type: boolean, notes: True while the laser is firing.}
+  - {name: detector_temperature, type: number, unit: degC, notes: Null if the model has no cooled detector.}
+  - {name: last_spectrum, type: object, notes: "Pushed after every spectrum: time, band intensities, maximum counts, saturated, laser state."}
+
+settings:
+  - name: integration_time_ms
+    type: integer
+    unit: ms
+    limits: {min: 10, max: 30000}
+    approval: auto
+    during_job: false
+    notes: Exposure per scan. The paper used 5000 ms.
+  - name: scans_to_average
+    type: integer
+    limits: {min: 1, max: 20}
+    approval: auto
+  - name: laser_power_percent
+    type: integer
+    unit: "%"
+    limits: {min: 1, max: 100}
+    approval: confirm
+    notes: PROVISIONAL. High power can heat or alter the catalyst surface; a person confirms a change.
+  - name: laser_enable
+    type: boolean
+    approval: confirm
+    notes: A person confirms the probe is seated in the cell before the laser is turned on. Turning it off also asks, so prefer leaving it on for a campaign; e-stop turns it off without asking.
+
+actions:
+  - name: acquire
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    params:
+      label: "string (optional): a tag stored with the spectrum, e.g. the condition"
+    notes: One spectrum with the current settings. Returns band intensities and where the full spectrum was saved.
+    examples:
+      - {label: "OCP, flow on"}
+  - name: acquire_series
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      count: "integer: number of spectra"
+      interval_s: "number (optional, default 0): wait between the start of spectra; 0 = back to back"
+      label: "string (optional)"
+    required: [count]
+    limits:
+      count: [1, 2000]
+      interval_s: [0, 600]
+    notes: A time series, for following the catalyst through an electrolysis run. Each spectrum is pushed as last_spectrum.
+    examples:
+      - {count: 50, interval_s: 6, label: "pCO2R -150 mA/cm2"}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: null
+  notes: E-stop turns the laser off. No watchdog; the laser stays on through unattended runs once a person has enabled it.

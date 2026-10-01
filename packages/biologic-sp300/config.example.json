@@ -1,0 +1,7 @@
+{
+  "address": "USB0",
+  "channel": 0,
+  "ewe_abort_window_V": [-3.5, 1.5],
+  "data_dir": "C:/lab/data/sp300",
+  "live_every_s": 5
+}
