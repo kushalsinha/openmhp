@@ -367,7 +367,7 @@ def test_location_is_recorded_when_a_device_is_installed():
     from openmhp.fleet import Fleet
     from openmhp.mcp_bridge import Bridge
     from openmhp.validate import validate_path
-    hotplate, centrifuge = "packages/ika-c-mag-hs7", "packages/manual-benchtop-centrifuge"
+    hotplate, centrifuge = "supported-devices/ika-c-mag-hs7", "supported-devices/manual-benchtop-centrifuge"
 
     # a distributable package is valid; its empty location is a warning, not an error
     v = validate_path(hotplate)
@@ -657,13 +657,13 @@ def test_electrochemistry_packages_validate_and_rehearse():
     os.environ["OPENMHP_SIM_TIME_SCALE"] = "0.0005"
     names = ["elveflow-ob1", "elveflow-mux-distributor", "biologic-sp300", "wasatch-raman-blaze", "sri-8610c-gc"]
     for name in names:
-        v = validate_path(f"packages/{name}")
+        v = validate_path(f"supported-devices/{name}")
         assert v["ok"], (name, v["errors"])
-        real = LocalDevice(load_driver(f"packages/{name}"))                 # no SDK, no config.json
+        real = LocalDevice(load_driver(f"supported-devices/{name}"))                 # no SDK, no config.json
         assert real.read("connected") is False
 
     def twin(name):
-        c = LocalDevice(load_driver(f"packages/{name}", sim=True))
+        c = LocalDevice(load_driver(f"supported-devices/{name}", sim=True))
         assert c.read("connected") is True
         return c
 

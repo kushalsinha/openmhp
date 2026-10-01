@@ -256,11 +256,20 @@ The model's context helps it reason; it is not the safety boundary. The driver r
 the hardware and checks limits, interlocks, approvals, leases, and device state on every call,
 whether or not those rules are currently in the model's context.
 
-Device packages and recipes normally belong to the lab that owns the instruments and operating
-procedures. Keep them in your lab's repository, review limit changes like code, and deploy them
-to the bench computers that serve those devices. The packages in
-[`openmhp/devices`](openmhp/devices) and [`packages`](packages) are reference examples for
-learning and testing the protocol.
+### Supported devices
+
+[`supported-devices`](supported-devices) holds ready-made packages for instruments that talk to
+OpenMHP directly: a driver, a simulated twin, operating instructions and a setup note each. Add
+one to a lab with `mhp lab add github:kushalsinha/openmhp/supported-devices/<name>` (append
+`--sim` for the twin), then set the limits to your own rig. The
+[list](supported-devices/README.md) says, per device, whether the driver has been run on real
+hardware or only against its twin.
+
+A package carries the instrument's capabilities; the limits, interlocks and procedures are your
+lab's. Keep your edited copies, your recipes and your SOPs in your lab's repository, review limit
+changes like code, and deploy them to the bench computers that serve those devices. The packages
+in [`openmhp/devices`](openmhp/devices) are simulated reference devices for learning and testing
+the protocol.
 
 ## Connect a real instrument
 
@@ -306,8 +315,9 @@ many existing devices, see [Adapters](https://openmhp.com/adapters) and
 ## Contributing
 
 OpenMHP is developed like a protocol project. Contributions should make the protocol clearer,
-more interoperable, easier to implement, or better tested. Lab-specific device packages,
-private SOPs, and recipes usually belong in the lab's own repository rather than upstream.
+more interoperable, easier to implement, or better tested. A package for an instrument others
+also own is welcome in [`supported-devices`](supported-devices); lab-specific limits, private
+SOPs, and recipes belong in the lab's own repository rather than upstream.
 
 Useful contributions include:
 
@@ -370,7 +380,7 @@ questions, roadmap work, interoperability gaps, bugs, and design proposals belon
 | `openmhp/adapters/` | OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT, and callable bindings |
 | `openmhp/devices/` | Bundled reference devices and simulated twins |
 | `openmhp/recipes/` | Reusable multi-step procedures |
-| `packages/` | Reference device packages used as implementation examples |
+| `supported-devices/` | Ready-made device packages for specific instruments, each with a simulated twin |
 | `tests/` | Simulator and fake-client coverage |
 
 ## Project status

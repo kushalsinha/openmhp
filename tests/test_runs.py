@@ -147,7 +147,7 @@ def test_safety_card_registry_and_sim_twin():
     reg = b.call_tool("mhp_lab", {"op": "registry", "query": "ika hotplate serial"})["packages"]
     assert reg[0]["name"] == "ika-c-mag-hs7"
     # community package's simulated twin, added from the local checkout (github: would clone)
-    added = b.call_tool("mhp_lab", {"op": "add", "target": "packages/ika-c-mag-hs7", "sim": True})["added"]
+    added = b.call_tool("mhp_lab", {"op": "add", "target": "supported-devices/ika-c-mag-hs7", "sim": True})["added"]
     assert added["id"] == "ika-c-mag-hs7-01-sim" and "simulated" in added["tags"]
     dev = "ika-c-mag-hs7-01-sim"
     assert b.call_tool("mhp_read", {"device": dev, "names": ["plate_temperature"]})["values"]["plate_temperature"] > 0
@@ -159,7 +159,7 @@ def test_safety_card_registry_and_sim_twin():
         b.call_tool("mhp_write", {"device": dev, "name": "target_temperature", "value": 400}); assert False
     except RemoteError as e:
         assert e.code == -32010
-    c2 = b.call_tool("mhp_lab", {"op": "add", "target": "packages/manual-benchtop-centrifuge", "sim": True})["added"]
+    c2 = b.call_tool("mhp_lab", {"op": "add", "target": "supported-devices/manual-benchtop-centrifuge", "sim": True})["added"]
     assert c2["class"] == "centrifuge"
     hits = b.call_tool("mhp_find", {"query": "spin tubes centrifuge"})
     assert hits[0]["id"] == "centrifuge-01-sim"

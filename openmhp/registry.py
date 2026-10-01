@@ -1,6 +1,6 @@
 """Community device packages: a small index, searchable by an agent.
 
-The bundled index lists packages in this repository's packages/ folder. A lab
+The bundled index lists packages in this repository's supported-devices/ folder. A lab
 can point OPENMHP_REGISTRY at its own index URL or file (same JSON shape), and
 ~/.openmhp/registry.json is merged in if present. Entries are added to a lab with
     mhp_lab op='add' target='github:owner/repo/path'
