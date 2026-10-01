@@ -1,0 +1,82 @@
+device:
+  notes: >
+    Pressure-driven flow controller. Flow depends on the fluidic resistance downstream, so verify
+    flow with the sensor rather than assuming it from pressure.
+
+physical:
+  notes: Pressurised reservoirs and tubing. Needs a clean dry gas supply above the highest setpoint.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Elveflow SDK session is open.}
+  - {name: pressure_ch1, type: number, unit: mbar}
+  - {name: pressure_ch2, type: number, unit: mbar}
+  - {name: pressure_ch3, type: number, unit: mbar}
+  - {name: pressure_ch4, type: number, unit: mbar}
+  - {name: flow_ch1, type: number, unit: uL/min, notes: MFS reading on this channel; null if no sensor is configured.}
+  - {name: flow_ch2, type: number, unit: uL/min}
+  - {name: flow_ch3, type: number, unit: uL/min}
+  - {name: flow_ch4, type: number, unit: uL/min}
+  - {name: flow_control_active, type: boolean, notes: True while the OB1 feedback loop is holding a flow.}
+
+settings:
+  - name: pressure_setpoint_ch1
+    type: number
+    unit: mbar
+    limits: {min: 0, max: 2000}
+    approval: auto
+    during_job: true
+    notes: PROVISIONAL limit = regulator range. Lower max to the flow cell's pressure rating once the owner gives it.
+  - name: pressure_setpoint_ch2
+    type: number
+    unit: mbar
+    limits: {min: 0, max: 2000}
+    approval: auto
+    during_job: true
+  - name: pressure_setpoint_ch3
+    type: number
+    unit: mbar
+    limits: {min: 0, max: 2000}
+    approval: auto
+    during_job: true
+  - name: pressure_setpoint_ch4
+    type: number
+    unit: mbar
+    limits: {min: 0, max: 2000}
+    approval: auto
+    during_job: true
+
+actions:
+  - name: set_flow
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    params:
+      channel: "integer 1..4: the regulator channel that drives the liquid"
+      flow_ul_min: "number: target flow in uL/min"
+      sensor_channel: "integer 1..4 (optional): channel the MFS is plugged into; defaults to channel"
+      p: "number (optional): proportional gain"
+      i: "number (optional): integral gain"
+    required: [channel, flow_ul_min]
+    limits:
+      channel: [1, 4]
+      sensor_channel: [1, 4]
+      flow_ul_min: [0, 5000]
+    notes: Starts the OB1 feedback loop holding a flow. PROVISIONAL flow limit; set it to the MFS model's range.
+    examples:
+      - {channel: 1, flow_ul_min: 500}
+  - name: stop_flow_control
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Stops the feedback loop; channels return to fixed-pressure control at 0 mbar.
+  - name: vent
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Sets every channel to 0 mbar. The safe state.
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: null
+  notes: E-stop stops flow control and sets every channel to 0 mbar. No watchdog, because flow must keep running through long electrolysis jobs.

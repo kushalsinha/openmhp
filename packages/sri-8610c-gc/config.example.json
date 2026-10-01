@@ -1,0 +1,7 @@
+{
+  "connector_dll": "C:/PeakSimple/PeaksimpleConnector.dll",
+  "control_dir": "C:/PeakSimple/methods",
+  "results_dir": "C:/lab/data/gc",
+  "result_wait_s": 60,
+  "channel": 1
+}

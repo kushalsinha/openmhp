@@ -1,0 +1,6 @@
+{
+  "serial_number": null,
+  "bands_cm1": [149, 219, 419, 630],
+  "band_half_width_cm1": 12,
+  "data_dir": "C:/lab/data/raman"
+}
