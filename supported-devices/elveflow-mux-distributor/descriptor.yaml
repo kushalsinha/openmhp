@@ -1,0 +1,40 @@
+device:
+  notes: Rotary selector valve; exactly one port is connected to the common line at any time.
+
+physical:
+  notes: Rotor seal wears if switched under pressure.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the SDK session to the valve is open.}
+  - {name: valve_position, type: integer, notes: The port currently connected to the common line.}
+  - {name: port_map, type: object, notes: "What is plumbed to each port, from config.json, e.g. {1: catholyte, 2: DI water}."}
+
+settings: []
+
+actions:
+  - name: select_port
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    params:
+      port: "integer: the port to connect to the common line"
+      rotation: "string (optional): shortest (default), clockwise or counterclockwise, to avoid passing over a port"
+    required: [port]
+    limits:
+      port: [1, 12]
+      rotation: {enum: [shortest, clockwise, counterclockwise]}
+    notes: Vent the feeding OB1 first. Ports beyond the valve's own count (config.json) are refused.
+    examples:
+      - {port: 2}
+      - {port: 5, rotation: clockwise}
+  - name: home
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Re-references the rotor. Use after a power cycle or a position mismatch.
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: null
+  notes: No stop action; a selector valve holds its position. Make the line safe by venting the OB1.

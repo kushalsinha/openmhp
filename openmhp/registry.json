@@ -2,12 +2,27 @@
   "packages": [
     {"name": "ika-c-mag-hs7", "class": "hotplate", "make": "IKA", "model": "C-MAG HS 7", "kind": "serial",
      "description": "IKA C-MAG HS 7 magnetic stirrer hotplate over its USB/RS-232 port (NAMUR command set). Heating to 500 C, stirring to 1500 rpm.",
-     "tags": ["heating", "stirring", "chemistry"], "target": "github:kushalsinha/openmhp/packages/ika-c-mag-hs7", "sim": true},
+     "tags": ["heating", "stirring", "chemistry"], "target": "github:kushalsinha/openmhp/supported-devices/ika-c-mag-hs7", "sim": true},
     {"name": "opentrons-flex", "class": "liquid_handler", "make": "Opentrons", "model": "Flex", "kind": "adapter",
      "description": "Opentrons Flex liquid handler through PyLabRobot's Opentrons backend. Pipetting, tips, plate moves with the gripper.",
-     "tags": ["pipetting", "plates", "biology"], "target": "github:kushalsinha/openmhp/packages/opentrons-flex", "sim": true},
+     "tags": ["pipetting", "plates", "biology"], "target": "github:kushalsinha/openmhp/supported-devices/opentrons-flex", "sim": true},
     {"name": "manual-benchtop-centrifuge", "class": "centrifuge", "make": "generic", "model": "benchtop", "kind": "manual",
      "description": "Any benchtop centrifuge operated by a person. The agent instructs the operator (balance, speed, time) and records results. A template to copy for your own model.",
-     "tags": ["spin", "biology", "manual"], "target": "github:kushalsinha/openmhp/packages/manual-benchtop-centrifuge", "sim": true}
+     "tags": ["spin", "biology", "manual"], "target": "github:kushalsinha/openmhp/supported-devices/manual-benchtop-centrifuge", "sim": true},
+    {"name": "elveflow-ob1", "class": "pump", "make": "Elveflow", "model": "OB1", "kind": "sdk",
+     "description": "Elveflow OB1 pressure controller through the Elveflow SDK (Windows). Pressure per channel, flow feedback on an MFS flow sensor, vent.",
+     "tags": ["microfluidics", "pressure", "flow"], "target": "github:kushalsinha/openmhp/supported-devices/elveflow-ob1", "sim": true},
+    {"name": "elveflow-mux-distributor", "class": "valve", "make": "Elveflow", "model": "MUX Distributor", "kind": "sdk",
+     "description": "Elveflow MUX Distributor rotary selection valve through the Elveflow SDK (Windows). Select which port feeds the common line.",
+     "tags": ["microfluidics", "valve", "selector"], "target": "github:kushalsinha/openmhp/supported-devices/elveflow-mux-distributor", "sim": true},
+    {"name": "biologic-sp300", "class": "potentiostat", "make": "BioLogic", "model": "SP-300", "kind": "sdk",
+     "description": "BioLogic SP-300 potentiostat through easy-biologic and the EC-Lab Development Package (Windows). OCV, static and pulsed chronopotentiometry, CV, with a live potential relay.",
+     "tags": ["electrochemistry", "potentiostat", "pulsed-electrolysis"], "target": "github:kushalsinha/openmhp/supported-devices/biologic-sp300", "sim": true},
+    {"name": "wasatch-raman-blaze", "class": "spectrometer", "make": "Wasatch Photonics / BlazeMetrics", "model": "Raman spectrometer with Blaze probe", "kind": "sdk",
+     "description": "Wasatch Photonics Raman spectrometer (Wasatch.PY) behind a BlazeMetrics Blaze probe. Single spectra and time series with band intensities; laser gated on a person.",
+     "tags": ["raman", "spectroscopy", "in-situ"], "target": "github:kushalsinha/openmhp/supported-devices/wasatch-raman-blaze", "sim": true},
+    {"name": "sri-8610c-gc", "class": "gas_chromatograph", "make": "SRI Instruments", "model": "8610C", "kind": "sdk",
+     "description": "SRI 8610C gas chromatograph through PeakSimple's .NET connector (Windows). Runs a saved control file and returns the peak table.",
+     "tags": ["gc", "gas-analysis", "methods"], "target": "github:kushalsinha/openmhp/supported-devices/sri-8610c-gc", "sim": true}
   ]
 }
