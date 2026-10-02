@@ -1,0 +1,104 @@
+device:
+  notes: >
+    Potentiostat/galvanostat. All currents are total cell current in mA; potentials are versus the
+    cell's reference electrode, without iR correction.
+
+physical:
+  notes: Cell leads carry up to 12 V compliance. Electrolysis evolves H2 and CO at the cathode; the cell exhaust must be vented.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the instrument answers.}
+  - {name: running, type: boolean, notes: True while a technique is running on the channel.}
+  - {name: ewe_V, type: number, unit: V, notes: Working-electrode potential vs the reference, read now.}
+  - {name: current_mA, type: number, unit: mA, notes: Cell current, read now.}
+  - {name: live, type: object, notes: "Pushed every few seconds during a run: t_s, ewe_V, current_mA, v_reduction_V, v_oxidation_V, cycle, points."}
+  - {name: last_result, type: object, notes: Summary of the most recent technique.}
+
+settings: []
+
+actions:
+  - name: ocv
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      duration_s: "number: how long to record the open-circuit potential"
+      record_dt_s: "number (optional, default 1): sampling interval"
+    required: [duration_s]
+    limits:
+      duration_s: [1, 3600]
+      record_dt_s: [0.1, 60]
+    notes: No current flows. Use to check the cell before electrolysis.
+    examples:
+      - {duration_s: 60}
+  - name: cp_static
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      current_mA: "number: constant cell current; negative = reduction"
+      duration_s: "number: total time"
+      record_dt_s: "number (optional, default 1): sampling interval"
+    required: [current_mA, duration_s]
+    limits:
+      current_mA: [-500, 0]
+      duration_s: [1, 10800]
+      record_dt_s: [0.1, 60]
+    notes: Static CO2 reduction (sCO2R). PROVISIONAL current limit = SP-300 range without a booster; set from the electrode area.
+    examples:
+      - {current_mA: -150, duration_s: 2700}
+  - name: cp_pulsed
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      i_reduction_mA: "number: reduction current (negative)"
+      i_oxidation_mA: "number: oxidation current (positive)"
+      t_reduction_s: "number: length of each reduction pulse"
+      t_oxidation_s: "number: length of each oxidation pulse"
+      duration_s: "number: total time; the driver runs whole cycles"
+      record_dt_s: "number (optional, default 0.1): sampling interval"
+    required: [i_reduction_mA, i_oxidation_mA, t_reduction_s, t_oxidation_s, duration_s]
+    limits:
+      i_reduction_mA: [-500, 0]
+      i_oxidation_mA: [0, 50]
+      t_reduction_s: [0.1, 60]
+      t_oxidation_s: [0.1, 10]
+      duration_s: [1, 10800]
+      record_dt_s: [0.05, 10]
+    notes: >
+      Pulsed CO2 reduction (pCO2R): each cycle is an oxidation pulse then a reduction pulse.
+      PROVISIONAL limits. Oxidation current and duration are capped because a stronger or longer
+      anodic pulse dissolves the copper catalyst.
+    examples:
+      - {i_reduction_mA: -150, i_oxidation_mA: 10, t_reduction_s: 2, t_oxidation_s: 2, duration_s: 2700}
+  - name: cv
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      e_start_V: "number: start potential"
+      e_vertex1_V: "number: first turning potential"
+      e_vertex2_V: "number: second turning potential"
+      scan_rate_mV_s: "number: scan rate"
+      cycles: "integer (optional, default 1)"
+    required: [e_start_V, e_vertex1_V, e_vertex2_V, scan_rate_mV_s]
+    limits:
+      e_start_V: [-2.0, 0.5]
+      e_vertex1_V: [-2.0, 0.5]
+      e_vertex2_V: [-2.0, 0.5]
+      scan_rate_mV_s: [1, 200]
+      cycles: [1, 10]
+    notes: Cyclic voltammetry vs the reference. The paper scans -1.5 to 0 V vs Ag/AgCl at 10 mV/s. PROVISIONAL window.
+    examples:
+      - {e_start_V: 0, e_vertex1_V: -1.5, e_vertex2_V: 0, scan_rate_mV_s: 10}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: null
+  notes: E-stop stops the channel, which opens the cell circuit. No watchdog; electrolysis runs for up to hours unattended.

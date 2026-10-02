@@ -1,0 +1,7 @@
+{
+  "visa_com": "ASRL5::INSTR",
+  "ports": 12,
+  "sdk_python_dir": "C:/Elveflow/SDK/Python_64",
+  "sdk_dll_dir": "C:/Elveflow/SDK/DLL64",
+  "port_map": {"1": "CO2-saturated catholyte", "2": "DI water", "3": "air (drying)"}
+}

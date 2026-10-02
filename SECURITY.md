@@ -24,7 +24,7 @@ In scope:
 - The reference server, client, and MCP bridge in openmhp/
 - The adapters in openmhp/adapters/
 - The npx openmhp-cli and npx openmhp-node launchers
-- The bundled reference device packages in openmhp/devices/ and packages/
+- The bundled reference device packages in openmhp/devices/ and supported-devices/
 
 Generally out of scope:
 

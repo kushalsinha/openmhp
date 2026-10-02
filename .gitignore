@@ -5,3 +5,5 @@ build/
 dist/
 .venv/
 .DS_Store
+supported-devices/*/config.json
+supported-devices/*/data/

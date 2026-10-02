@@ -1,0 +1,9 @@
+{
+  "device_name": "01BECD3F",
+  "regulators": [2, 2, 0, 0],
+  "sdk_python_dir": "C:/Elveflow/SDK/Python_64",
+  "sdk_dll_dir": "C:/Elveflow/SDK/DLL64",
+  "calibration_file": null,
+  "sensors": {"1": {"type": 5, "digital": 1, "calibration": 0, "resolution": 7}},
+  "pid": {"p": 0.05, "i": 0.01}
+}

@@ -496,7 +496,7 @@ def test_remove_and_reload_invalidate_routing_and_drivers():
     home = HOME / "t20"
     home.mkdir()
     pkg = home / "pkgs" / "ika"
-    shutil.copytree("packages/ika-c-mag-hs7", pkg)
+    shutil.copytree("supported-devices/ika-c-mag-hs7", pkg)
     b = Bridge(fleet=Fleet(home / "fleet.json"))
     did = b.call_tool("mhp_lab", {"op": "add", "target": str(pkg), "sim": True})["added"]["id"]
     b.call_tool("mhp_read", {"device": did, "names": ["plate_temperature"]})
@@ -562,7 +562,7 @@ def test_entry_points_fail_cleanly():
 
     from openmhp import cli
     from openmhp.fleet import Fleet
-    assert cli.main(["lab", "add", "packages/ika-c-mag-hs7", "--sim"]) == 0
+    assert cli.main(["lab", "add", "supported-devices/ika-c-mag-hs7", "--sim"]) == 0
     assert any(i.endswith("-sim") for i in Fleet().devices)
 
     b = Bridge(home=HOME / "t22")
