@@ -1,0 +1,539 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{microtype}
+% long \texttt{} runs (method names, error codes) cannot hyphenate; let TeX stretch
+% interword space rather than push them past the margin.
+\sloppy
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
+
+% ---------------------------------------------------------------------------
+% TODO markers. These render in red so that an unfilled claim cannot be
+% submitted by accident. Switch the definition to {} before submission.
+% ---------------------------------------------------------------------------
+\newcommand{\TODO}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  framesep=4pt,
+  rulecolor=\color{gray!50},
+  columns=fullflexible,
+  keepspaces=true,
+}
+
+\title{\textbf{OpenMHP: An Open Protocol for Safe, Context-Efficient\\
+Agent Control of Laboratory and Industrial Instruments}}
+
+\author{
+  Kushal Sinha\\
+  \texttt{kushal.sinha@kortana.io}\\
+  \TODO{affiliation, ORCID, any co-authors}
+}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Large language model agents have become competent at using software tools, largely through
+the Model Context Protocol (MCP), which standardises how an agent discovers and invokes a
+tool. Physical laboratory and industrial equipment resists the same treatment for three
+reasons: an operation may run for minutes or hours rather than returning immediately; the
+instrument emits telemetry, progress and safety events that the agent must observe while the
+work proceeds; and an incorrect request can destroy a sample or damage hardware, so
+correctness cannot be delegated to the model's judgement. We present OpenMHP (Open Model
+Hardware Protocol), an open protocol that extends the MCP interaction model to physical
+devices. OpenMHP contributes four design decisions. First, physical operations are modelled
+as \emph{durable jobs} acquired under a \emph{session lease}, where the lease doubles as a
+dead-man's switch: a device declaring a watchdog fails safe if the controlling process goes
+silent. Second, every request passes six \emph{ordered safety gates} evaluated on the device
+side of the network, so the enforced envelope is independent of the model's context or
+intent. Third, each device is distributed as a \emph{device package} structured like an Agent
+Skill, enabling progressive disclosure of operating knowledge; on a simulated 2{,}000-device
+laboratory, locating and operating one instrument costs 1{,}270 tokens against 1{,}224{,}382
+tokens for naive descriptor loading, a reduction to 0.10\%. Fourth, the protocol is
+explicitly a \emph{bridging} layer: adapters expose OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot
+and MQTT devices without replacing existing control stacks. We describe the protocol, its
+trust boundary, a reference implementation in Python, and its conformance suite.
+\end{abstract}
+
+\noindent\textbf{Keywords:} laboratory automation; self-driving laboratories; AI agents;
+large language models; Model Context Protocol; robot safety; scientific instrumentation.
+
+\section{Introduction}
+\label{sec:intro}
+
+Autonomous and semi-autonomous experimentation has moved from demonstration to practice.
+Systems such as Coscientist~\cite{boiko2023} and the A-Lab~\cite{szymanski2023} have shown
+that a language model, given actuation and feedback, can plan and execute real experimental
+campaigns. In parallel, evolutionary and search-based agents such as
+AlphaEvolve~\cite{alphaevolve2025} have demonstrated that agents can conduct genuine
+discovery when the feedback loop is fast and the object of study is symbolic. The
+corresponding loop in the physical sciences is far slower, and much of its latency is not
+scientific but infrastructural: every instrument exposes a different programming interface,
+and connecting an agent to each one is bespoke work.
+
+The software world addressed the analogous fragmentation with the Model Context Protocol
+(MCP)~\cite{mcp2024}, which gives an agent one standard way to discover and call a tool, and
+a tool one standard way to describe itself. MCP's abstraction is a request that returns a
+response. That abstraction is a poor fit for physical work, in three specific ways.
+
+\paragraph{Duration.} A thermocycling protocol runs for two hours; a liquid-handling routine
+for twenty minutes; an incubation overnight. A tool call that blocks for the duration is not
+viable, and one that returns immediately discards the result.
+
+\paragraph{Observation.} While the instrument works it produces readings, progress, operator
+prompts and fault conditions. An agent that can only poll either wastes context or misses
+events. The natural shape is a push stream, which a request/response tool call cannot express.
+
+\paragraph{Consequence.} A malformed software call returns an error. A malformed physical
+call can overheat a reagent, crash a robot arm into a plate, or spoil an irreplaceable sample.
+Safety therefore cannot be a property of the prompt, the model, or the tool description, all
+of which are inside the agent's trust domain and all of which the model can, in principle,
+talk its way around.
+
+OpenMHP is our response. It retains MCP's wire format, capability negotiation and
+host/client/server split, so that an OpenMHP deployment is usable from any MCP-speaking
+harness today, and adds exactly what the three gaps above require. This paper makes the
+following contributions:
+
+\begin{enumerate}
+  \item A protocol design (Section~\ref{sec:protocol}) in which physical work is a durable
+    job held under a session lease, with pushed notifications, six primitives, and a
+    device descriptor that doubles as the instrument's manual.
+  \item A device-side safety model (Section~\ref{sec:safety}) built on six ordered gates and
+    an explicit trust boundary in which the host is trusted and the model is not, with
+    fail-closed semantics for operations of unknown outcome.
+  \item A context-scaling mechanism (Section~\ref{sec:scale}) combining descriptor detail
+    tiers, a live-pinging directory, a constant tool surface and programmatic runs, measured
+    at 0.10\% of naive context cost on a 2{,}000-device laboratory.
+  \item An open reference implementation and conformance suite
+    (Sections~\ref{sec:impl}--\ref{sec:eval}), including adapters for six existing control
+    ecosystems.
+\end{enumerate}
+
+\section{Background and Related Work}
+\label{sec:related}
+
+\subsection{Agent-facing protocols}
+MCP~\cite{mcp2024} standardises tool discovery and invocation for language-model
+applications over JSON-RPC 2.0~\cite{jsonrpc}. Its first year surfaced a scaling problem
+directly relevant to laboratories: loading every tool definition up front consumed roughly
+55{,}000 tokens for five ordinary servers, and selection accuracy degraded as the list
+grew~\cite{anthropic-advanced-tool-use}. The reported mitigations --- deferred tool search,
+programmatic tool calling, and usage examples embedded in definitions --- inform
+Section~\ref{sec:scale}. Agent Skills~\cite{agentskills} established a complementary
+convention for packaging procedural knowledge that is loaded only when a task requires it;
+OpenMHP applies that convention to instruments.
+
+\subsection{Laboratory and industrial control standards}
+SiLA 2~\cite{sila2} provides a gRPC-based standard for laboratory instrument interfaces with
+strong typing and feature definitions. OPC UA~\cite{opcua} is the dominant information model
+in industrial automation. ROS 2~\cite{macenski2022} supplies the middleware for most research
+robotics. MADSci~\cite{madsci} and PyLabRobot~\cite{wierenga2023} provide orchestration and
+hardware-agnostic liquid handling respectively. These layers solve machine-to-machine
+integration well, and OpenMHP does not attempt to replace them. What none of them provides is
+an \emph{agent-facing} surface: a natural-language account of what an instrument is for, when
+not to use it, and which operations require a human, together with a context budget suitable
+for a model. OpenMHP supplies that surface and delegates actuation downward
+(Section~\ref{sec:adapters}).
+
+\subsection{Protocol and procedure description languages}
+Autoprotocol and LabOP~\cite{labop} describe experimental procedures in machine-readable
+form, addressing \emph{what} to run. OpenMHP is complementary and addresses \emph{how an
+agent safely drives a specific instrument}, including the run-time envelope that a procedure
+description cannot enforce.
+
+\subsection{Self-driving laboratories}
+ChemOS~\cite{roch2018} and successors orchestrate closed-loop experimentation, typically
+within one integrated facility and one software stack. OpenMHP targets the heterogeneous
+case: an ordinary laboratory with instruments from many vendors, several control stacks, and
+no single orchestrator, where the agent is supplied by the user rather than the facility.
+
+\section{Design Goals and Trust Model}
+\label{sec:goals}
+
+OpenMHP is specified against five rules, in priority order.
+
+\begin{enumerate}
+  \item \textbf{Safety is enforced by the driver, never by the agent.} Limits, interlocks and
+    approval levels live in the descriptor and are checked on the device side of the wire.
+  \item \textbf{One descriptor is the whole manual.} Tacit operating knowledge is carried in
+    natural-language \texttt{notes} fields alongside machine-readable types and limits.
+  \item \textbf{Six primitives, no more.} A device that speaks
+    \texttt{describe}/\texttt{signals}/\texttt{settings}/\texttt{actions}/\texttt{safety}/\texttt{methods}
+    can be operated by any OpenMHP host.
+  \item \textbf{Bridge, do not replace.} Existing control layers become OpenMHP devices
+    through thin adapters.
+  \item \textbf{The agent's context is a protected resource.} A laboratory with two thousand
+    devices costs approximately what a laboratory with two costs.
+\end{enumerate}
+
+\paragraph{Trust boundary.} The central assumption is that \emph{the host is trusted and the
+model is not}. The host is the agent runtime; it holds clients, presents confirmation prompts
+to people, and is assumed to execute faithfully. The model it hosts is treated as an
+untrusted source of requests. Concretely, the flag \texttt{approved:\ true} is the host's
+assertion that a person confirmed one exact request; a reference bridge strips and ignores any
+\texttt{approved} value originating from the model. Package code, recipes and orchestration
+scripts are executed by the host and therefore sit inside the trusted domain: a deployment in
+which the model can edit a device package or run unsandboxed scripts has moved the enforcement
+boundary, and we state this explicitly rather than claiming unconditional guarantees
+(Section~\ref{sec:limitations}).
+
+\section{Protocol Design}
+\label{sec:protocol}
+
+\subsection{Architecture}
+An OpenMHP deployment comprises a \emph{host} (the agent runtime), one \emph{client} per
+device, and one \emph{server} per device. A server owns exactly one logical device, serves its
+descriptor, enforces the safety envelope, translates primitives into vendor commands and runs
+jobs. A server may equally be an \emph{adapter} wrapping another control layer; from the
+host's perspective the two are indistinguishable. Messages are JSON-RPC 2.0 over either stdio
+or HTTP with Server-Sent Events.
+
+\subsection{Primitives}
+The protocol defines six primitives:
+\texttt{device/describe} (identity and capability, see Section~\ref{sec:scale});
+\texttt{signals/read} (sensed values);
+\texttt{settings/write} (setpoints, limit-checked);
+\texttt{actions/invoke} (long-running work, returning a job);
+\texttt{safety/*} (\texttt{estop}, \texttt{reset});
+and \texttt{methods/*} (named, versioned parameter sets filed per project or compound, for
+instruments such as chromatographs that operate by named method rather than by free
+parameters). Session management (\texttt{session/acquire}, \texttt{renew}, \texttt{release})
+and job control (\texttt{jobs/status}, \texttt{pause}, \texttt{resume}, \texttt{cancel})
+support these.
+
+\subsection{Jobs}
+\texttt{actions/invoke} returns immediately with a job identifier rather than a result. Jobs
+progress through \texttt{queued} $\rightarrow$ \texttt{running} $\rightarrow$
+\texttt{done} $\mid$ \texttt{failed} $\mid$ \texttt{cancelled}, with an additional
+\texttt{waiting\_operator} state for instruments whose steps are performed by a person. The
+agent may disconnect and reconnect without losing the state of the physical process. A failed
+job carries \texttt{outcome:\ "unknown"} and places the device in \texttt{fault} until a
+verified \texttt{safety/reset}, on the principle that a partially completed physical action
+must not be assumed benign.
+
+\subsection{Leases and the watchdog}
+\texttt{session/acquire\{ttl\}} grants the calling session exclusive write and invoke rights
+until the TTL lapses without renewal or the session releases them. Every client has its own
+session identifier, so independent clients never share a lease. Reads, \texttt{ping},
+\texttt{describe}, \texttt{jobs/status}, \texttt{jobs/pause}, \texttt{jobs/cancel} and
+\texttt{safety/estop} are deliberately never blocked by a lease, so that observation and
+stopping remain always available.
+
+The lease additionally serves as a dead-man's switch. If a descriptor declares
+\texttt{safety.watchdog\_s}, the watchdog is armed whenever a session holds the lease; any
+request from the holder renews it. Should the holder fall silent for longer than the declared
+window, or should its lease expire without release, the server must fail safe: enter
+\texttt{estop}, cancel active jobs, run the stop hook and drop the lease. Recovery requires a
+verified reset. This converts the liveness of the controlling process into a safety property,
+which we regard as the single most important difference between driving an instrument and
+calling a software tool.
+
+\subsection{Notifications}
+Servers push JSON-RPC notifications for signal updates, job start, progress, completion,
+pause/resume/cancel, e-stop, fault, operator instructions, and method changes. A supervising
+host consumes these without being asked; the reference bridge subscribes to every device it
+opens, records events against the owning run, and writes notable ones to an append-only run
+log. No part of this path polls the instrument.
+
+\subsection{The device package}
+A device is distributed as a folder, deliberately shaped like an Agent Skill:
+
+\begin{lstlisting}
+devices/hotplate-01/
+  DEVICE.md        # YAML frontmatter (card) + operating instructions in prose
+  descriptor.yaml  # signals, settings with limits, actions, interlocks, safety
+  driver.py        # a Driver subclass, a BoundDriver, or an adapter
+  sim.py           # optional simulated twin
+  references/      # SOPs, manual excerpts
+  scripts/         # tested orchestration scripts
+  methods/         # optional saved methods per project
+\end{lstlisting}
+
+The separation matters: \texttt{DEVICE.md} carries what a new colleague would be told, in the
+owner's own words, while \texttt{descriptor.yaml} carries what a machine must enforce. The
+same artefact therefore serves both the model's understanding and the driver's gate checks,
+and the two cannot drift apart silently.
+
+\section{Safety Model}
+\label{sec:safety}
+
+\subsection{Six ordered gates}
+On every \texttt{settings/write} and \texttt{actions/invoke}, the server evaluates, in this
+fixed order:
+
+\begin{enumerate}
+  \item \textbf{State} --- \texttt{estop} yields \texttt{EStopActive}; \texttt{fault} yields
+    \texttt{DeviceFault}.
+  \item \textbf{Approval} --- \texttt{forbid} yields \texttt{Forbidden}; \texttt{confirm}
+    without \texttt{approved:\ true} yields \texttt{ApprovalRequired}.
+  \item \textbf{Interlocks} --- each named signal is read live and must be exactly
+    \texttt{true}; false, unreadable or stale yields \texttt{InterlockOpen}.
+  \item \textbf{Values} --- type, then declared limits; for actions, declared, required and
+    bounded parameters, then the driver's whole-request \texttt{validate\_params}.
+  \item \textbf{Lease} --- a lease held by another session, or a watchdog device operated
+    without one, yields \texttt{NotLeased}.
+  \item \textbf{Busy} --- a non-concurrent action while a job runs yields \texttt{DeviceBusy}.
+\end{enumerate}
+
+Vendor code executes only after all six pass. The order is normative because it determines
+which refusal an agent sees first, and therefore what it learns from a refusal.
+
+\subsection{Human approval and elicitation}
+Approval level \texttt{confirm} is the junction between autonomy and oversight. The sequence
+is: the model requests the action; the host receives \texttt{ApprovalRequired}; the host
+presents the device, the action, its exact parameters and the descriptor's notes to a person;
+and only on an explicit affirmative does the host resend the identical request with
+\texttt{approved:\ true}. The reference bridge implements this through MCP elicitation. Where
+a harness offers no elicitation channel, the bridge has no trusted path to a person, and
+confirm-gated operations are reported unavailable rather than being silently permitted.
+
+\subsection{Fail-closed semantics and defence in depth}
+Any exception inside vendor code during a job, and any write failure occurring after a command
+may already have reached the instrument, moves the device to \texttt{fault} with an unknown
+outcome and runs the driver's safe-state hook. There is no automatic recovery. Separately,
+limits on scalar setpoints are insufficient when a dangerous value is nested inside a
+structured parameter --- for instance a 200\,\textdegree C step inside an otherwise valid
+protocol --- so the driver's \texttt{validate\_params} inspects the whole request, and must do
+so for dry runs as well, ensuring no step executes before the entire program is known valid.
+
+\subsection{Scope}
+OpenMHP is not a functional-safety system in the IEC 61508~\cite{iec61508} sense. Hard-wired
+emergency stops, light curtains and PLC safety logic remain the primary protective layer.
+OpenMHP prevents an agent from \emph{asking} for something unsafe and gives it a standard way
+to stop everything when it observes a problem. We state this prominently because conflating
+the two would be the most consequential misreading of this work.
+
+\section{Context Scaling}
+\label{sec:scale}
+
+A laboratory has more devices than a workspace has tools, and a device descriptor is longer
+than a tool schema. Four mechanisms keep the agent's context approximately independent of
+laboratory size.
+
+\paragraph{Detail tiers.} \texttt{device/describe} accepts a \texttt{detail} parameter with
+three tiers: \texttt{card} (roughly 40 tokens: identity, location, live state and the
+\emph{names} of capabilities), \texttt{summary} (under 1{,}000 tokens: the card plus operating
+instructions plus every capability with type, unit, limits, approval level and interlocks),
+and \texttt{full}. A \texttt{select} parameter fetches complete specifications for named items
+only. The intended path is card $\rightarrow$ summary $\rightarrow$ select the two items that
+will actually be used.
+
+\paragraph{Directory.} A directory is a server whose role is finding devices rather than being
+one. It indexes cards only, ranking with BM25~\cite{robertson2009} over identity, class, make,
+model, location, tags, notes and capability names, so a query such as \emph{``heat a 96-well
+plate to 95\,\textdegree C for PCR in bay 12''} resolves without the agent knowing any
+identifiers. Crucially, \emph{state is never served from the index}: at query time the
+directory pings top candidates in parallel with a short timeout and fills in live state before
+applying any state filter, so a stale index cannot cause an agent to address an unreachable
+instrument.
+
+\paragraph{Constant tool surface.} A bridged host sees eleven tools regardless of device
+count, and never per-device tools. Bridges must not enumerate devices into the tool list at
+startup.
+
+\paragraph{Programmatic runs.} An orchestration script executes against the laboratory and
+returns only what it prints, capped. A script that takes five hundred readings and reports a
+mean places one line in the model's context rather than five hundred numbers. A plan mode
+rehearses a script with reads real and every mutation a dry run through the same gates, under
+virtual time and a step budget, producing the ordered steps, those requiring confirmation,
+those that are long-running, and the first step the driver would refuse.
+
+\section{Bridging Existing Ecosystems}
+\label{sec:adapters}
+
+All adapters are built on one mechanism. A \emph{binding} pairs an OpenMHP name with a
+callable into the foreign layer, and \texttt{BoundDriver} turns three lists of bindings into a
+complete driver that inherits every gate, tier, job and notification:
+
+\begin{lstlisting}[language=Python]
+from openmhp.adapters import BoundDriver, Signal, Setting, Action
+dev = BoundDriver(
+    device={"id": "hotplate-01", "class": "hotplate", "notes": "Fume hood 2."},
+    signals=[Signal("plate_temperature", read=lambda: plc.read(0x10), unit="degC")],
+    settings=[Setting("target_temperature", write=lambda v: plc.write(0x20, v),
+                      limits={"min": 20, "max": 300})],
+    actions=[Action("shutdown", run=lambda job, p: plc.write(0x21, 0),
+                    approval="confirm")],
+    estop=lambda: plc.write(0x21, 0))
+\end{lstlisting}
+
+The reference implementation ships adapters for OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot and
+MQTT on this one mechanism. The practical consequence is that the safety envelope is added
+\emph{above} a control layer that may itself provide none, without modifying it.
+
+\section{Reference Implementation}
+\label{sec:impl}
+
+\texttt{openmhp} is a Python implementation of the specification, comprising approximately
+7{,}300 lines across the driver base class, package loader, directory, stdio and HTTP+SSE
+transports, client SDK, command-line interface, MCP bridge, the six adapters, three bundled
+Agent Skills, simulated devices and the scale demonstration. PyYAML is the only runtime
+dependency of the core. Writing a new driver requires a descriptor and three hooks
+(\texttt{on\_read}, \texttt{on\_write}, \texttt{on\_invoke}), with optional
+\texttt{validate\_params} and \texttt{on\_fault}.
+
+Four conformance levels are defined: \textbf{Core} (describe with all tiers, read, limited
+write, error codes), \textbf{Actions} (jobs, interlocks, approval gates, methods),
+\textbf{Safe} (non-blocking e-stop, verified reset, watchdog, fail-closed state machine,
+per-session leases) and \textbf{Directory} (the server role). Devices carrying stored energy
+or capable of motion should not be exposed below Safe.
+
+\section{Evaluation}
+\label{sec:eval}
+
+\subsection{Context cost at scale}
+The reference \texttt{examples/scale\_demo.py} constructs 2{,}000 simulated devices across 8
+classes and 40 bays, and measures the tokens entering an agent's context for a representative
+task: find a suitable instrument, understand it, and operate it.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}p{0.70\textwidth}r@{}}
+\toprule
+\textbf{Strategy} & \textbf{Tokens in agent context} \\
+\midrule
+Every descriptor loaded up front & 1{,}224{,}382 \\
+Find (5 cards) + summary of chosen device + full spec of the 2 items used & 1{,}270 \\
+\bottomrule
+\end{tabular}
+\caption{Context cost on a simulated 2{,}000-device laboratory. The progressive path costs
+0.10\% of naive loading, with retrieval well under one millisecond. The device is then operated
+through exactly the same primitives as in a two-device laboratory.}
+\label{tab:scale}
+\end{table}
+
+\subsection{Conformance and behavioural testing}
+Conformance in OpenMHP is behavioural rather than structural. The reference suite comprises
+53 tests across approximately 1{,}800 lines, exercising typed limits and limit violations,
+lease ownership and contention, watchdog expiry under induced silence, rejected and forged
+approvals, interlock enforcement, blocked I/O, fail-closed fault latching on backend aborts,
+plan-mode isolation from real actuation, and the method lifecycle. Adapters are tested against
+injected fakes of each vendor client library, verifying that the gate behaviour is inherited
+correctly through \texttt{BoundDriver} rather than reimplemented per ecosystem.
+
+\subsection{Deployment on physical instruments}
+\TODO{This subsection must be written from your real hardware runs before submission; do not
+submit the paper without it. Reviewers will expect, at minimum: (i) which instruments, by
+make and model, and which conformance level each was exposed at; (ii) which integration route
+each used --- native driver, serial ASCII, or which adapter; (iii) how long each ran and how
+many jobs completed; (iv) at least one instance of a gate firing against a real unsafe
+request, with the refusal; (v) at least one watchdog or e-stop event observed on real
+hardware, since that is the central safety claim of Section 5; (vi) any failure, surprise or
+workaround, which reviewers weight heavily in a systems paper; and (vii) whether a domain
+scientist, rather than the authors, operated it. If a controlled comparison is possible ---
+time or lines of integration code for the same instrument with and without OpenMHP --- it
+would substantially strengthen the paper.}
+
+\section{Limitations and Future Work}
+\label{sec:limitations}
+
+We state the boundaries of the current draft explicitly.
+
+\begin{itemize}
+  \item \textbf{Not functional safety.} OpenMHP does not replace IEC 61508-class protective
+    systems (Section~\ref{sec:safety}).
+  \item \textbf{Enforcement depends on the trust boundary holding.} A model able to edit a
+    device package, or to run arbitrary scripts in an unsandboxed host, can alter what is
+    enforced. Deployments should separate package authoring from operation.
+  \item \textbf{Non-idempotent operations.} A request may reach a device even when its
+    response is lost, and servers do not deduplicate. Clients must not retry writes or
+    invocations automatically; they should reconcile by reading state.
+  \item \textbf{Unspecified in this draft.} In-band authentication, and authentication for the
+    device HTTP transport; idempotency tokens; multi-device transactions; descriptor signing;
+    a hosted registry; sandboxed script execution; streaming of bulk data; and a
+    machine-readable description of hardware watchdogs and device-side safe states.
+  \item \textbf{Evaluation breadth.} \TODO{state honestly how many instruments, of what
+    diversity, and in how many independent laboratories; note explicitly if all deployments
+    are by the authors.}
+\end{itemize}
+
+\section{Conclusion}
+
+Agents are becoming capable enough that the limiting factor in physical science is
+increasingly the interface to the instrument rather than the reasoning about the experiment.
+OpenMHP proposes that this interface should be open, should model physical work as durable
+leased jobs with pushed observation, should enforce its safety envelope on the device side of
+the network where the model cannot reach it, and should package instrument knowledge for
+progressive disclosure so that laboratory size does not consume the agent's context. The
+specification, reference implementation and conformance suite are available under Apache 2.0.
+
+\section*{Availability}
+
+Specification and reference implementation: \url{https://github.com/kushalsinha/openmhp}.
+Documentation: \url{https://openmhp.com}. Released under the Apache License 2.0.
+\TODO{mint an archival DOI (e.g.\ via Zenodo) for the exact release this paper describes, and
+cite it here; journals increasingly require it and it is what others will cite.}
+
+\section*{Acknowledgements}
+\TODO{acknowledgements; funding statement; and a disclosure of AI assistance in the
+preparation of the software and/or manuscript, which arXiv and most journals now require.}
+
+\begin{thebibliography}{99}
+\footnotesize
+
+\bibitem{mcp2024} Anthropic. \emph{Model Context Protocol}. 2024.
+\url{https://modelcontextprotocol.io}
+
+\bibitem{anthropic-advanced-tool-use} Anthropic. \emph{Advanced tool use}. Engineering blog.
+\TODO{verify exact title, author and date}
+
+\bibitem{agentskills} Anthropic. \emph{Agent Skills}. \TODO{verify citation form}
+
+\bibitem{jsonrpc} JSON-RPC Working Group. \emph{JSON-RPC 2.0 Specification}. 2010.
+\url{https://www.jsonrpc.org/specification}
+
+\bibitem{sila2} SiLA Consortium. \emph{SiLA 2 Standard}. \url{https://sila-standard.org}
+
+\bibitem{opcua} IEC 62541. \emph{OPC Unified Architecture}. International Electrotechnical
+Commission.
+
+\bibitem{macenski2022} S. Macenski, T. Foote, B. Gerkey, C. Lalancette, W. Woodall.
+Robot Operating System 2: Design, architecture, and uses in the wild.
+\emph{Science Robotics}, 7(66), 2022.
+
+\bibitem{wierenga2023} R. P. Wierenga et al. PyLabRobot: An open-source, hardware-agnostic
+interface for liquid-handling robots and accessories. \emph{Device}, 2023.
+\TODO{verify volume and pages}
+
+\bibitem{madsci} Argonne National Laboratory. \emph{MADSci: Modular Autonomous Discovery for
+Science}. \TODO{verify canonical citation}
+
+\bibitem{boiko2023} D. A. Boiko, R. MacKnight, B. Kline, G. Gomes. Autonomous chemical
+research with large language models. \emph{Nature}, 624:570--578, 2023.
+
+\bibitem{szymanski2023} N. J. Szymanski et al. An autonomous laboratory for the accelerated
+synthesis of novel materials. \emph{Nature}, 624:86--91, 2023.
+
+\bibitem{roch2018} L. M. Roch et al. ChemOS: Orchestrating autonomous experimentation.
+\emph{Science Robotics}, 3(19), 2018.
+
+\bibitem{alphaevolve2025} Google DeepMind. \emph{AlphaEvolve: A coding agent for scientific
+and algorithmic discovery}. 2025. \TODO{verify citation form and date}
+
+\bibitem{labop} \emph{Laboratory Open Protocol language (LabOP)}. \TODO{verify citation; or
+substitute Autoprotocol}
+
+\bibitem{robertson2009} S. Robertson, H. Zaragoza. The probabilistic relevance framework:
+BM25 and beyond. \emph{Foundations and Trends in Information Retrieval}, 3(4):333--389, 2009.
+
+\bibitem{iec61508} IEC 61508. \emph{Functional safety of electrical/electronic/programmable
+electronic safety-related systems}. International Electrotechnical Commission.
+
+\end{thebibliography}
+
+\end{document}
