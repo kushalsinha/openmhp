@@ -1,0 +1,32 @@
+\begin{figure}[t]
+\centering
+\pgfplotstableread[col sep=comma]{figures/retrieval.csv}\rettable
+\begin{tikzpicture}
+\begin{semilogxaxis}[
+  width=0.82\textwidth, height=6.2cm,
+  xlabel={Devices in the laboratory}, ylabel={Correct device ranked first (\%)},
+  ymin=0, ymax=105, grid=both, grid style={gray!18},
+  legend pos=south west, legend cell align=left,
+  legend style={font=\small, draw=gray!40}, log basis x=10,
+]
+\addplot[thick, mark=triangle*, mark size=2pt, densely dotted]
+  table[x=devices, y=free_top1_pct]{\rettable};
+\addlegendentry{free-text ranking only}
+\addplot[thick, mark=square*, mark size=1.6pt, dashed]
+  table[x=devices, y=class_top1_pct]{\rettable};
+\addlegendentry{+ class filter}
+\addplot[thick, mark=*, mark size=1.6pt]
+  table[x=devices, y=both_top1_pct]{\rettable};
+\addlegendentry{+ class and location filters}
+\end{semilogxaxis}
+\end{tikzpicture}
+\caption{Retrieval under growth, 200 trials per point. A query states a task and a bay;
+a trial succeeds when the first result is an instrument of the class that performs the
+task, in the requested bay. Free-text ranking alone degrades from 86\% to 59\% as the
+laboratory grows, reproducing the selection-accuracy decay reported for large tool
+sets~\cite{anthropic-advanced-tool-use}. The structured filters that
+\texttt{directory/search} already accepts, and that the bridge issues, hold accuracy at
+99.5--100\% across three orders of magnitude. The stability comes from the protocol's
+structure rather than from the ranker.}
+\label{fig:retrieval}
+\end{figure}

@@ -1,0 +1,32 @@
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+& \rotatebox{60}{\textbf{OpenMHP}} & \rotatebox{60}{MCP} & \rotatebox{60}{SiLA 2}
+& \rotatebox{60}{OPC UA} & \rotatebox{60}{ROS 2} & \rotatebox{60}{PyLabRobot}
+& \rotatebox{60}{LabOP} \\
+\midrule
+Agent-facing natural-language description & \ding{51} & \ding{51} & --        & --        & --        & --        & -- \\
+Long-running work as a durable job        & \ding{51} & --        & \ding{51} & --        & \ding{51} & --        & -- \\
+Server-pushed observation                 & \ding{51} & --        & \ding{51} & \ding{51} & \ding{51} & --        & -- \\
+Device-side enforced safety envelope      & \ding{51} & --        & --        & --        & --        & --        & -- \\
+Explicit human-approval channel           & \ding{51} & \ding{51} & --        & --        & --        & --        & -- \\
+Exclusive control with expiry (lease)     & \ding{51} & --        & \ding{51} & --        & --        & --        & -- \\
+Liveness-linked fail-safe (watchdog)      & \ding{51} & --        & --        & --        & --        & --        & -- \\
+Bounded agent context at fleet scale      & \ding{51} & \ding{51} & --        & --        & --        & --        & -- \\
+Procedure description                     & --        & --        & --        & --        & --        & \ding{51} & \ding{51} \\
+Vendor-neutral actuation                  & \ding{51} & --        & \ding{51} & \ding{51} & \ding{51} & \ding{51} & -- \\
+\bottomrule
+\end{tabular}
+\caption{Where OpenMHP sits. The comparison is deliberately uncharitable to OpenMHP on the
+bottom two rows: it describes no procedures and performs no actuation of its own, delegating
+both. Its contribution is the combination in the middle of the table. A dash means the
+concern is out of scope for that layer rather than done badly; SiLA 2 and OPC UA are mature
+machine-to-machine standards that were not designed to be read by a language model, and
+MCP was not designed for work that outlives a call or for enforcement the caller cannot
+reach.}
+\label{tab:capability}
+\end{table}

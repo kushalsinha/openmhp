@@ -1,0 +1,46 @@
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[x=1.05cm, y=1cm,
+  ev/.style={-{Latex[length=1.6mm]}, thin},
+  lbl/.style={font=\scriptsize, align=center},
+]
+% axes
+\draw[->, thick] (0,0) -- (12.2,0) node[right, font=\small] {time};
+\node[left, font=\small] at (0,1.55) {agent};
+\node[left, font=\small] at (0,0.0)  {device};
+
+% heartbeats
+\foreach \x in {1,2.4,3.8,5.2} {
+  \draw[ev] (\x,1.35) -- (\x,0.15);
+  \node[lbl, above] at (\x,1.4) {renew};
+}
+\node[lbl, above] at (1,2.0) {\texttt{session/acquire}};
+\draw[ev] (0.2,1.9) -- (1,1.5);
+
+% lease held bar
+\draw[|-|, thick] (1,-0.55) -- (9.1,-0.55);
+\node[lbl, below] at (5.0,-0.6) {lease held $\Rightarrow$ watchdog armed};
+
+% silence window
+\draw[dashed, draw=black!55] (5.2,-0.2) -- (5.2,2.3);
+\draw[dashed, draw=black!55] (9.1,-0.2) -- (9.1,2.3);
+\draw[{Latex[length=1.6mm]}-{Latex[length=1.6mm]}] (5.2,1.95) -- (9.1,1.95);
+\node[lbl, above] at (7.15,1.95) {silence $>$ \texttt{watchdog\_s}};
+\node[lbl, align=center] at (7.15,1.15) {agent crashed,\\ network lost,\\ or process wedged};
+
+% fail safe
+\draw[very thick] (9.1,0) -- (9.1,0.55);
+\node[lbl, right, align=left, font=\scriptsize] at (9.25,0.95)
+  {device fails safe on its own:\\ enter \texttt{estop}, cancel jobs,\\ run stop hook, drop lease};
+\draw[|-|, thick] (9.1,-0.55) -- (11.9,-0.55);
+\node[lbl, below] at (10.5,-0.6) {\texttt{estop} until verified reset};
+\end{tikzpicture}
+\caption{The lease as a dead-man's switch. The watchdog is armed for exactly as long as a
+session holds the lease, and any request from the holder renews it. Nothing needs to
+detect that the agent has failed: the absence of renewal is itself the signal. After the
+declared window the server acts alone, without the agent and without the network, and
+recovery requires a verified \texttt{safety/reset}. This converts liveness of the
+controlling process into a safety property, and is the clearest respect in which driving
+an instrument differs from calling a software tool.}
+\label{fig:watchdog}
+\end{figure}

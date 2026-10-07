@@ -1,0 +1,49 @@
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  st/.style={draw, rounded corners=3pt, minimum height=0.62cm, minimum width=1.5cm,
+             font=\small, align=center, fill=gray!6},
+  term/.style={st, fill=gray!16},
+  a/.style={-{Latex[length=1.8mm]}, thin, font=\scriptsize},
+]
+% ---- device states
+\node[font=\small\bfseries] (dt) {(a) Device state};
+\node[st, below=4mm of dt]            (idle)  {idle};
+\node[st, right=16mm of idle]         (run)   {running};
+\node[st, below=9mm of idle]          (fault) {fault};
+\node[st, right=16mm of fault]        (estop) {estop};
+
+\draw[a] (idle) -- node[above]{job starts} (run);
+\draw[a] (run)  to[bend right=18] node[below]{job done} (idle);
+\draw[a] (run)  -- node[right]{unknown outcome} (estop);
+\draw[a] (idle) -- node[left]{write fails} (fault);
+\draw[a] (fault) to[bend left=16] node[below, align=center]{\texttt{safety/reset}\\(verified)} (idle);
+\draw[a] (estop) to[bend right=30] node[right, align=center, xshift=1mm]{\texttt{safety/reset}} (idle);
+\draw[a] (run.north) to[bend left=22] node[above]{\texttt{estop}} (estop.north);
+
+% ---- job states
+\node[font=\small\bfseries, below=22mm of fault, xshift=10mm] (jt) {(b) Job state};
+\node[st, below=4mm of jt]        (q)    {queued};
+\node[st, right=13mm of q]        (r)    {running};
+\node[term, right=13mm of r]      (done) {done};
+\node[term, below=7mm of done]    (fail) {failed};
+\node[term, below=7mm of r]       (canc) {cancelled};
+\node[st, above=7mm of r]         (wop)  {waiting\_operator};
+
+\draw[a] (q) -- (r);
+\draw[a] (r) -- (done);
+\draw[a] (r) -- (fail);
+\draw[a] (r) -- (canc);
+\draw[a] (r) to[bend right=15] (wop);
+\draw[a] (wop) to[bend right=15] (r);
+\node[font=\scriptsize, below=1mm of fail, align=center, text width=3.4cm]
+  {carries \texttt{outcome: unknown};\\latches the device in \texttt{fault}};
+\end{tikzpicture}
+\caption{(a) Device state and (b) job state. The two are coupled at one point, drawn as
+the \texttt{failed} annotation: a job that fails with an unknown outcome latches the
+device into \texttt{fault}, from which there is no automatic recovery. Recovery requires
+\texttt{safety/reset}, which verifies the instrument before returning it to
+\texttt{idle}. \texttt{waiting\_operator} allows an instrument whose steps are performed
+by a person to participate in the same job model as an automated one.}
+\label{fig:states}
+\end{figure}

@@ -1,0 +1,24 @@
+\begin{figure}[t]
+\centering
+\pgfplotstableread[col sep=comma]{figures/context.csv}\ctxtable
+\begin{tikzpicture}
+\begin{loglogaxis}[
+  width=0.82\textwidth, height=6.2cm,
+  xlabel={Devices in the laboratory}, ylabel={Tokens in agent context},
+  grid=both, grid style={gray!18}, legend pos=north west,
+  legend cell align=left, legend style={font=\small, draw=gray!40},
+  log basis x=10, log basis y=10,
+]
+\addplot[thick, mark=*, mark size=1.6pt] table[x=devices, y=naive_tokens]{\ctxtable};
+\addlegendentry{every descriptor loaded up front}
+\addplot[thick, mark=square*, mark size=1.6pt, dashed] table[x=devices, y=progressive_tokens]{\ctxtable};
+\addlegendentry{progressive disclosure (find $\rightarrow$ summary $\rightarrow$ select)}
+\end{loglogaxis}
+\end{tikzpicture}
+\caption{Context cost against laboratory size. Naive loading grows linearly with device
+count, exceeding six million tokens at 10{,}000 devices. The progressive path is
+effectively flat at roughly 1{,}270 tokens, because the agent reads five cards, one
+summary and two selected specifications regardless of how many instruments exist. Token
+counts use the proxy described in Section~\ref{sec:eval}.}
+\label{fig:context}
+\end{figure}

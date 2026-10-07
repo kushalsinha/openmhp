@@ -1,0 +1,44 @@
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  node distance=0pt,
+  gate/.style={draw, rounded corners=2pt, minimum width=5.1cm, minimum height=0.72cm,
+               align=center, font=\small, fill=gray!6},
+  refuse/.style={font=\footnotesize\ttfamily, anchor=west, text=black!65},
+  run/.style={draw, rounded corners=2pt, minimum width=5.1cm, minimum height=0.8cm,
+              align=center, font=\small\bfseries, fill=gray!18},
+  flow/.style={-{Latex[length=2mm]}, thin},
+  side/.style={-{Latex[length=1.6mm]}, thin, dashed, draw=black!55},
+]
+\node[font=\small\itshape] (req) {\texttt{settings/write} or \texttt{actions/invoke}};
+\node[gate, below=5mm of req]  (g1) {1.\ \ State};
+\node[gate, below=4mm of g1]   (g2) {2.\ \ Approval};
+\node[gate, below=4mm of g2]   (g3) {3.\ \ Interlocks};
+\node[gate, below=4mm of g3]   (g4) {4.\ \ Values and parameters};
+\node[gate, below=4mm of g4]   (g5) {5.\ \ Lease};
+\node[gate, below=4mm of g5]   (g6) {6.\ \ Busy};
+\node[run,  below=5mm of g6]   (vc) {vendor code executes};
+
+\draw[flow] (req) -- (g1);
+\foreach \a/\b in {g1/g2, g2/g3, g3/g4, g4/g5, g5/g6, g6/vc} \draw[flow] (\a) -- (\b);
+
+\draw[side] (g1.east) -- ++(0.7,0) node[refuse] {EStopActive / DeviceFault};
+\draw[side] (g2.east) -- ++(0.7,0) node[refuse] {Forbidden / ApprovalRequired};
+\draw[side] (g3.east) -- ++(0.7,0) node[refuse] {InterlockOpen};
+\draw[side] (g4.east) -- ++(0.7,0) node[refuse] {InvalidValue / LimitViolation};
+\draw[side] (g5.east) -- ++(0.7,0) node[refuse] {NotLeased};
+\draw[side] (g6.east) -- ++(0.7,0) node[refuse] {DeviceBusy};
+
+\node[left=6mm of g3, align=right, font=\footnotesize\itshape, text width=2.4cm]
+  {evaluated in the server, beside the instrument};
+\draw[decorate, decoration={brace, amplitude=4pt}, draw=black!45]
+  ([xshift=-2mm]g1.north west) -- ([xshift=-2mm]g6.south west);
+\end{tikzpicture}
+\caption{The six gates, evaluated in this fixed order on every write and invocation.
+Each gate has exactly one refusal, shown on the right. Vendor code runs only when all six
+pass. The order is normative because it determines which refusal an agent observes first,
+and therefore what it can learn from being refused. Every gate is evaluated on the device
+side of the network, so the enforced envelope does not depend on the model's context,
+prompt, or intent.}
+\label{fig:gates}
+\end{figure}

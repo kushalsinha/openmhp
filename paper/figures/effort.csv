@@ -1,0 +1,9 @@
+package,route,driver_sloc,descriptor_lines
+biologic-sp300,vendor SDK,224,104
+elveflow-mux-distributor,vendor SDK,98,40
+elveflow-ob1,vendor SDK,180,82
+ika-c-mag-hs7,serial (declared commands),2,46
+manual-benchtop-centrifuge,operator prompts,1,17
+opentrons-flex,PyLabRobot adapter,11,7
+sri-8610c-gc,vendor SDK (.NET),219,39
+wasatch-raman-blaze,vendor SDK,165,67

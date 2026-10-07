@@ -10,6 +10,11 @@
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,decorations.pathreplacing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{pifont}
 \usepackage{microtype}
 % long \texttt{} runs (method names, error codes) cannot hyphenate; let TeX stretch
 % interword space rather than push them past the margin.
@@ -127,6 +132,8 @@ following contributions:
 \section{Background and Related Work}
 \label{sec:related}
 
+\input{figures/tab_capability}
+
 \subsection{Agent-facing protocols}
 MCP~\cite{mcp2024} standardises tool discovery and invocation for language-model
 applications over JSON-RPC 2.0~\cite{jsonrpc}. Its first year surfaced a scaling problem
@@ -139,28 +146,84 @@ convention for packaging procedural knowledge that is loaded only when a task re
 OpenMHP applies that convention to instruments.
 
 \subsection{Laboratory and industrial control standards}
-SiLA 2~\cite{sila2} provides a gRPC-based standard for laboratory instrument interfaces with
-strong typing and feature definitions. OPC UA~\cite{opcua} is the dominant information model
-in industrial automation. ROS 2~\cite{macenski2022} supplies the middleware for most research
-robotics. MADSci~\cite{madsci} and PyLabRobot~\cite{wierenga2023} provide orchestration and
-hardware-agnostic liquid handling respectively. These layers solve machine-to-machine
-integration well, and OpenMHP does not attempt to replace them. What none of them provides is
-an \emph{agent-facing} surface: a natural-language account of what an instrument is for, when
-not to use it, and which operations require a human, together with a context budget suitable
-for a model. OpenMHP supplies that surface and delegates actuation downward
-(Section~\ref{sec:adapters}).
+SiLA 2~\cite{sila2} provides a gRPC-based standard for laboratory instrument interfaces
+with strong typing and feature definitions. OPC UA~\cite{opcua} is the dominant information
+model in industrial automation. ROS 2~\cite{macenski2022} supplies the middleware for most
+research robotics. MADSci~\cite{madsci,vescovi2023} and PyLabRobot~\cite{wierenga2023} provide
+orchestration and hardware-agnostic liquid handling respectively. These layers solve
+machine-to-machine integration well, and OpenMHP does not attempt to replace them. What
+none provides is an \emph{agent-facing} surface: a natural-language account of what an
+instrument is for, when not to use it, and which operations require a human, together with
+a context budget suitable for a model. Table~\ref{tab:capability} summarises the division.
 
 \subsection{Protocol and procedure description languages}
 Autoprotocol and LabOP~\cite{labop} describe experimental procedures in machine-readable
 form, addressing \emph{what} to run. OpenMHP is complementary and addresses \emph{how an
-agent safely drives a specific instrument}, including the run-time envelope that a procedure
-description cannot enforce.
+agent safely drives a specific instrument}, including the run-time envelope that a
+procedure description cannot enforce.
 
 \subsection{Self-driving laboratories}
-ChemOS~\cite{roch2018} and successors orchestrate closed-loop experimentation, typically
-within one integrated facility and one software stack. OpenMHP targets the heterogeneous
-case: an ordinary laboratory with instruments from many vendors, several control stacks, and
-no single orchestrator, where the agent is supplied by the user rather than the facility.
+Closed-loop experimentation is now an established field, surveyed by
+Abolhasani and Kumacheva~\cite{abolhasani2023} and, at length, by Tom et
+al.~\cite{tom2024}. ChemOS~\cite{roch2018} and its successor
+ChemOS~2.0~\cite{sim2024} orchestrate autonomous campaigns; Ada~\cite{macleod2020}
+demonstrated a self-driving laboratory for thin-film materials, with design guidance
+later distilled by MacLeod et al.~\cite{macleod2023}; Burger et al.~\cite{burger2020}
+showed a mobile robot operating existing instruments rather than a purpose-built rig;
+and the A-Lab~\cite{szymanski2023} ran an autonomous inorganic synthesis campaign.
+Snapp and Brown~\cite{snapp2023} discuss the practical obstacles to building such systems.
+
+These systems are typically one facility, one software stack and one orchestrator, with
+integration performed once by the facility's own engineers. OpenMHP targets the
+heterogeneous case: an ordinary laboratory with instruments from many vendors, several
+control stacks, and no single orchestrator, where the agent is supplied by the user rather
+than the facility. Burger et al.\ is the closest in spirit, in that the robot adapts to
+instruments rather than the reverse.
+
+\subsection{Language-model agents for science}
+Coscientist~\cite{boiko2023} and ChemCrow~\cite{bran2024} demonstrated that a language
+model equipped with tools can plan and execute chemical work, and more recent systems
+extend the loop to writing up results~\cite{lu2024}; the area is surveyed by Wei et
+al.~\cite{wei2025}. This literature concentrates on the reasoning layer and generally
+assumes an actuation interface exists. OpenMHP is a proposal for what that interface
+should be, and in particular for placing the safety envelope outside the agent's reach,
+which becomes more important as the reasoning layer becomes more autonomous.
+
+\subsection{Tool retrieval and context management}
+The problem of too many tools is well studied. Toolformer~\cite{schick2023} trains a model
+to decide when to call an API; Gorilla~\cite{patil2024} and ToolLLM~\cite{qin2024} address
+retrieval over large API collections; and retrieval-augmented tool selection has been shown
+to mitigate prompt bloat directly~\cite{gan2025,lumer2024}. Evaluation of tool use at scale
+is itself an active area~\cite{patil2025}. OpenMHP's contribution here is not a better
+ranker but the observation, supported in Section~\ref{sec:eval}, that a protocol which
+exposes structured filters alongside free text keeps retrieval stable where ranking alone
+does not. Security analyses of MCP deployments~\cite{hou2025} are also relevant to the
+trust boundary of Section~\ref{sec:goals}.
+
+\subsection{Relation to workload managers and workflow engines}
+It is tempting to describe OpenMHP as a scheduler for laboratory instruments, and the
+analogy should be stated carefully. Workload managers such as SLURM~\cite{yoo2003} queue
+work, allocate resources among competing users and enforce priority; workflow engines such
+as Nextflow~\cite{ditommaso2017} and Snakemake~\cite{molder2021} express a dependency graph
+and execute it reproducibly. OpenMHP does none of these: it has no cross-device queue, no
+scheduling policy and no notion of competing users beyond lease exclusivity. The accurate
+correspondence is to the per-node component of such a system rather than to its controller.
+An OpenMHP server supervises work on one instrument, enforces its limits and terminates it
+when it misbehaves, in the way a node daemon does for a compute node; the decision of what
+to run where has no equivalent and would naturally be built above the protocol. Two
+narrower correspondences do hold, and are deliberate: the session lease resembles exclusive
+resource allocation with a timeout, and the durable job handle resembles a batch job
+identifier.
+
+\subsection{Safety engineering}
+OpenMHP borrows its vocabulary from functional safety~\cite{iec61508} and robot safety
+practice~\cite{iso10218,iso15066} without claiming conformance to either; Section~\ref{sec:safety}
+states the boundary. The lease mechanism is the distributed-systems construct of
+Gray and Cheriton~\cite{gray1989}, applied to physical actuation: a time-bounded grant whose
+expiry is itself informative. The difference is the consequence of expiry. In a distributed
+file cache a lapsed lease invalidates cached data; on an instrument it must drive the
+hardware to a safe state, which is why the watchdog of Section~\ref{sec:protocol} is coupled
+to lease liveness rather than to request traffic.
 
 \section{Design Goals and Trust Model}
 \label{sec:goals}
@@ -182,7 +245,7 @@ OpenMHP is specified against five rules, in priority order.
 \end{enumerate}
 
 \paragraph{Trust boundary.} The central assumption is that \emph{the host is trusted and the
-model is not}. The host is the agent runtime; it holds clients, presents confirmation prompts
+model is not}. The hazard being avoided is a confused deputy~\cite{hardy1988}: a privileged component acting on authority it holds but that the requester does not. A model asserting \texttt{approved: true} about its own request is exactly that, which is why the flag is treated as the host's statement and is stripped from anything the model supplies. The host is the agent runtime; it holds clients, presents confirmation prompts
 to people, and is assumed to execute faithfully. The model it hosts is treated as an
 untrusted source of requests. Concretely, the flag \texttt{approved:\ true} is the host's
 assertion that a person confirmed one exact request; a reference bridge strips and ignores any
@@ -217,6 +280,8 @@ and job control (\texttt{jobs/status}, \texttt{pause}, \texttt{resume}, \texttt{
 support these.
 
 \subsection{Jobs}
+
+\input{figures/fig_states}
 \texttt{actions/invoke} returns immediately with a job identifier rather than a result. Jobs
 progress through \texttt{queued} $\rightarrow$ \texttt{running} $\rightarrow$
 \texttt{done} $\mid$ \texttt{failed} $\mid$ \texttt{cancelled}, with an additional
@@ -227,6 +292,8 @@ verified \texttt{safety/reset}, on the principle that a partially completed phys
 must not be assumed benign.
 
 \subsection{Leases and the watchdog}
+
+\input{figures/fig_watchdog}
 \texttt{session/acquire\{ttl\}} grants the calling session exclusive write and invoke rights
 until the TTL lapses without renewal or the session releases them. Every client has its own
 session identifier, so independent clients never share a lease. Reads, \texttt{ping},
@@ -269,10 +336,37 @@ owner's own words, while \texttt{descriptor.yaml} carries what a machine must en
 same artefact therefore serves both the model's understanding and the driver's gate checks,
 and the two cannot drift apart silently.
 
+\subsection{Composing several instruments}
+\label{sec:compose}
+
+A real experiment rarely involves one instrument. An electrochemistry run may drive a
+pressure controller, a selection valve, a potentiostat, a Raman spectrometer and a gas
+chromatograph together. OpenMHP composes these horizontally rather than hierarchically
+(Figure~\ref{fig:echem}).
+
+All devices reached through one client share that client's session identifier, and a lease
+is held per \emph{(device, session)} pair. One agent may therefore hold leases on any
+number of instruments simultaneously, while each lease remains exclusive against every
+other session. Nothing in the protocol limits the size of that set, which matters because
+the alternative, a single global lock over the laboratory, would serialise experiments
+that have no physical interaction.
+
+What the protocol deliberately does not provide is a shared identifier across instruments.
+Each server issues job identifiers in its own namespace, so there is no distributed
+transaction and no cross-device job. Correlation happens one level up: the orchestrating
+run has an identifier, a directory, an event file and a log, and every call made under it
+is tagged, so the five instruments above are joined by the run rather than by the job. We
+regard this as the right default, because it keeps each device's safety envelope local and
+independent, but it has consequences that Section~\ref{sec:limitations} states plainly.
+
+\input{figures/fig_echem}
+
 \section{Safety Model}
 \label{sec:safety}
 
 \subsection{Six ordered gates}
+
+\input{figures/fig_gates}
 On every \texttt{settings/write} and \texttt{actions/invoke}, the server evaluates, in this
 fixed order:
 
@@ -303,7 +397,9 @@ a harness offers no elicitation channel, the bridge has no trusted path to a per
 confirm-gated operations are reported unavailable rather than being silently permitted.
 
 \subsection{Fail-closed semantics and defence in depth}
-Any exception inside vendor code during a job, and any write failure occurring after a command
+The device is designed to fail into a known state rather than an arbitrary one, in the
+sense of fail-stop processors~\cite{schlichting1983} and the dependability taxonomy of
+Avi\v{z}ienis et al.~\cite{avizienis2004}. Any exception inside vendor code during a job, and any write failure occurring after a command
 may already have reached the instrument, moves the device to \texttt{fault} with an unknown
 outcome and runs the driver's safe-state hook. There is no automatic recovery. Separately,
 limits on scalar setpoints are insufficient when a dangerous value is nested inside a
@@ -417,6 +513,20 @@ through exactly the same primitives as in a two-device laboratory.}
 \label{tab:scale}
 \end{table}
 
+\input{figures/fig_context}
+\input{figures/fig_retrieval}
+
+Figure~\ref{fig:context} extends this single measurement into a curve from 10 to
+10{,}000 devices. Naive loading grows linearly, exceeding six million tokens at the
+largest size, while the progressive path stays flat at roughly 1{,}270 tokens.
+
+\subsection{Retrieval under growth}
+A flat context cost is only useful if the right instrument is still found. Figure~\ref{fig:retrieval} measures this with 200 trials at each size, where a query states a task and a bay and a trial succeeds when the first result is an instrument of the class that performs that task, in the requested bay. Free-text ranking alone degrades from 86\% to 59\% as the laboratory grows, reproducing the selection-accuracy decay reported for large tool sets~\cite{anthropic-advanced-tool-use}. Adding the class filter recovers most of it, and class together with location holds accuracy at 99.5--100\% across three orders of magnitude, at a median search cost that remains in single-digit milliseconds. The stability is therefore a property of the protocol's structured query surface, not of the ranking function, which is an argument for specifying such filters rather than leaving retrieval to free text.
+
+\subsection{Integration effort}
+Figure~\ref{fig:effort} counts driver source lines for each package in the device catalogue. The two no-code routes cost one and two lines, because the behaviour is declared in \texttt{descriptor.yaml} rather than written in Python; wrapping an existing ecosystem costs eleven; only proprietary vendor SDKs require 98 to 224 lines. In every case the gates, tiers, jobs and notifications are inherited rather than reimplemented.
+\input{figures/fig_effort}
+
 \subsection{Conformance and behavioural testing}
 Conformance in OpenMHP is behavioural rather than structural. The reference suite comprises
 53 tests across approximately 1{,}800 lines, exercising typed limits and limit violations,
@@ -450,6 +560,18 @@ We state the boundaries of the current draft explicitly.
   \item \textbf{Enforcement depends on the trust boundary holding.} A model able to edit a
     device package, or to run arbitrary scripts in an unsandboxed host, can alter what is
     enforced. Deployments should separate package authoring from operation.
+  \item \textbf{No coordinated abort across instruments.} A run holding leases on several
+    devices releases them on exit, but the protocol does not cancel sibling jobs or stop
+    sibling devices when one faults. In a five-instrument electrochemistry run, a
+    potentiostat fault does not by itself stop the pumps. Today this is the orchestrating
+    script's responsibility; a \texttt{transaction/} namespace is the natural home for it.
+  \item \textbf{No common time base across instruments.} Events carry per-device
+    timestamps from independent clocks, and the protocol defines no happens-before relation
+    across servers~\cite{lamport1978}. Operando work that must align a spectrum with an
+    electrochemical trace currently depends on the run script to reconcile timing.
+  \item \textbf{No lock ordering.} A session may hold leases on any number of devices, but
+    there is no atomic multi-acquire and no prescribed acquisition order, so two agents
+    requesting overlapping sets in different orders can make no progress until leases lapse.
   \item \textbf{Non-idempotent operations.} A request may reach a device even when its
     response is lost, and servers do not deduplicate. Clients must not retry writes or
     invocations automatically; they should reconcile by reading state.
@@ -486,53 +608,187 @@ preparation of the software and/or manuscript, which arXiv and most journals now
 \begin{thebibliography}{99}
 \footnotesize
 
-\bibitem{mcp2024} Anthropic. \emph{Model Context Protocol}. 2024.
-\url{https://modelcontextprotocol.io}
+% ---- agent-facing protocols and tool retrieval ----------------------------
+\bibitem{mcp2024} Anthropic. \emph{Model Context Protocol}: specification and
+documentation. Introduced 25 November 2024. \url{https://modelcontextprotocol.io}
+(accessed \today). There is no peer-reviewed publication describing MCP; the
+specification is the citable artefact.
 
-\bibitem{anthropic-advanced-tool-use} Anthropic. \emph{Advanced tool use}. Engineering blog.
-\TODO{verify exact title, author and date}
+\bibitem{hou2025} X. Hou, Y. Zhao, S. Wang, H. Wang. Model Context Protocol (MCP):
+Landscape, Security Threats, and Future Research Directions. arXiv:2503.23278, 2025.
+
+\bibitem{anthropic-advanced-tool-use} Anthropic. \emph{Advanced tool use}. Engineering
+blog. \TODO{verify exact title, author and date before submission}
 
 \bibitem{agentskills} Anthropic. \emph{Agent Skills}. \TODO{verify citation form}
 
-\bibitem{jsonrpc} JSON-RPC Working Group. \emph{JSON-RPC 2.0 Specification}. 2010.
-\url{https://www.jsonrpc.org/specification}
+\bibitem{patil2024} S. G. Patil, T. Zhang, X. Wang, J. E. Gonzalez. Gorilla: Large
+Language Model Connected with Massive APIs. In \emph{Advances in Neural Information
+Processing Systems 37} (NeurIPS 2024). DOI: 10.52202/079017-4020.
+
+\bibitem{qin2024} Y. Qin, S. Liang, Y. Ye, K. Zhu, L. Yan, et al. ToolLLM: Facilitating
+Large Language Models to Master 16000+ Real-world APIs. In \emph{International Conference
+on Learning Representations} (ICLR 2024).
+
+\bibitem{schick2023} T. Schick, J. Dwivedi-Yu, R. Dess\`i, R. Raileanu, M. Lomeli,
+E. Hambro, L. Zettlemoyer, N. Cancedda, T. Scialom. Toolformer: Language Models Can Teach
+Themselves to Use Tools. In \emph{Advances in Neural Information Processing Systems 36}
+(NeurIPS 2023), pp. 68539--68551.
+
+\bibitem{gan2025} T. Gan, Q. Sun. RAG-MCP: Mitigating Prompt Bloat in LLM Tool Selection
+via Retrieval-Augmented Generation. arXiv:2505.03275, 2025.
+
+\bibitem{lumer2024} E. Lumer, V. K. Subbiah, J. A. Burke, P. Honaganahalli Basavaraju,
+A. Huber. Toolshed: Scale Tool-Equipped Agents with Advanced RAG-Tool Fusion and Tool
+Knowledge Bases. arXiv:2410.14594, 2024.
+
+\bibitem{patil2025} S. G. Patil, H. Mao, F. Yan, C. C.-J. Ji, V. Suresh, I. Stoica,
+J. E. Gonzalez. The Berkeley Function Calling Leaderboard (BFCL): From Tool Use to Agentic
+Evaluation of Large Language Models. In \emph{Proceedings of the 42nd International
+Conference on Machine Learning} (ICML 2025), PMLR 267, pp. 48371--48392.
+
+% ---- distributed systems foundations --------------------------------------
+\bibitem{gray1989} C. Gray, D. R. Cheriton. Leases: an efficient fault-tolerant mechanism
+for distributed file cache consistency. In \emph{Proceedings of the Twelfth ACM Symposium on
+Operating Systems Principles} (SOSP '89), pp. 202--210, 1989. DOI: 10.1145/74850.74870.
+
+\bibitem{schlichting1983} R. D. Schlichting, F. B. Schneider. Fail-stop processors: an
+approach to designing fault-tolerant computing systems. \emph{ACM Transactions on Computer
+Systems}, 1(3):222--238, 1983. DOI: 10.1145/357369.357371.
+
+\bibitem{hardy1988} N. Hardy. The Confused Deputy: (or why capabilities might have been
+invented). \emph{ACM SIGOPS Operating Systems Review}, 22(4):36--38, 1988.
+DOI: 10.1145/54289.871709.
+
+\bibitem{lamport1978} L. Lamport. Time, clocks, and the ordering of events in a distributed
+system. \emph{Communications of the ACM}, 21(7):558--565, 1978. DOI: 10.1145/359545.359563.
+
+\bibitem{avizienis2004} A. Avi\v{z}ienis, J.-C. Laprie, B. Randell, C. E. Landwehr. Basic
+concepts and taxonomy of dependable and secure computing. \emph{IEEE Transactions on
+Dependable and Secure Computing}, 1(1):11--33, 2004. DOI: 10.1109/tdsc.2004.2.
+
+% ---- self-driving laboratories --------------------------------------------
+\bibitem{burger2020} B. Burger, P. M. Maffettone, V. V. Gusev, C. M. Aitchison, Y. Bai,
+X. Wang, X. Li, B. M. Alston, B. Li, R. Clowes, N. Rankin, B. Harris, R. S. Sprick,
+A. I. Cooper. A mobile robotic chemist. \emph{Nature}, 583(7815):237--241, 2020.
+DOI: 10.1038/s41586-020-2442-2.
+
+\bibitem{szymanski2023} N. J. Szymanski, B. Rendy, Y. Fei, R. E. Kumar, T. He, D. Milsted,
+M. J. McDermott, M. Gallant, E. D. Cubuk, A. Merchant, H. Kim, A. Jain, C. J. Bartel,
+K. Persson, Y. Zeng, G. Ceder. An autonomous laboratory for the accelerated synthesis of
+inorganic materials. \emph{Nature}, 624(7990):86--91, 2023.
+DOI: 10.1038/s41586-023-06734-w. See also the Author Correction, \emph{Nature},
+650(8100):E1, 2026, DOI: 10.1038/s41586-025-09992-y.
+
+\bibitem{roch2018} L. M. Roch, F. H\"ase, C. Kreisbeck, T. Tamayo-Mendoza, L. P. E. Yunker,
+J. E. Hein, A. Aspuru-Guzik. ChemOS: Orchestrating autonomous experimentation.
+\emph{Science Robotics}, 3(19):eaat5559, 2018. DOI: 10.1126/scirobotics.aat5559.
+
+\bibitem{sim2024} M. Sim et al. ChemOS 2.0: An orchestration architecture for chemical
+self-driving laboratories. \emph{Matter}, 7(9):2959--2977, 2024.
+DOI: 10.1016/j.matt.2024.04.022.
+
+\bibitem{macleod2020} B. P. MacLeod et al. Self-driving laboratory for accelerated
+discovery of thin-film materials. \emph{Science Advances}, 6(20):eaaz8867, 2020.
+DOI: 10.1126/sciadv.aaz8867.
+
+\bibitem{macleod2023} B. P. MacLeod, F. G. L. Parlane, C. P. Berlinguette. How to build an
+effective self-driving laboratory. \emph{MRS Bulletin}, 48(2):173--178, 2023.
+DOI: 10.1557/s43577-023-00476-w.
+
+\bibitem{abolhasani2023} M. Abolhasani, E. Kumacheva. The rise of self-driving labs in
+chemical and materials sciences. \emph{Nature Synthesis}, 2(6):483--492, 2023.
+DOI: 10.1038/s44160-022-00231-0.
+
+\bibitem{tom2024} G. Tom et al. Self-Driving Laboratories for Chemistry and Materials
+Science. \emph{Chemical Reviews}, 124(16):9633--9732, 2024.
+DOI: 10.1021/acs.chemrev.4c00055.
+
+\bibitem{snapp2023} K. L. Snapp, K. A. Brown. Driving school for self-driving labs.
+\emph{Digital Discovery}, 2(5):1620--1629, 2023. DOI: 10.1039/d3dd00150d.
+
+% ---- LLM agents for science ------------------------------------------------
+\bibitem{boiko2023} D. A. Boiko, R. MacKnight, B. Kline, G. Gomes. Autonomous chemical
+research with large language models. \emph{Nature}, 624(7992):570--578, 2023.
+DOI: 10.1038/s41586-023-06792-0.
+
+\bibitem{bran2024} A. M. Bran, S. Cox, O. Schilter, C. Baldassari, A. D. White,
+P. Schwaller. Augmenting large language models with chemistry tools. \emph{Nature Machine
+Intelligence}, 6(5):525--535, 2024. DOI: 10.1038/s42256-024-00832-8.
+
+\bibitem{lu2024} C. Lu, C. Lu, R. T. Lange, J. Foerster, J. Clune, D. Ha. The AI Scientist:
+Towards Fully Automated Open-Ended Scientific Discovery. arXiv:2408.06292, 2024.
+
+\bibitem{wei2025} J. Wei, Y. Yang, X. Zhang, Y. Chen, et al. From AI for Science to Agentic
+Science: A Survey on Autonomous Scientific Discovery. arXiv:2508.14111, 2025.
+
+% ---- laboratory and industrial control layers ------------------------------
+\bibitem{macenski2022} S. Macenski, T. Foote, B. Gerkey, C. Lalancette, W. Woodall. Robot
+Operating System 2: Design, architecture, and uses in the wild. \emph{Science Robotics},
+7(66):eabm6074, 2022.
+
+\bibitem{wierenga2023} R. P. Wierenga, S. M. Golas, W. Ho, C. W. Coley, K. M. Esvelt.
+PyLabRobot: An open-source, hardware-agnostic interface for liquid-handling robots and
+accessories. \emph{Device}, 1(4):100111, 2023. DOI: 10.1016/j.device.2023.100111.
 
 \bibitem{sila2} SiLA Consortium. \emph{SiLA 2 Standard}. \url{https://sila-standard.org}
 
 \bibitem{opcua} IEC 62541. \emph{OPC Unified Architecture}. International Electrotechnical
 Commission.
 
-\bibitem{macenski2022} S. Macenski, T. Foote, B. Gerkey, C. Lalancette, W. Woodall.
-Robot Operating System 2: Design, architecture, and uses in the wild.
-\emph{Science Robotics}, 7(66), 2022.
+\bibitem{madsci} R. D. Lewis, T. S. Ginsburg, D. Ozgulbas, C. Stone, A. Stroka, A. Cleary,
+I. T. Foster, N. Paulson. MADSci: A modular Python-based framework to enable autonomous
+science. \emph{Journal of Open Source Software}, 11(119):9416, 2026.
+DOI: 10.21105/joss.09416.
 
-\bibitem{wierenga2023} R. P. Wierenga et al. PyLabRobot: An open-source, hardware-agnostic
-interface for liquid-handling robots and accessories. \emph{Device}, 2023.
-\TODO{verify volume and pages}
+\bibitem{vescovi2023} R. Vescovi, T. Ginsburg, K. Hippe, D. Ozgulbas, C. Stone, A. Stroka,
+et al. Towards a modular architecture for science factories. \emph{Digital Discovery},
+2(6):1980--1998, 2023. DOI: 10.1039/d3dd00142c.
 
-\bibitem{madsci} Argonne National Laboratory. \emph{MADSci: Modular Autonomous Discovery for
-Science}. \TODO{verify canonical citation}
+\bibitem{labop} B. Bartley, J. Beal, M. Rogers, D. Bryce, R. P. Goldman, B. Keller, P. Lee,
+V. Biggers, J. Nowak, M. Weston. Building an Open Representation for Biological Protocols.
+\emph{ACM Journal on Emerging Technologies in Computing Systems}, 19(3):1--21, 2023.
+DOI: 10.1145/3604568.
 
-\bibitem{boiko2023} D. A. Boiko, R. MacKnight, B. Kline, G. Gomes. Autonomous chemical
-research with large language models. \emph{Nature}, 624:570--578, 2023.
+% ---- workflow and scheduling ----------------------------------------------
+\bibitem{yoo2003} A. B. Yoo, M. A. Jette, M. Grondona. SLURM: Simple Linux Utility for
+Resource Management. In \emph{Job Scheduling Strategies for Parallel Processing} (JSSPP
+2003), Lecture Notes in Computer Science 2862, pp. 44--60. Springer, 2003.
+DOI: 10.1007/10968987\_3.
 
-\bibitem{szymanski2023} N. J. Szymanski et al. An autonomous laboratory for the accelerated
-synthesis of novel materials. \emph{Nature}, 624:86--91, 2023.
+\bibitem{ditommaso2017} P. Di Tommaso, M. Chatzou, E. W. Floden, P. Prieto Barja,
+E. Palumbo, C. Notredame. Nextflow enables reproducible computational workflows.
+\emph{Nature Biotechnology}, 35(4):316--319, 2017. DOI: 10.1038/nbt.3820.
 
-\bibitem{roch2018} L. M. Roch et al. ChemOS: Orchestrating autonomous experimentation.
-\emph{Science Robotics}, 3(19), 2018.
+\bibitem{molder2021} F. M\"older, K. P. Jablonski, B. Letcher, M. B. Hall,
+C. H. Tomkins-Tinch, V. Sochat, et al. Sustainable data analysis with Snakemake.
+\emph{F1000Research}, 10:33, 2021. DOI: 10.12688/f1000research.29032.2.
 
 \bibitem{alphaevolve2025} Google DeepMind. \emph{AlphaEvolve: A coding agent for scientific
-and algorithmic discovery}. 2025. \TODO{verify citation form and date}
+and algorithmic discovery}. 2025. \TODO{verify citation form and date before submission}
 
-\bibitem{labop} \emph{Laboratory Open Protocol language (LabOP)}. \TODO{verify citation; or
-substitute Autoprotocol}
+% ---- safety standards ------------------------------------------------------
+\bibitem{iec61508} IEC 61508:2010 (Edition 2.0, parts 1--7). \emph{Functional safety of
+electrical/electronic/programmable electronic safety-related systems}. International
+Electrotechnical Commission, 2010.
+
+\bibitem{iso10218} ISO 10218-1:2025 and ISO 10218-2:2025. \emph{Robotics --- Safety
+requirements --- Part 1: Industrial robots; Part 2: Industrial robot applications and robot
+cells}. International Organization for Standardization, 2025. These third- and
+second-edition documents replaced the 2011 editions, whose title series was
+\emph{Robots and robotic devices}.
+
+\bibitem{iso15066} ISO/TS 15066:2016. \emph{Robots and robotic devices --- Collaborative
+robots}. International Organization for Standardization, 2016. Technical Specification;
+a revision (ISO/AWI 15066-1) is in development.
+
+% ---- other -----------------------------------------------------------------
+\bibitem{jsonrpc} JSON-RPC Working Group. \emph{JSON-RPC 2.0 Specification}. 2010.
+\url{https://www.jsonrpc.org/specification}
 
 \bibitem{robertson2009} S. Robertson, H. Zaragoza. The probabilistic relevance framework:
-BM25 and beyond. \emph{Foundations and Trends in Information Retrieval}, 3(4):333--389, 2009.
-
-\bibitem{iec61508} IEC 61508. \emph{Functional safety of electrical/electronic/programmable
-electronic safety-related systems}. International Electrotechnical Commission.
+BM25 and beyond. \emph{Foundations and Trends in Information Retrieval}, 3(4):333--389,
+2009. \TODO{not independently re-verified; check before submission}
 
 \end{thebibliography}
 

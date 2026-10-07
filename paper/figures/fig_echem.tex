@@ -1,0 +1,41 @@
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  inst/.style={draw, rounded corners=2pt, minimum width=2.45cm, minimum height=0.95cm,
+               align=center, font=\scriptsize, fill=gray!6},
+  run/.style={draw, rounded corners=3pt, minimum width=11.2cm, minimum height=0.85cm,
+              align=center, font=\small, fill=gray!14},
+  a/.style={-{Latex[length=1.6mm]}, thin},
+  ev/.style={-{Latex[length=1.6mm]}, thin, dashed, draw=black!55},
+]
+\node[run] (run) {one \textbf{run}: \texttt{run\_dir}, \texttt{events.jsonl}, run log, one lease-holding session};
+
+\node[inst, below=11mm of run.west, xshift=1.25cm]  (ob1)   {Elveflow OB1\\\texttt{job\_a1}};
+\node[inst, right=3mm of ob1]                        (mux)   {Elveflow MUX\\\texttt{job\_b7}};
+\node[inst, right=3mm of mux]                        (sp)    {BioLogic SP-300\\\texttt{job\_c2}};
+\node[inst, right=3mm of sp]                         (raman) {Wasatch Raman\\\texttt{job\_d9}};
+\node[inst, right=3mm of raman]                      (gc)    {SRI 8610C GC\\\texttt{job\_e4}};
+
+\foreach \n in {ob1,mux,sp,raman,gc} {
+  \draw[a] (run.south -| \n.north) -- (\n.north);
+  \draw[ev] (\n.south) -- ++(0,-0.75);
+}
+\node[font=\scriptsize, below=18mm of run.south, align=center, text width=12cm]
+  {pushed notifications: signal updates, job progress, completion, faults, operator prompts};
+\draw[decorate, decoration={brace, mirror, amplitude=4pt}, draw=black!45]
+  ([yshift=-7mm]ob1.south west) -- ([yshift=-7mm]gc.south east);
+
+\node[font=\scriptsize\itshape, align=left, text width=11.4cm, below=24mm of run.south]
+  {Each instrument is an independent server with its own job-id namespace, its own six
+   gates, its own lease and its own watchdog. There is no identifier spanning them: the
+   \emph{run} is the correlation key, and the run log joins their events. Coordinated
+   abort across instruments is not provided by the protocol
+   (Section~\ref{sec:limitations}).};
+\end{tikzpicture}
+\caption{A five-instrument electrochemistry experiment. The composition is horizontal
+rather than hierarchical: no instrument knows about any other, and the orchestrating run
+holds one lease per device from a single session. This keeps each device's safety
+envelope independent and local, at the cost of leaving cross-device atomicity to the run
+script.}
+\label{fig:echem}
+\end{figure}
