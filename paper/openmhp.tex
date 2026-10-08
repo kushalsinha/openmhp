@@ -549,6 +549,47 @@ scientist, rather than the authors, operated it. If a controlled comparison is p
 time or lines of integration code for the same instrument with and without OpenMHP --- it
 would substantially strengthen the paper.}
 
+\subsection{Assessment against published procurement criteria}
+\label{sec:scorecard}
+
+Self-assessment by a protocol's authors is weak evidence. Gottstein et al.~\cite{gottstein2026}
+recently published twenty-one RFC-2119 criteria defining an autonomous-ready control
+interface, with per-criterion tests and procurement weights, drawn up across the
+self-driving-laboratory community including the SiLA and OPC UA LADS standards bodies. The
+criteria were not written with OpenMHP in view, which makes them a more useful yardstick than
+any we could propose. Table~\ref{tab:scorecard} scores OpenMHP against all twenty-one.
+
+The weighted result is 33.0 of 46 for a standalone instrument, and 35.0 of 50 including the
+two cell-integration criteria that apply to a protocol. Three findings matter more than the
+total.
+
+First, the single highest-scoring item is C15, control-loss observability, weighted 3 and
+passed outright. This is the criterion that asks what happens when the controlling client
+dies while hardware is active, and it is the one the lease-armed watchdog of
+Section~\ref{sec:protocol} exists to answer. That the independently derived criterion and the
+mechanism coincide is the strongest external evidence we have that the design addresses a
+real requirement rather than a self-selected one.
+
+Second, three of the five Critical criteria score Partial rather than Pass, and all three
+are specification gaps rather than implementation debt. C2 recommends UCUM units but permits
+a spelled-out string, so two conformant descriptors can disagree about what a number means.
+C3 omits a device-anchored timing reference from the error payload. C5 declares no output
+schema for actions, leaving result structure to per-driver convention. Each is a small,
+backward-compatible change, and together they would move the Critical tier from 13.5 of 18 to
+18 of 18. We state them here rather than defer them because the same paper observes that
+protocol compliance does not establish laboratory interoperability, and these three are
+exactly where that gap opens.
+
+Third, the only outright Fail is C12, instrument self-state: the protocol defines no place
+for calibration status, qualification state, usage counters or out-of-spec indications. A
+driver may expose them as ordinary signals, but because nothing names them, no two devices
+will agree, which reproduces at the semantic layer the fragmentation the protocol removes at
+the transport layer. This is the clearest argument for aligning the device-class vocabulary
+of Section~\ref{sec:protocol} with an established laboratory information model rather than
+continuing to treat classes as hints.
+
+\input{figures/tab_scorecard}
+
 \section{Limitations and Future Work}
 \label{sec:limitations}
 
@@ -703,6 +744,10 @@ DOI: 10.1038/s44160-022-00231-0.
 \bibitem{tom2024} G. Tom et al. Self-Driving Laboratories for Chemistry and Materials
 Science. \emph{Chemical Reviews}, 124(16):9633--9732, 2024.
 DOI: 10.1021/acs.chemrev.4c00055.
+
+\bibitem{gottstein2026} W. Gottstein, L. Bromig, M. Arnold, S. Barazandeh, J. S. Brown,
+K. A. Brown, et al. Talking to instruments: device-integration standards for self-driving
+laboratories. ChemRxiv preprint, 6 October 2026. DOI: 10.26434/chemrxiv.15009990.
 
 \bibitem{snapp2023} K. L. Snapp, K. A. Brown. Driving school for self-driving labs.
 \emph{Digital Discovery}, 2(5):1620--1629, 2023. DOI: 10.1039/d3dd00150d.
