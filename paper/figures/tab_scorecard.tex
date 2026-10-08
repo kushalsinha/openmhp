@@ -9,10 +9,10 @@
 \midrule
 \multicolumn{5}{@{}l}{\textit{Critical}}\\
 C1 & Reachable control      & 3 & Pass    & stdio and HTTP+SSE endpoints; \texttt{/mhp.json} needs no handshake; a reconnecting client resolves a command's fate by job id, not by inference. \\
-C2 & Typing, units          & 3 & Partial & Types validated before vendor code; limits enforced. But \texttt{unit} is only \emph{recommended} to be UCUM and a spelled-out string is permitted, and applied defaults are not reported back. \\
-C3 & Structured errors      & 3 & Partial & 13 declared codes with a stable identifier, message and a structured \texttt{data} context. No device-anchored timestamp or event-sequence on the error payload. \\
+C2 & Typing, units          & 3 & Partial & Signals and settings declare \texttt{type}, \texttt{unit} and \texttt{limits} (range or enum), validated before vendor code runs. Three sub-tests miss: action \emph{parameters} are declared in prose (\texttt{steps: array of \{temp: degC\}}) so their units are not machine-readable; no precision or resolution field; applied defaults are not reported back. \texttt{unit} is also only \emph{recommended} to be UCUM, a spelled-out string being permitted. \\
+C3 & Structured errors      & 3 & Partial & Three of four sub-tests pass: 13 declared codes, a message, and a populated structured context (\texttt{LimitViolation} carries the violated bound, \texttt{InvalidValue} the expected type, \texttt{NotLeased} the holder and reason). Only the device-anchored timing reference is absent: the envelope is \texttt{\{code, message, data\}}, though reads and jobs are timestamped elsewhere. \\
 C4 & Open API access        & 6 & Pass    & Apache 2.0, no royalties, integrations publishable and reusable, documentation free. Caveat: a device behind a proprietary SDK inherits that vendor's terms; the protocol cannot launder them. \\
-C5 & Result retrieval       & 3 & Partial & Headless; results carry the job id and reach the run's own record. Actions declare no output schema, so result structure and units are per-driver convention. \\
+C5 & Result retrieval       & 3 & Partial & Headless and execution-linked: the job snapshot returns the result with its id, state, outcome, start and finish times, and the owning method and project. One sub-test misses: \texttt{result} is untyped and actions declare no \texttt{returns} schema, so result structure and units are per-driver convention rather than part of the contract. \\
 \midrule
 \multicolumn{5}{@{}l}{\textit{Important}}\\
 C6  & Runtime self-description & 2 & Pass    & \texttt{device/describe} with three tiers and \texttt{select}; a generic client enumerates the surface with no prior knowledge. \\

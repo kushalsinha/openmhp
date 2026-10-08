@@ -571,11 +571,14 @@ mechanism coincide is the strongest external evidence we have that the design ad
 real requirement rather than a self-selected one.
 
 Second, three of the five Critical criteria score Partial rather than Pass, and all three
-are specification gaps rather than implementation debt. C2 recommends UCUM units but permits
-a spelled-out string, so two conformant descriptors can disagree about what a number means.
-C3 omits a device-anchored timing reference from the error payload. C5 declares no output
-schema for actions, leaving result structure to per-driver convention. Each is a small,
-backward-compatible change, and together they would move the Critical tier from 13.5 of 18 to
+are specification gaps rather than implementation debt. Each fails a single
+sub-test of an otherwise satisfied criterion, and the paper's rule that all sub-tests must
+pass caps them at Partial. C3 carries a stable code, a message and a populated structured
+context, and misses only a device-anchored timing reference, although reads and jobs are
+timestamped elsewhere in the same protocol. C5 returns results headlessly and linked to the
+execution, but leaves them untyped because actions declare no output schema. C2 types and
+bounds signals and settings, but declares action parameters in prose, so the units inside an
+action are not machine-readable. Each is a small, backward-compatible change, and together they would move the Critical tier from 13.5 of 18 to
 18 of 18. We state them here rather than defer them because the same paper observes that
 protocol compliance does not establish laboratory interoperability, and these three are
 exactly where that gap opens.
