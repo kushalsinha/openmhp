@@ -588,6 +588,86 @@ def test_entry_points_fail_cleanly():
     assert endless["ok"] and "truncated" in endless["plan"]["verdict"]
 
 
+def test_nested_parameter_bounds_come_from_the_descriptor_not_the_driver():
+    """A dangerous value inside a structured parameter (a 200 C step in an otherwise valid
+    program) must be refused by the declared shape alone. Before shapes were declarable, the
+    only way to catch this was hand-written validate_params in every driver, and `limits`
+    could not express it because it keys on the top-level parameter name."""
+    from openmhp.driver import Driver, InvalidValue, LimitViolation
+    from openmhp.client import LocalDevice
+
+    class Plain(Driver):
+        """No validate_params, deliberately: the descriptor is doing all the work."""
+        descriptor = {
+            "device": {"id": "shape-01", "class": "generic"},
+            "actions": [{
+                "name": "run", "duration": "short",
+                "params": {
+                    "steps": {"type": "array", "items": {
+                        "type": "object", "required": ["temp"],
+                        "properties": {"temp": {"type": "number", "unit": "Cel",
+                                                "limits": {"min": 4, "max": 105}},
+                                       "hold_s": {"type": "number", "unit": "s"}}}},
+                },
+                "required": ["steps"],
+            }],
+        }
+        def on_read(self, name): return 0
+        def on_write(self, name, value): pass
+        def on_invoke(self, job): return {"ok": True}
+
+    d = LocalDevice(Plain())
+    assert d.invoke("run", dry_run=True, steps=[{"temp": 95, "hold_s": 30}])["state"] == "dryRun"
+    expect(LimitViolation.code, lambda: d.invoke("run", dry_run=True, steps=[{"temp": 95}, {"temp": 200}]))
+    expect(InvalidValue.code,   lambda: d.invoke("run", dry_run=True, steps=[{"hold_s": 5}]))
+    expect(InvalidValue.code,   lambda: d.invoke("run", dry_run=True, steps=[{"temp": 95, "oops": 1}]))
+    expect(InvalidValue.code,   lambda: d.invoke("run", dry_run=True, steps=[{"temp": "hot"}]))
+
+
+def test_a_prose_parameter_shape_still_loads_and_is_simply_unchecked():
+    """The legacy form stays valid so existing packages keep working; it just buys nothing."""
+    from openmhp.driver import Driver
+    from openmhp.client import LocalDevice
+
+    class Prose(Driver):
+        descriptor = {
+            "device": {"id": "prose-01", "class": "generic"},
+            "actions": [{"name": "run", "duration": "short",
+                         "params": {"steps": "array of {temp: degC 4..105}"},
+                         "required": ["steps"]}],
+        }
+        def on_read(self, name): return 0
+        def on_write(self, name, value): pass
+        def on_invoke(self, job): return {"ok": True}
+
+    d = LocalDevice(Prose())
+    # 200 C passes, because prose is documentation and not a contract
+    assert d.invoke("run", dry_run=True, steps=[{"temp": 200}])["state"] == "dryRun"
+
+
+def test_every_error_carries_a_device_anchored_timestamp():
+    """A client must be able to align a refusal with its own receipt time."""
+    import time
+    from openmhp.driver import Driver
+    from openmhp.transport import dispatch
+
+    class D(Driver):
+        descriptor = {"device": {"id": "ts-01", "class": "generic"},
+                      "settings": [{"name": "x", "type": "number", "limits": {"min": 0, "max": 1}}]}
+        def on_read(self, name): return 0
+        def on_write(self, name, value): pass
+        def on_invoke(self, job): return {}
+
+    before = time.time()
+    r = dispatch(D(), {"jsonrpc": "2.0", "id": 1,
+                       "method": "settings/write", "params": {"name": "x", "value": 99}}, "c")
+    after = time.time()
+    err = r["error"]
+    assert err["code"] == -32010, err
+    assert "data" in err and err["data"] == {"min": 0, "max": 1}      # structured context
+    assert before <= err["ts"] <= after, err                          # device-anchored timing
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):

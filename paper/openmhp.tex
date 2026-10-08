@@ -559,7 +559,7 @@ self-driving-laboratory community including the SiLA and OPC UA LADS standards b
 criteria were not written with OpenMHP in view, which makes them a more useful yardstick than
 any we could propose. Table~\ref{tab:scorecard} scores OpenMHP against all twenty-one.
 
-The weighted result is 33.0 of 46 for a standalone instrument, and 35.0 of 50 including the
+The weighted result is 34.5 of 46 for a standalone instrument, and 36.5 of 50 including the
 two cell-integration criteria that apply to a protocol. Three findings matter more than the
 total.
 
@@ -570,15 +570,14 @@ Section~\ref{sec:protocol} exists to answer. That the independently derived crit
 mechanism coincide is the strongest external evidence we have that the design addresses a
 real requirement rather than a self-selected one.
 
-Second, three of the five Critical criteria score Partial rather than Pass, and all three
-are specification gaps rather than implementation debt. Each fails a single
-sub-test of an otherwise satisfied criterion, and the paper's rule that all sub-tests must
-pass caps them at Partial. C3 carries a stable code, a message and a populated structured
-context, and misses only a device-anchored timing reference, although reads and jobs are
-timestamped elsewhere in the same protocol. C5 returns results headlessly and linked to the
-execution, but leaves them untyped because actions declare no output schema. C2 types and
-bounds signals and settings, but declares action parameters in prose, so the units inside an
-action are not machine-readable. Each is a small, backward-compatible change, and together they would move the Critical tier from 13.5 of 18 to
+Second, two of the five Critical criteria score Partial rather than Pass, and both are
+specification gaps rather than implementation debt. A third, C3, was Partial when we first
+scored it and is now a Pass: the error envelope gained a device-anchored timestamp, which
+was its only missing sub-test. C5 returns results headlessly and
+linked to the execution, but leaves them untyped because actions declare no output schema.
+C2 now types and bounds action parameters to any depth and adopts UCUM, but still neither
+declares resolution nor reports an applied default. Each remaining gap is a small,
+backward-compatible change, and together they would move the Critical tier from 13.5 of 18 to
 18 of 18. We state them here rather than defer them because the same paper observes that
 protocol compliance does not establish laboratory interoperability, and these three are
 exactly where that gap opens.

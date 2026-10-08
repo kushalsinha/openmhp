@@ -9,8 +9,8 @@
 \midrule
 \multicolumn{5}{@{}l}{\textit{Critical}}\\
 C1 & Reachable control      & 3 & Pass    & stdio and HTTP+SSE endpoints; \texttt{/mhp.json} needs no handshake; a reconnecting client resolves a command's fate by job id, not by inference. \\
-C2 & Typing, units          & 3 & Partial & Signals and settings declare \texttt{type}, \texttt{unit} and \texttt{limits} (range or enum), validated before vendor code runs. Three sub-tests miss: action \emph{parameters} are declared in prose (\texttt{steps: array of \{temp: degC\}}) so their units are not machine-readable; no precision or resolution field; applied defaults are not reported back. \texttt{unit} is also only \emph{recommended} to be UCUM, a spelled-out string being permitted. \\
-C3 & Structured errors      & 3 & Partial & Three of four sub-tests pass: 13 declared codes, a message, and a populated structured context (\texttt{LimitViolation} carries the violated bound, \texttt{InvalidValue} the expected type, \texttt{NotLeased} the holder and reason). Only the device-anchored timing reference is absent: the envelope is \texttt{\{code, message, data\}}, though reads and jobs are timestamped elsewhere. \\
+C2 & Typing, units          & 3 & Partial & Signals, settings and action parameters declare \texttt{type}, \texttt{unit} and \texttt{limits}, nested to any depth through \texttt{items} and \texttt{properties}, all validated before vendor code runs; UCUM is the declared vocabulary. Two sub-tests still miss: no precision or resolution field, and an applied default is not reported back. \\
+C3 & Structured errors      & 3 & \textbf{Pass} & All four sub-tests: 13 declared codes, a message, a populated structured context (\texttt{LimitViolation} carries the violated bound, \texttt{InvalidValue} the expected type, \texttt{NotLeased} the holder and reason), and a device-anchored \texttt{ts} on every error envelope. \\
 C4 & Open API access        & 6 & Pass    & Apache 2.0, no royalties, integrations publishable and reusable, documentation free. Caveat: a device behind a proprietary SDK inherits that vendor's terms; the protocol cannot launder them. \\
 C5 & Result retrieval       & 3 & Partial & Headless and execution-linked: the job snapshot returns the result with its id, state, outcome, start and finish times, and the owning method and project. One sub-test misses: \texttt{result} is untyped and actions declare no \texttt{returns} schema, so result structure and units are per-driver convention rather than part of the contract. \\
 \midrule
@@ -37,8 +37,8 @@ C21 & Safety-event participation & 2 & Partial & E-stop latches until a verified
 \end{tabular}
 \caption{OpenMHP scored against the twenty-one autonomous-ready procurement criteria of
 Gottstein et al.~\cite{gottstein2026}. Pass = 1.0, Partial = 0.5, Fail = 0.0, weighted.
-Standalone total 33.0 of 46 (72\%); including the two applicable cell-integration criteria,
-35.0 of 50. This is a self-assessment against the published criterion summaries and is
+Standalone total 34.5 of 46 (75\%); including the two applicable cell-integration criteria,
+36.5 of 50. This is a self-assessment against the published criterion summaries and is
 reproducible from the specification and the test suite; the authors' evidence hierarchy
 expects independent proof-of-concept testing, which we have not had performed.}
 \label{tab:scorecard}

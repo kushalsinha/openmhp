@@ -8,6 +8,7 @@ agents can discover a device with nothing but its URL.
 from __future__ import annotations
 
 import json
+import time
 import queue
 import sys
 import threading
@@ -19,19 +20,20 @@ from .driver import Driver, MHPError
 def dispatch(driver: Driver, msg: dict, client: str) -> dict | None:
     """Turn one JSON-RPC request into one response (None for notifications)."""
     mid = msg.get("id")
+    err_ts = time.time()                 # device-anchored, so a client can align it with its own receipt
     try:
         result = driver.rpc(msg.get("method", ""), msg.get("params") or {}, client)
         if mid is None:
             return None
         return {"jsonrpc": "2.0", "id": mid, "result": result}
     except MHPError as e:
-        err = {"code": e.code, "message": e.message}
+        err = {"code": e.code, "message": e.message, "ts": err_ts}
         if e.data is not None:
             err["data"] = e.data
     except KeyError as e:
-        err = {"code": -32602, "message": f"missing param {e}"}
+        err = {"code": -32602, "message": f"missing param {e}", "ts": err_ts}
     except Exception as e:                          # noqa: BLE001
-        err = {"code": -32603, "message": f"{type(e).__name__}: {e}"}
+        err = {"code": -32603, "message": f"{type(e).__name__}: {e}", "ts": err_ts}
     return {"jsonrpc": "2.0", "id": mid, "error": err}
 
 

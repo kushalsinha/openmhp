@@ -221,8 +221,15 @@ actions:                         # INVOKE -> job
     approval: auto
     interlocks: [lid_closed]     # boolean signals that must read exactly true
     params:                      # undeclared parameters are refused
-      steps: array of {temp: degC, hold_s: number}
-      cycles: integer
+      steps:                     # a declared shape: nested values are bounded here, not in code
+        type: array
+        items:
+          type: object
+          required: [temp]
+          properties:
+            temp:   {type: number, unit: Cel, limits: {min: 4, max: 105}}
+            hold_s: {type: number, unit: s,   limits: {min: 0, max: 3600}}
+      cycles: {type: integer}
     required: [steps, cycles]
     limits: {cycles: [1, 100]}   # enforced by the driver, element-wise for lists
     pausable: true               # the driver checkpoints between steps
@@ -253,9 +260,10 @@ locations:                       # optional, device-class specific extensions
 - `device.id` MUST be unique within a host's set of devices. `class` is an open string; §13 lists the initial vocabulary.
 - `device.description` (frontmatter) SHOULD state what the device is and when to pick it, ≤ 1,024 characters. It is the ranking text for directories and the card text for agents.
 - Every object (device, physical, signal, setting, action, safety) MAY carry a `notes` string. Notes are **natural language for the agent**. They are the mechanism by which tacit knowledge enters the protocol; drivers MUST pass them through unchanged.
-- `type` is one of `number | integer | boolean | string | object | array`. `unit` SHOULD be a UCUM code or a common spelled-out unit (`degC`, `mm`, `percent`, `N`, `rpm`). Values are checked against the declared type before any limit or vendor code runs: numbers must be finite, integers and booleans are not interchangeable, `null` is refused, and strings may not contain control characters.
+- `type` is one of `number | integer | boolean | string | object | array`. `unit` MUST be a [UCUM](https://ucum.org/) code (`Cel`, `mm`, `s`, `%`, `N`, `mbar`, `uL/min`, `{rev}/min`). UCUM is the declared vocabulary because an agent that cannot resolve a unit cannot convert one, and a free-text spelling makes two descriptors disagree about what the same number means. Descriptors carrying a non-UCUM spelling still load, and `mhp validate` reports them with the UCUM replacement. Values are checked against the declared type before any limit or vendor code runs: numbers must be finite, integers and booleans are not interchangeable, `null` is refused, and strings may not contain control characters.
 - `limits` on a setting: `{min, max}` for numbers, `{enum: [...]}` for strings. The driver MUST refuse writes outside limits with `LimitViolation`.
-- `limits` on an action: a map from parameter name to `[min, max]`, `{min, max}` or `{enum: [...]}`, applied element-wise to lists. The driver MUST enforce them, for dry runs and real runs alike, together with `required` and, when `params` is declared, the rule that undeclared parameters are refused. Checks that span a whole request (every step of a program) belong in the driver's side-effect-free `validate_params` hook, which also runs for dry runs, so no step starts before the whole request is known to be valid.
+- `params` on an action declares each parameter's **shape**: `{type, unit?, limits?, notes?}` for a scalar, `{type: array, items: {...}}` for a list, and `{type: object, properties: {...}, required: [...]}` for a nested object, nested to any depth. The driver checks the whole shape before any step runs, so a bound on a value *inside* a parameter (a 200 °C step in an otherwise valid program) is enforced by the descriptor rather than by hand-written driver code. A parameter declared as a plain string (`steps: "array of {temp: degC}"`) is the legacy prose form: it is documentation, nothing structural is checked, and `mhp validate` reports it. Prose belongs in `notes`, which every shape may carry.
+- `limits` on an action: a map from parameter name to `[min, max]`, `{min, max}` or `{enum: [...]}`, applied element-wise to lists. It bounds top-level parameters only; nested values are bounded inside `params`. The driver MUST enforce them, for dry runs and real runs alike, together with `required` and, when `params` is declared, the rule that undeclared parameters are refused. Checks that span a whole request (every step of a program) belong in the driver's side-effect-free `validate_params` hook, which also runs for dry runs, so no step starts before the whole request is known to be valid.
 - `approval`: `auto` (agent may act), `confirm` (each call needs `approved: true`, which only the host may set, and only after a person confirmed that exact request; §7.2), `forbid` (never agent-operable; listed so the agent knows the capability exists and why it is off-limits).
 - `interlocks`: names of boolean signals that MUST read exactly `true` at the moment of the write or invoke; false, unreadable or stale values count as open (`InterlockOpen`).
 - `during_job` on a setting (default false) says it may change while a job runs; otherwise the write is refused as busy. `concurrent`, `pausable` and `cancellable` on an action declare what the driver can actually do; pause and cancel requests for actions that do not support them are refused with `NotSupported`.
@@ -707,6 +715,8 @@ Packages are versioned folders checked into the lab's repository. Changing a lim
 | -32020 | DeviceFault | device in `fault` (or a write's outcome is unknown, `data.outcome`); verified reset required |
 | -32021 | DeviceBusy | non-concurrent job running, or reset attempted mid-job |
 | -32022 | EStopActive | device in `estop`; reset required |
+Every error carries `ts`, the device's own clock at the moment it refused, so a client can align a refusal with its own receipt time and with the `ts` on reads and the `started`/`finished` on jobs.
+
 | -32030 | NotLeased | another session holds the lease (`data.holder`), the lease was lost, or a watchdog device needs one (`data.reason: "lease_required"`) |
 | -32040 | UnknownName | no such signal/setting/action |
 | -32041 | JobNotFound | no such job id |

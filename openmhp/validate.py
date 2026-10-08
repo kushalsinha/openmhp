@@ -105,6 +105,26 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
         warn.append("operator-run instrument declares a watchdog; nothing stops automatically if the agent goes silent")
     if "driver.py" not in pkg.resources:
         warn.append("no driver.py in the package")
+    # units: UCUM is the declared vocabulary (SPEC 4.4). Common non-UCUM spellings have an
+    # exact replacement, so say which rather than only that it is wrong.
+    NON_UCUM = {"degC": "Cel", "degrees_c": "Cel", "celsius": "Cel", "C": "Cel",
+                "rpm": "{rev}/min", "RPM": "{rev}/min", "percent": "%", "pct": "%",
+                "seconds": "s", "sec": "s", "millimetres": "mm", "millimeters": "mm",
+                "litres": "L", "liters": "L", "microlitres": "uL", "microliters": "uL"}
+    for group in ("signals", "settings"):
+        for item in d.get(group, []) or []:
+            u = item.get("unit")
+            if isinstance(u, str) and u in NON_UCUM:
+                warn.append(f"{group}/{item.get('name')}: unit {u!r} is not UCUM; use {NON_UCUM[u]!r} (SPEC 4.4)")
+
+    # action parameters declared as prose are documentation, not a contract (SPEC 4.4)
+    for a in d.get("actions", []) or []:
+        for pname, shape in (a.get("params") or {}).items():
+            if isinstance(shape, str):
+                warn.append(f"actions/{a.get('name')}: parameter {pname!r} is declared as prose, so nothing "
+                            f"inside it is type-checked or bounded; declare a shape "
+                            f"({{type, unit, limits}}, or items/properties when nested)")
+
     # methods/ (SPEC 4.5): only on devices that declare a method-driven action, and only well-formed records
     from .methods import MethodStore
     driven = [a["name"] for a in d.get("actions", []) if a.get("methods") is True]
