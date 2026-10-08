@@ -10,7 +10,7 @@ physical:
 signals:
   - name: example_temperature
     type: number
-    unit: degC
+    unit: Cel
     notes: Where it is measured.
   - name: door_closed
     type: boolean
@@ -19,7 +19,7 @@ signals:
 settings:
   - name: example_setpoint
     type: number
-    unit: degC
+    unit: Cel
     limits: {min: 0, max: 100}
     approval: auto
     notes: What happens below min and above max.

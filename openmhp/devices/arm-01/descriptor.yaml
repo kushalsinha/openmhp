@@ -30,7 +30,7 @@ signals:
 settings:
   - name: speed
     type: number
-    unit: percent
+    unit: "%"
     limits: {min: 1, max: 100}
     notes: 100% is 1.2 m/s at the tool centre point. Use <=30% near people or open plates.
   - name: gripper_force

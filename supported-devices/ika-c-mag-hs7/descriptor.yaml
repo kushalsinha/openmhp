@@ -4,14 +4,14 @@ physical:
   notes: Ceramic plate up to 500 degC. Keep solvents capped. Do not move while hot.
 
 signals:
-  - {name: plate_temperature, type: number, unit: degC, notes: Plate probe (PV of channel 1).}
-  - {name: temperature_setpoint_actual, type: number, unit: degC, notes: Setpoint the instrument holds (SP of channel 1).}
-  - {name: stir_rpm_actual, type: number, unit: rpm, notes: Measured stirring speed (PV of channel 4).}
+  - {name: plate_temperature, type: number, unit: Cel, notes: Plate probe (PV of channel 1).}
+  - {name: temperature_setpoint_actual, type: number, unit: Cel, notes: Setpoint the instrument holds (SP of channel 1).}
+  - {name: stir_rpm_actual, type: number, unit: "{rev}/min", notes: Measured stirring speed (PV of channel 4).}
 
 settings:
-  - {name: target_temperature, type: number, unit: degC, limits: {min: 20, max: 300}, approval: auto,
+  - {name: target_temperature, type: number, unit: Cel, limits: {min: 20, max: 300}, approval: auto,
      notes: Plate setpoint. The instrument allows up to 500; this package caps at 300 for glassware.}
-  - {name: stir_rpm, type: number, unit: rpm, limits: {min: 0, max: 1500}, approval: auto}
+  - {name: stir_rpm, type: number, unit: "{rev}/min", limits: {min: 0, max: 1500}, approval: auto}
 
 actions:
   - {name: start_heating, duration: short, approval: auto, notes: Enables the heater at the current setpoint.}

@@ -12,11 +12,11 @@ physical:
 signals:
   - name: block_temperature
     type: number
-    unit: degC
+    unit: Cel
     notes: Measured at block centre; edge wells lag by ~0.5 degC.
   - name: lid_temperature
     type: number
-    unit: degC
+    unit: Cel
   - name: lid_closed
     type: boolean
     notes: True when the lid latch is engaged.
@@ -30,7 +30,7 @@ signals:
 settings:
   - name: target_temperature
     type: number
-    unit: degC
+    unit: Cel
     limits: {min: 4, max: 105}
     approval: auto
     notes: Block setpoint. Below 4 degC condensation forms; above 105 the seal fails.
@@ -44,8 +44,16 @@ actions:
     approval: auto
     interlocks: [lid_closed]
     params:
-      steps: "array of {temp: degC 4..105, hold_s: seconds 0..3600}"
-      cycles: "integer 1..100"
+      steps:
+        type: array
+        notes: One entry per stage; the whole program is checked before the first stage runs.
+        items:
+          type: object
+          required: [temp]
+          properties:
+            temp:   {type: number, unit: Cel, limits: {min: 4, max: 105}}
+            hold_s: {type: number, unit: s,   limits: {min: 0, max: 3600}, notes: Omitted means 0.}
+      cycles: {type: integer}
     required: [steps, cycles]
     limits:
       cycles: [1, 100]

@@ -13,7 +13,7 @@ physical:
 signals:
   - name: oven_temperature
     type: number
-    unit: degC
+    unit: Cel
   - name: carrier_flow
     type: number
     unit: mL/min
@@ -39,12 +39,12 @@ settings:
     notes: Column flow between runs. A method may override it per run with carrier_flow_ml_min.
   - name: inlet_temperature
     type: number
-    unit: degC
+    unit: Cel
     limits: {min: 50, max: 350}
     approval: auto
   - name: detector_temperature
     type: number
-    unit: degC
+    unit: Cel
     limits: {min: 100, max: 350}
     approval: auto
 

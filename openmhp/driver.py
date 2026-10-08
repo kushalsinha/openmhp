@@ -178,6 +178,42 @@ def check_bounds(where: str, value: Any, bound: Any) -> None:
             raise LimitViolation(f"{where}={v} above max {hi}", {"min": lo, "max": hi})
 
 
+def check_shape(where: str, value: Any, spec: Any) -> None:
+    """Validate a value against a declared parameter shape, recursively.
+
+    A shape is ``{type, unit?, limits?, notes?}`` for a scalar, ``{type: array, items: {...}}``
+    for a list, or ``{type: object, properties: {...}, required: [...]}`` for a nested object.
+    Nesting is the point: without it a bound on ``steps[].temp`` cannot be written in the
+    descriptor at all, and every driver has to re-implement the check by hand (SPEC 7.4).
+
+    A shape given as a plain string is the legacy prose form (``"array of {temp: degC}"``).
+    It is documentation, not a contract, so nothing structural is checked. Descriptors are
+    still accepted in that form; `mhp validate` reports it.
+    """
+    if not isinstance(spec, dict):
+        return                                  # legacy prose: nothing machine-checkable
+    typ = spec.get("type")
+    if typ:
+        check_type(where, typ, value)
+    nested = isinstance(spec.get("items"), dict) or isinstance(spec.get("properties"), dict)
+    if spec.get("limits") is not None and not nested:
+        check_bounds(where, value, spec["limits"])
+    if typ == "array" and isinstance(spec.get("items"), dict):
+        for i, item in enumerate(value):
+            check_shape(f"{where}[{i}]", item, spec["items"])
+    if typ == "object" and isinstance(spec.get("properties"), dict):
+        props = spec["properties"]
+        unknown = sorted(set(value) - set(props))
+        if unknown:
+            raise InvalidValue(f"{where}: unknown key(s) {unknown}; declared: {sorted(props)}",
+                               {"unknown": unknown, "declared": sorted(props)})
+        for req in spec.get("required") or []:
+            if value.get(req) is None:
+                raise InvalidValue(f"{where}: missing required key '{req}'", {"missing": req})
+        for k, v in value.items():
+            check_shape(f"{where}.{k}", v, props[k])
+
+
 # --------------------------------------------------------------------------- #
 # Watchdog: one scheduler thread for every driver that declares safety.watchdog_s
 # --------------------------------------------------------------------------- #
@@ -569,6 +605,10 @@ class Driver:
         for req in spec.get("required", []) or []:
             if req not in params or params[req] is None:
                 raise InvalidValue(f"{name}: missing required parameter '{req}'")
+        if isinstance(declared, dict):
+            for pname, shape in declared.items():          # structured shapes; prose is skipped
+                if pname in params and isinstance(shape, dict):
+                    check_shape(f"{name}.{pname}", params[pname], shape)
         for pname, bound in (spec.get("limits") or {}).items():
             if pname in params:
                 check_bounds(f"{name}.{pname}", params[pname], bound)

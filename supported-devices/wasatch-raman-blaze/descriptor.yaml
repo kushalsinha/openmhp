@@ -7,7 +7,7 @@ physical:
 signals:
   - {name: connected, type: boolean, notes: True when the spectrometer answers on USB.}
   - {name: laser_enabled, type: boolean, notes: True while the laser is firing.}
-  - {name: detector_temperature, type: number, unit: degC, notes: Null if the model has no cooled detector.}
+  - {name: detector_temperature, type: number, unit: Cel, notes: Null if the model has no cooled detector.}
   - {name: last_spectrum, type: object, notes: "Pushed after every spectrum: time, band intensities, maximum counts, saturated, laser state."}
 
 settings:

@@ -1,9 +1,9 @@
 signals:
   - {name: balanced, type: boolean, notes: A person confirms tubes are balanced within 0.1 g.}
   - {name: door_open, type: boolean}
-  - {name: actual_speed, type: number, unit: rpm, notes: Read off the display by the operator.}
+  - {name: actual_speed, type: number, unit: "{rev}/min", notes: Read off the display by the operator.}
 settings:
-  - {name: speed, type: number, unit: rpm, limits: {min: 100, max: 15000}, approval: auto}
+  - {name: speed, type: number, unit: "{rev}/min", limits: {min: 100, max: 15000}, approval: auto}
   - {name: duration_s, type: number, unit: s, limits: {min: 5, max: 3600}, approval: auto}
 actions:
   - {name: spin, duration: long, approval: auto, interlocks: [balanced],

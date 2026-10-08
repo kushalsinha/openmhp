@@ -841,7 +841,8 @@ class Bridge:
                 res = self.call_tool(p["name"], p.get("arguments") or {})
                 return self._ok(mid, {"content": [{"type": "text", "text": json.dumps(res, indent=1, default=str)}]})
             except RemoteError as e:
-                txt = json.dumps({"mhpError": {"code": e.code, "message": e.message, "data": e.data}}, default=str)
+                txt = json.dumps({"mhpError": {"code": e.code, "message": e.message,
+                                               "data": e.data, "ts": getattr(e, "ts", None)}}, default=str)
                 return self._ok(mid, {"content": [{"type": "text", "text": txt}], "isError": True})
             except Exception as e:                # noqa: BLE001
                 return self._ok(mid, {"content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}], "isError": True})
