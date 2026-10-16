@@ -668,6 +668,68 @@ def test_every_error_carries_a_device_anchored_timestamp():
     assert before <= err["ts"] <= after, err                          # device-anchored timing
 
 
+def _shaped(**kw):
+    """A driver whose action parameters are fully declared, so the descriptor does the work."""
+    from openmhp.driver import Driver
+
+    class Shaped(Driver):
+        descriptor = {"device": {"id": "c2-01", "class": "generic"},
+                      "settings": [{"name": "setpoint", "type": "number", "unit": "Cel",
+                                    "limits": {"min": 0, "max": 100}, "resolution": 0.1},
+                                   {"name": "tag", "type": "string", "nullable": True},
+                                   {"name": "mode", "type": "string", "default": "idle"}],
+                      "actions": [{"name": "run", "duration": "short", "required": ["steps"],
+                                   "params": {"steps": {"type": "array", "items": {
+                                       "type": "object", "required": ["temp"],
+                                       "properties": {
+                                           "temp":   {"type": "number", "unit": "Cel"},
+                                           "hold_s": {"type": "number", "unit": "s", "default": 0},
+                                           "label":  {"type": "string", "nullable": True}}}}}}]}
+        def on_read(self, name): return 0
+        def on_write(self, name, value): pass
+        def on_invoke(self, job): return {"ok": True}
+    return Shaped()
+
+
+def test_a_declared_resolution_refuses_rather_than_silently_rounds():
+    from openmhp.driver import InvalidValue
+    from openmhp.client import LocalDevice
+    d = LocalDevice(_shaped())
+    assert d.write("setpoint", 72.1)["value"] == 72.1
+    expect(InvalidValue.code, lambda: d.write("setpoint", 72.03))
+    try:
+        d.write("setpoint", 72.03)
+    except Exception as e:
+        assert "nearest settable value" in str(e), e
+
+
+def test_nullable_is_declared_not_assumed():
+    from openmhp.driver import InvalidValue
+    from openmhp.client import LocalDevice
+    d = LocalDevice(_shaped())
+    assert d.write("tag", None)["ok"] is True                 # declared nullable
+    expect(InvalidValue.code, lambda: d.write("setpoint", None))   # not declared: refused
+
+
+def test_an_applied_default_is_always_reported_back():
+    """The criterion is that a default is never applied in silence. It must survive the
+    retry an auto-acquired lease causes, and still be visible on the job afterwards."""
+    from openmhp.client import LocalDevice
+    d = LocalDevice(_shaped())
+
+    sent = [{"temp": 95}, {"temp": 60, "hold_s": 5}]
+    dry = d.invoke("run", dry_run=True, steps=sent)
+    assert dry["defaulted"] == {"run.steps[0].hold_s": 0}, dry["defaulted"]
+    assert sent == [{"temp": 95}, {"temp": 60, "hold_s": 5}], "the caller's own dict was mutated"
+
+    job = d.invoke("run", steps=[{"temp": 95}])
+    assert job["defaulted"] == {"run.steps[0].hold_s": 0}, job["defaulted"]
+    assert d.call("jobs/status", {"id": job["id"]})["job"]["defaulted"] == {"run.steps[0].hold_s": 0}
+
+    assert d.invoke("run", dry_run=True, steps=[{"temp": 95, "hold_s": 3}])["defaulted"] is None
+    assert d.write("mode")["defaulted"] == {"mode": "idle"}   # a setting may default too
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):

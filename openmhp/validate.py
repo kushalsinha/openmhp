@@ -125,6 +125,33 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
                             f"inside it is type-checked or bounded; declare a shape "
                             f"({{type, unit, limits}}, or items/properties when nested)")
 
+    # a parameter that is neither required nor defaulted can be omitted, and whatever the
+    # driver substitutes is invisible to the caller: the silent-default hazard (SPEC 4.4)
+    def _undefaulted(where, shape):
+        if not isinstance(shape, dict):
+            return []
+        out = []
+        if shape.get("type") == "object" and isinstance(shape.get("properties"), dict):
+            req = set(shape.get("required") or [])
+            for k, sub in shape["properties"].items():
+                if k not in req and isinstance(sub, dict) and "default" not in sub and not sub.get("nullable"):
+                    out.append(f"{where}.{k}")
+                out += _undefaulted(f"{where}.{k}", sub)
+        if isinstance(shape.get("items"), dict):
+            out += _undefaulted(f"{where}[]", shape["items"])
+        return out
+
+    for a in d.get("actions", []) or []:
+        req = set(a.get("required") or [])
+        for pname, shape in (a.get("params") or {}).items():
+            if not isinstance(shape, dict):
+                continue
+            missing = ([f"{pname}"] if pname not in req and "default" not in shape
+                       and not shape.get("nullable") else []) + _undefaulted(pname, shape)
+            for m in missing:
+                warn.append(f"actions/{a.get('name')}: {m!r} is optional but declares no default; "
+                            f"if the driver substitutes one, the caller is never told (SPEC 4.4)")
+
     # methods/ (SPEC 4.5): only on devices that declare a method-driven action, and only well-formed records
     from .methods import MethodStore
     driven = [a["name"] for a in d.get("actions", []) if a.get("methods") is True]

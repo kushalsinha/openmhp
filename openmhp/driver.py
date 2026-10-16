@@ -24,6 +24,7 @@ Error handling contract for vendor hooks:
 """
 from __future__ import annotations
 
+import copy
 import math
 import threading
 import time
@@ -95,6 +96,7 @@ class Job:
     waiting: str | None = None      # what the job is waiting for (e.g. an operator instruction)
     method: dict | None = None      # {name, version, hash, overrides?} when the job runs a saved method
     project: str | None = None      # the project this run belongs to, when the caller said
+    defaulted: dict | None = None   # parameters the caller omitted, filled from declared defaults
     started: float = field(default_factory=time.time)
     finished: float | None = None
     cancel_requested: bool = False
@@ -105,7 +107,7 @@ class Job:
             "id": self.id, "action": self.action, "state": self.state, "paused": self.paused,
             "progress": round(self.progress, 3), "result": self.result, "error": self.error,
             "outcome": self.outcome, "waiting": self.waiting, "owner": self.owner,
-            "method": self.method, "project": self.project,
+            "method": self.method, "project": self.project, "defaulted": self.defaulted,
             "started": self.started, "finished": self.finished,
         }
 
@@ -135,9 +137,12 @@ def is_finite_number(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
-def check_type(where: str, typ: str, value: Any) -> None:
+def check_type(where: str, typ: str, value: Any, nullable: bool = False) -> None:
     if value is None:
-        raise InvalidValue(f"{where}: a value is required (null is not allowed)")
+        if nullable:
+            return                              # declared nullable in the contract
+        raise InvalidValue(f"{where}: a value is required (null is not allowed)",
+                           {"nullable": False})
     if typ not in _TYPES:
         raise InvalidValue(f"{where}: the descriptor declares unknown type {typ!r}")
     ok = {
@@ -178,6 +183,51 @@ def check_bounds(where: str, value: Any, bound: Any) -> None:
             raise LimitViolation(f"{where}={v} above max {hi}", {"min": lo, "max": hi})
 
 
+def apply_defaults(where: str, value: Any, spec: Any, applied: dict) -> Any:
+    """Fill values the caller omitted from defaults declared in the contract, recording each
+    one in ``applied`` so the response can report what was actually used (SPEC 4.4).
+
+    A default that is not declared cannot be filled here, which is the point: a driver that
+    substitutes its own is invisible to the caller, and that is the failure this prevents.
+    """
+    if not isinstance(spec, dict):
+        return value
+    if value is None and "default" in spec:
+        applied[where] = spec["default"]
+        return spec["default"]
+    if spec.get("type") == "object" and isinstance(spec.get("properties"), dict) and isinstance(value, dict):
+        for key, sub in spec["properties"].items():
+            if value.get(key) is None and "default" in sub:
+                value[key] = sub["default"]
+                applied[f"{where}.{key}"] = sub["default"]
+            elif key in value:
+                value[key] = apply_defaults(f"{where}.{key}", value[key], sub, applied)
+    if spec.get("type") == "array" and isinstance(spec.get("items"), dict) and isinstance(value, list):
+        for i, item in enumerate(value):
+            value[i] = apply_defaults(f"{where}[{i}]", item, spec["items"], applied)
+    return value
+
+
+def check_resolution(where: str, value: Any, resolution: Any) -> None:
+    """Refuse a value the instrument could only honour by silently rounding it.
+
+    Reporting the coercion instead of performing it is deliberate: a value quietly snapped
+    to the nearest step does not surface until the scientific output is already wrong.
+    """
+    if not is_finite_number(resolution) or resolution <= 0:
+        raise InvalidValue(f"{where}: malformed resolution {resolution!r} in the descriptor")
+    for v in (value if isinstance(value, list) else [value]):
+        if not is_finite_number(v):
+            continue                            # type checking already reported this
+        steps = v / resolution
+        if abs(steps - round(steps)) > 1e-9:
+            nearest = round(steps) * resolution
+            raise InvalidValue(
+                f"{where}={v} is not a multiple of the declared resolution {resolution} "
+                f"(nearest settable value is {nearest:g})",
+                {"resolution": resolution, "nearest": nearest})
+
+
 def check_shape(where: str, value: Any, spec: Any) -> None:
     """Validate a value against a declared parameter shape, recursively.
 
@@ -192,12 +242,16 @@ def check_shape(where: str, value: Any, spec: Any) -> None:
     """
     if not isinstance(spec, dict):
         return                                  # legacy prose: nothing machine-checkable
+    if value is None and spec.get("nullable") is True:
+        return
     typ = spec.get("type")
     if typ:
-        check_type(where, typ, value)
+        check_type(where, typ, value, nullable=spec.get("nullable") is True)
     nested = isinstance(spec.get("items"), dict) or isinstance(spec.get("properties"), dict)
     if spec.get("limits") is not None and not nested:
         check_bounds(where, value, spec["limits"])
+    if spec.get("resolution") is not None and not nested:
+        check_resolution(where, value, spec["resolution"])
     if typ == "array" and isinstance(spec.get("items"), dict):
         for i, item in enumerate(value):
             check_shape(f"{where}[{i}]", item, spec["items"])
@@ -586,22 +640,45 @@ class Driver:
     def _check_setting_value(self, spec: dict, value: Any) -> None:
         name = spec["name"]
         typ = spec.get("type", "number")
-        check_type(name, typ, value)
+        if value is None and spec.get("nullable") is True:
+            return
+        check_type(name, typ, value, nullable=spec.get("nullable") is True)
+        if spec.get("resolution") is not None:
+            check_resolution(name, value, spec["resolution"])
         lim = spec.get("limits") or {}
         if typ in ("number", "integer") and ("min" in lim or "max" in lim):
             check_bounds(name, value, {"min": lim.get("min"), "max": lim.get("max")})
         if "enum" in lim:
             check_bounds(name, value, {"enum": lim["enum"]})
 
-    def _check_params(self, spec: dict, params: Any) -> None:
+    def _check_params(self, spec: dict, params: Any) -> tuple[dict, dict]:
+        """Return (filled params, defaults applied).
+
+        The caller's dict is never mutated. An in-process client shares the very dict it
+        sent, so filling it in place would make a retry -- an auto-acquired lease, or an
+        approved re-send -- see parameters that were already filled and report no defaults
+        at all. The substitution has to be reported on every attempt, not just the first.
+        Filling happens before the required check, so a declared default satisfies it.
+        """
         name = spec["name"]
         if not isinstance(params, dict):
             raise InvalidValue(f"{name}: params must be an object")
+        params = copy.deepcopy(params)
         declared = spec.get("params")
         if isinstance(declared, dict) and declared:
             unknown = sorted(set(params) - set(declared))
             if unknown:
                 raise InvalidValue(f"{name}: unknown parameter(s) {unknown}; declared: {sorted(declared)}")
+        applied: dict = {}
+        if isinstance(declared, dict):
+            for pname, shape in declared.items():
+                if not isinstance(shape, dict):
+                    continue                                   # prose: nothing to fill
+                if params.get(pname) is None and "default" in shape:
+                    params[pname] = shape["default"]
+                    applied[f"{name}.{pname}"] = shape["default"]
+                elif pname in params:
+                    params[pname] = apply_defaults(f"{name}.{pname}", params[pname], shape, applied)
         for req in spec.get("required", []) or []:
             if req not in params or params[req] is None:
                 raise InvalidValue(f"{name}: missing required parameter '{req}'")
@@ -619,6 +696,7 @@ class Driver:
             raise
         except (ValueError, TypeError, KeyError) as e:
             raise InvalidValue(f"{name}: {e}") from None
+        return params, applied
 
     def _check_busy(self, spec: dict, kind: str) -> None:
         with self._state_lock:
@@ -651,7 +729,10 @@ class Driver:
         if kind == "setting":
             self._check_setting_value(spec, value)
         else:
-            self._check_params(spec, params if params is not None else {})
+            filled, applied = self._check_params(spec, params if params is not None else {})
+            notes["_params"] = filled                     # carried back to the caller, then popped
+            if applied:
+                notes["defaulted"] = applied              # never substitute a value in silence
         notes.update(self._check_lease(client, required=bool(self.watchdog_s), dry_run=dry_run))
         try:
             self._check_busy(spec, kind)
@@ -790,13 +871,18 @@ class Driver:
         spec = self._index["settings"].get(name)
         if spec is None:
             raise UnknownName(f"unknown setting '{name}'")
+        defaulted = None
         if "value" not in p:
-            raise InvalidValue(f"{name}: a value is required")
-        value = p["value"]
+            if "default" not in spec:
+                raise InvalidValue(f"{name}: a value is required")
+            value, defaulted = spec["default"], {name: spec["default"]}
+        else:
+            value = p["value"]
         dry = p.get("dryRun") is True
         notes = self._gate(spec, client, kind="setting", value=value, approved=p.get("approved") is True, dry_run=dry)
         if dry:
-            return {"ok": True, "dryRun": True, "wouldWrite": {name: value}, **notes}
+            return {"ok": True, "dryRun": True, "wouldWrite": {name: value},
+                    **({"defaulted": defaulted} if defaulted else {}), **notes}
         try:
             extra = self.on_write(name, value)
         except MHPError:
@@ -806,7 +892,9 @@ class Driver:
             self._latch_fault(reason)
             raise DeviceFault(reason + "; the device is latched in fault", {"outcome": "unknown"}) from None
         self.notify("settings/changed", {"name": name, "value": value, "by": client})
-        return {"ok": True, "name": name, "value": value, **(extra if isinstance(extra, dict) else {})}
+        return {"ok": True, "name": name, "value": value,
+                **({"defaulted": defaulted} if defaulted else {}),
+                **(extra if isinstance(extra, dict) else {})}
 
     # actions -> jobs
     def rpc_actions_list(self, p, client):
@@ -820,12 +908,14 @@ class Driver:
         params, prov, project = self._resolve_method(p)
         dry = p.get("dryRun") is True
         notes = self._gate(spec, client, kind="action", params=params, approved=p.get("approved") is True, dry_run=dry)
+        params = notes.pop("_params", params)             # the gate's filled copy is what runs
         if spec.get("methods") is True and prov is None and project and p.get("compound"):
             found = self.methods.find(p["compound"], project, action=name)
             if found["choice"] != "one" or found.get("newProject"):
                 notes["methodHint"] = (f"no saved method for {p['compound']} in project {project}; if these parameters work, "
                                        f"methods/save them under that project so the next run can find them")
-        job = Job(id="job_" + uuid.uuid4().hex[:8], action=name, params=params, owner=client, method=prov, project=project)
+        job = Job(id="job_" + uuid.uuid4().hex[:8], action=name, params=params, owner=client,
+                  method=prov, project=project, defaulted=notes.get("defaulted"))
         if dry:
             return {"job": {**job.snapshot(), "state": "dryRun"}, **notes}
         with self._state_lock:                     # admission and registration are one step
@@ -836,6 +926,8 @@ class Driver:
             self._recompute_state_locked()
             snap = job.snapshot()
         threading.Thread(target=self._run_job, args=(job,), daemon=True).start()
+        if "defaulted" in notes:
+            return {"job": snap, "defaulted": notes["defaulted"]}
         return {"job": snap}
 
     def _run_job(self, job: Job):

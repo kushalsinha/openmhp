@@ -132,8 +132,14 @@ class Device:
         vals = self.call("signals/read", {"names": list(names)} if names else {})["values"]
         return vals[names[0]] if len(names) == 1 else vals
 
-    def write(self, name: str, value: Any, approved=False, dry_run=False) -> dict:
-        return self.call("settings/write", {"name": name, "value": value, "approved": approved, "dryRun": dry_run})
+    _OMITTED = object()
+
+    def write(self, name: str, value: Any = _OMITTED, approved=False, dry_run=False) -> dict:
+        """Omit `value` to take the setting's declared default; the answer reports what was applied."""
+        p = {"name": name, "approved": approved, "dryRun": dry_run}
+        if value is not Device._OMITTED:
+            p["value"] = value
+        return self.call("settings/write", p)
 
     def invoke(self, name: str, approved=False, dry_run=False, **params) -> dict:
         return self.call("actions/invoke", {"name": name, "params": params, "approved": approved, "dryRun": dry_run})["job"]

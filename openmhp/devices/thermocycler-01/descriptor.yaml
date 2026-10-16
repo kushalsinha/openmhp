@@ -32,6 +32,7 @@ settings:
     type: number
     unit: Cel
     limits: {min: 4, max: 105}
+    resolution: 0.1              # the block setpoint is settable to a tenth of a degree
     approval: auto
     notes: Block setpoint. Below 4 degC condensation forms; above 105 the seal fails.
   - name: lid_heater
@@ -51,8 +52,8 @@ actions:
           type: object
           required: [temp]
           properties:
-            temp:   {type: number, unit: Cel, limits: {min: 4, max: 105}}
-            hold_s: {type: number, unit: s,   limits: {min: 0, max: 3600}, notes: Omitted means 0.}
+            temp:   {type: number, unit: Cel, limits: {min: 4, max: 105}, resolution: 0.1}
+            hold_s: {type: number, unit: s,   limits: {min: 0, max: 3600}, default: 0}
       cycles: {type: integer}
     required: [steps, cycles]
     limits:
