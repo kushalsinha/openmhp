@@ -92,6 +92,7 @@ class Job:
     progress: float = 0.0
     result: Any = None
     error: str | None = None
+    result_mismatch: str | None = None   # the result did not match the action's declared `returns`
     outcome: str | None = None      # "unknown" when a failure may have left the device in an unknown physical state
     waiting: str | None = None      # what the job is waiting for (e.g. an operator instruction)
     method: dict | None = None      # {name, version, hash, overrides?} when the job runs a saved method
@@ -106,6 +107,7 @@ class Job:
         return {
             "id": self.id, "action": self.action, "state": self.state, "paused": self.paused,
             "progress": round(self.progress, 3), "result": self.result, "error": self.error,
+            "resultMismatch": self.result_mismatch,
             "outcome": self.outcome, "waiting": self.waiting, "owner": self.owner,
             "method": self.method, "project": self.project, "defaulted": self.defaulted,
             "started": self.started, "finished": self.finished,
@@ -327,6 +329,7 @@ class Driver:
         self.lease: str | None = None             # session id holding control
         self.lease_expires: float = 0.0           # time.monotonic() deadline
         self.jobs: dict[str, Job] = {}
+        self._sim_fault: dict | None = None
         self._active: set[str] = set()
         self.subscribers: list[Callable[[dict], None]] = []
         self._lock = threading.RLock()            # serialises vendor I/O for ordinary requests
@@ -826,7 +829,7 @@ class Driver:
             "physical": self.descriptor.get("physical", {}),
             "signals": slim(self.descriptor.get("signals", []), ("name", "type", "unit")),
             "settings": slim(self.descriptor.get("settings", []), ("name", "type", "unit", "limits", "approval", "during_job")),
-            "actions": slim(self.descriptor.get("actions", []), ("name", "duration", "approval", "interlocks", "required", "limits", "methods")),
+            "actions": slim(self.descriptor.get("actions", []), ("name", "duration", "approval", "interlocks", "required", "limits", "methods", "returns")),
             "methods": ({**self.methods.overview(),
                          "how": "methods/find {compound, project} -> actions/invoke {name, method: {name, project, overrides?}, project}"}
                         if self.method_driven() else None),
@@ -856,6 +859,8 @@ class Driver:
         for n in names:
             if n not in self._index["signals"]:
                 raise UnknownName(f"unknown signal '{n}'")
+            self._sim_trip("read", pre=True)
+            self._sim_trip("read")
             out[n] = self.on_read(n)
         return {"values": out, "ts": time.time()}
 
@@ -883,7 +888,9 @@ class Driver:
         if dry:
             return {"ok": True, "dryRun": True, "wouldWrite": {name: value},
                     **({"defaulted": defaulted} if defaulted else {}), **notes}
+        self._sim_trip("write", pre=True)
         try:
+            self._sim_trip("write")
             extra = self.on_write(name, value)
         except MHPError:
             raise                                  # rejected before anything was sent
@@ -909,6 +916,7 @@ class Driver:
         dry = p.get("dryRun") is True
         notes = self._gate(spec, client, kind="action", params=params, approved=p.get("approved") is True, dry_run=dry)
         params = notes.pop("_params", params)             # the gate's filled copy is what runs
+        self._sim_trip("invoke", pre=True)                # a refusal happens before any job exists
         if spec.get("methods") is True and prov is None and project and p.get("compound"):
             found = self.methods.find(p["compound"], project, action=name)
             if found["choice"] != "one" or found.get("newProject"):
@@ -930,6 +938,68 @@ class Driver:
             return {"job": snap, "defaulted": notes["defaulted"]}
         return {"job": snap}
 
+    # ---- simulated twins: drive them into failure on demand (C14) --------- #
+    #
+    # A twin that only ever succeeds exercises the happy path. The orchestrator branches that
+    # matter -- fail-closed on an unknown outcome, the watchdog, a refusal -- are reachable
+    # only if the simulator can be made to fail deliberately. Refused on real hardware.
+    _SIM_MODES = ("raise", "hang", "refuse")
+    _SIM_ON = ("invoke", "read", "write")
+
+    def rpc_sim_fault(self, p, client):
+        if not getattr(self, "simulated", False):
+            raise NotSupported("fault injection exists only on a simulated twin, not on this device")
+        mode = p.get("mode")
+        if mode is None:
+            self._sim_fault = None
+            return {"armed": None}
+        if mode not in self._SIM_MODES:
+            raise InvalidValue(f"mode must be one of {list(self._SIM_MODES)} or null to disarm",
+                               {"modes": list(self._SIM_MODES)})
+        on = p.get("on", "invoke")
+        if on not in self._SIM_ON:
+            raise InvalidValue(f"on must be one of {list(self._SIM_ON)}", {"on": list(self._SIM_ON)})
+        self._sim_fault = {"mode": mode, "on": on,
+                           "times": max(1, int(p.get("times", 1))),
+                           "hang_s": float(p.get("hang_s", 30))}
+        return {"armed": dict(self._sim_fault)}
+
+    def _sim_trip(self, on: str, *, pre: bool = False) -> None:
+        """Fire an armed fault. `pre` is the pre-actuation point, where only `refuse` applies."""
+        f = getattr(self, "_sim_fault", None)
+        if not f or f["on"] != on:
+            return
+        if pre != (f["mode"] == "refuse"):
+            return
+        f["times"] -= 1
+        if f["times"] <= 0:
+            self._sim_fault = None
+        if f["mode"] == "refuse":
+            raise MHPError(f"injected refusal on {on} (simulated twin)", {"injected": True})
+        if f["mode"] == "hang":
+            time.sleep(f["hang_s"])
+            return
+        raise RuntimeError(f"injected fault on {on} (simulated twin)")
+
+    def _check_result(self, action: str, result: Any) -> str | None:
+        """Compare a result against the action's declared `returns`, if it declares one.
+
+        A mismatch is reported, never raised. The physical work has already happened by the
+        time the result exists, so turning a contract bug into a failed job would misreport
+        what the instrument actually did. `returns` is optional: an instrument whose output
+        has no stable shape simply does not declare one and nothing here runs.
+        """
+        spec = self._index["actions"].get(action) or {}
+        shape = spec.get("returns")
+        if not isinstance(shape, dict):
+            return None
+        try:
+            check_shape(f"{action}.returns", result, shape)
+        except MHPError as e:
+            self.notify("jobs/result_mismatch", {"action": action, "reason": e.message})
+            return e.message
+        return None
+
     def _run_job(self, job: Job):
         with self._state_lock:
             if job.state == "queued":
@@ -937,8 +1007,10 @@ class Driver:
         self.notify("jobs/started", {"job": job.snapshot()})
         result, error, final = None, None, "done"
         try:
+            self._sim_trip("invoke")
             result = self.on_invoke(job)
             final = "cancelled" if job.cancel_requested else "done"
+            job.result_mismatch = self._check_result(job.action, result)
         except JobCancelled:
             final = "cancelled"
         except Exception as e:                     # noqa: BLE001

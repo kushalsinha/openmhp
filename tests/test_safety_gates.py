@@ -730,6 +730,64 @@ def test_an_applied_default_is_always_reported_back():
     assert d.write("mode")["defaulted"] == {"mode": "idle"}   # a setting may default too
 
 
+def test_a_declared_result_contract_is_reported_not_enforced():
+    """`returns` is optional. When declared, a result that breaks it is reported on the job
+    rather than raised: the physical work already happened, so failing the job would
+    misreport what the instrument did."""
+    from openmhp.driver import Driver
+    from openmhp.client import LocalDevice
+
+    class Honest(Driver):
+        descriptor = {"device": {"id": "r-01", "class": "generic"},
+                      "actions": [{"name": "good", "duration": "short",
+                                   "returns": {"type": "object", "required": ["n"],
+                                               "properties": {"n": {"type": "integer"}}}},
+                                  {"name": "bad", "duration": "short",
+                                   "returns": {"type": "object", "required": ["n"],
+                                               "properties": {"n": {"type": "integer"}}}},
+                                  {"name": "undeclared", "duration": "short"}]}
+        def on_read(self, name): return 0
+        def on_write(self, name, value): pass
+        def on_invoke(self, job):
+            return {"n": 1} if job.action == "good" else {"n": "not an integer"} if job.action == "bad" else {"anything": [1, 2]}
+
+    d = LocalDevice(Honest())
+    assert d.wait(d.invoke("good"))["resultMismatch"] is None
+    bad = d.wait(d.invoke("bad"))
+    assert bad["state"] == "done", "a contract mismatch must not fail the job"
+    assert "expected integer" in (bad["resultMismatch"] or ""), bad["resultMismatch"]
+    assert d.wait(d.invoke("undeclared"))["resultMismatch"] is None   # nothing declared, nothing checked
+
+
+def test_a_twin_can_be_driven_into_failure_and_real_hardware_cannot():
+    from openmhp.driver import NotSupported
+    from openmhp.package import load_driver
+    from openmhp.client import LocalDevice, RemoteError
+
+    twin = LocalDevice(load_driver("openmhp/devices/thermocycler-01", sim=True))
+    real = LocalDevice(load_driver("openmhp/devices/thermocycler-01"))
+
+    expect(NotSupported.code, lambda: real.call("sim/fault", {"on": "invoke", "mode": "raise"}))
+
+    # a refusal happens before any job exists
+    twin.call("sim/fault", {"on": "invoke", "mode": "refuse"})
+    try:
+        twin.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1)
+        raise AssertionError("the injected refusal did not fire")
+    except RemoteError as e:
+        assert "injected refusal" in str(e), e
+    assert twin.call("device/describe", {"detail": "card"})["state"] == "idle", "a refusal must not latch a fault"
+
+    # a failure inside vendor code latches the device, with an unknown outcome
+    twin.call("sim/fault", {"on": "invoke", "mode": "raise"})
+    try:
+        twin.wait(twin.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
+    except RemoteError:
+        pass
+    assert twin.call("device/describe", {"detail": "card"})["state"] == "fault"
+    twin.call("sim/fault", {"mode": None})        # disarm
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):

@@ -59,6 +59,12 @@ actions:
     limits:
       cycles: [1, 100]
     pausable: true
+    returns:                     # the result contract: what a caller can rely on reading back
+      type: object
+      required: [cycles_completed, final_block_temperature]
+      properties:
+        cycles_completed:         {type: integer}
+        final_block_temperature:  {type: number, unit: Cel}
     methods: true                # a PCR program is a method: kept per project under methods/ (SPEC 4.5)
     notes: Runs a cycling program. Every step is checked against the block limits before the first one starts.
     examples:

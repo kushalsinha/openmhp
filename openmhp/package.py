@@ -133,12 +133,14 @@ def load_driver(path: str | Path, sim: bool = False):
         drv = cls.__new__(cls)
         drv.package, drv.descriptor, drv.instructions = pkg, pkg.descriptor, pkg.instructions
         drv.__init__()
+        drv.simulated = bool(sim)              # a twin may be driven into failure on demand (C14)
         return drv
     drv = cls()                                # a factory returning a ready instance (BoundDriver / adapter)
     drv.package, drv.instructions = pkg, pkg.instructions
     drv.descriptor = merge_descriptor(drv.descriptor, pkg.descriptor, where=str(pkg.dir))
     drv._reindex()
     drv._arm_watchdog()
+    drv.simulated = bool(sim)
     return drv
 
 
