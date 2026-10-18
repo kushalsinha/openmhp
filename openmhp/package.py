@@ -119,7 +119,7 @@ def load_package(path: str | Path) -> DevicePackage:
     descriptor.setdefault("signals", []); descriptor.setdefault("settings", []); descriptor.setdefault("actions", [])
     descriptor.setdefault("safety", {})
 
-    resources = sorted(str(p.relative_to(d)) for p in d.rglob("*")
+    resources = sorted(p.relative_to(d).as_posix() for p in d.rglob("*")         # '/' on every OS, as DEVICE.md writes them
                        if p.is_file() and not p.name.startswith(".") and "__pycache__" not in p.parts
                        and p.name != "DEVICE.md")
     return DevicePackage(d, meta, body, descriptor, resources)

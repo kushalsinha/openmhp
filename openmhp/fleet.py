@@ -94,7 +94,7 @@ class Fleet:
             if len(cands) == 1:
                 folder = cands[0]
             else:
-                raise FileNotFoundError(f"{spec}: no DEVICE.md at that path; packages found: {[str(c.relative_to(dest)) for c in cands]}")
+                raise FileNotFoundError(f"{spec}: no DEVICE.md at that path; packages found: {[c.relative_to(dest).as_posix() for c in cands]}")
         return folder
 
     def set_location(self, device_id: str, location: str) -> dict:

@@ -444,7 +444,7 @@ def package_fingerprint(folder: str | Path) -> str:
             continue
         if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("."):
             st = p.stat()
-            h.update(f"{p.relative_to(root)}:{st.st_size}:{st.st_mtime_ns};".encode())
+            h.update(f"{p.relative_to(root).as_posix()}:{st.st_size}:{st.st_mtime_ns};".encode())
     return h.hexdigest()[:16]
 
 

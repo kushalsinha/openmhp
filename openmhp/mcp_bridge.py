@@ -562,7 +562,7 @@ class Bridge:
             return {"runs": self.runs.list()}
         if op == "list":
             d = self.runs.resolve(a.get("run", "latest"))
-            return {"run": d.name, "files": sorted(str(p.relative_to(d)) for p in d.rglob("*") if p.is_file())}
+            return {"run": d.name, "files": sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file())}
         if op == "read":
             return self.runs.read(a.get("run", "latest"), a.get("path", "stdout.txt"))
         if op == "log":

@@ -178,7 +178,7 @@ class Run:
         (self.dir / "meta.json").write_text(json.dumps(self.meta(), indent=1))
 
     def files(self) -> list[str]:
-        return sorted(str(p.relative_to(self.dir)) for p in self.dir.rglob("*") if p.is_file())
+        return sorted(p.relative_to(self.dir).as_posix() for p in self.dir.rglob("*") if p.is_file())
 
 
 class PlanTruncated(BaseException):
