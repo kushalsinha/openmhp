@@ -155,6 +155,15 @@ def serve_stdio(driver: Driver, *, stdin=None, stdout=None) -> None:
 
 
 # ----------------------------------------------------------------- http ---- #
+class ExclusiveHTTPServer(ThreadingHTTPServer):
+    """One server per port. HTTPServer sets SO_REUSEADDR, which on Linux and macOS only lets a restart rebind
+    a port whose old connections are in TIME_WAIT, but on Windows lets a second server bind a port another one
+    is listening on: a client could then reach either, so an agent could command a different device than the
+    one it addressed. Windows rebinds past TIME_WAIT without the option, so it is off there, as
+    socket.create_server() and asyncio also leave it."""
+    allow_reuse_address = os.name != "nt"
+
+
 def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765, *,
                token: str | bool | None = None) -> None:
     """Serve one device over HTTP (+SSE).
@@ -238,7 +247,7 @@ def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765, *,
             resp = dispatch(driver, msg, client, trusted=bool(token) or is_loopback(self.client_address[0]))
             self._json(200, resp if resp is not None else {})
 
-    srv = ThreadingHTTPServer((host, port), Handler)   # binds AND listens: we are accepting from here on
+    srv = ExclusiveHTTPServer((host, port), Handler)   # binds AND listens: we are accepting from here on
     print(f"MHP {driver.descriptor['device']['id']} listening on http://{host}:{port}", file=sys.stderr)
     if token and generated:
         where = "OPENMHP_DEVICE_TOKEN" if os.environ.get("OPENMHP_DEVICE_TOKEN") else str(device_token_file())
