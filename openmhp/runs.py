@@ -60,7 +60,7 @@ class RunLog:
     def _last_seq_on_disk(self) -> int:
         for f in reversed(self._files()):
             try:
-                lines = [l for l in f.read_text(errors="replace").splitlines() if l.strip()]
+                lines = [l for l in f.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
             except OSError:
                 continue
             for line in reversed(lines):
@@ -79,7 +79,7 @@ class RunLog:
             del self.recent[:-500]
             try:
                 self.dir.mkdir(parents=True, exist_ok=True)
-                with open(self.dir / (time.strftime("%Y-%m-%d") + ".jsonl"), "a") as f:
+                with open(self.dir / (time.strftime("%Y-%m-%d") + ".jsonl"), "a", encoding="utf-8") as f:
                     f.write(json.dumps(ev, default=str) + "\n")
             except OSError as e:
                 self.write_errors += 1
@@ -96,7 +96,7 @@ class RunLog:
         events, first_seen = [], None
         for f in self._files():
             try:
-                for line in f.read_text(errors="replace").splitlines():
+                for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
                     try:
                         e = json.loads(line)
                     except json.JSONDecodeError:
@@ -160,7 +160,7 @@ class Run:
         self.name, self.script = name, script
         self.dir = home / "runs" / self.id
         self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / "script.py").write_text(script)
+        (self.dir / "script.py").write_text(script, encoding="utf-8")
         self.state, self.started, self.finished = "running", time.time(), None
         self.error: str | None = None
         self.out = RunOutput(self.dir / "stdout.txt")
@@ -175,7 +175,7 @@ class Run:
                 "error": self.error, "dir": str(self.dir), "pid": os.getpid()}
 
     def save(self):
-        (self.dir / "meta.json").write_text(json.dumps(self.meta(), indent=1))
+        (self.dir / "meta.json").write_text(json.dumps(self.meta(), indent=1), encoding="utf-8")
 
     def files(self) -> list[str]:
         return sorted(p.relative_to(self.dir).as_posix() for p in self.dir.rglob("*") if p.is_file())
@@ -220,13 +220,13 @@ class Runs:
             if not m.is_file():
                 continue
             try:
-                meta = json.loads(m.read_text())
+                meta = json.loads(m.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
             if meta.get("state") == "running" and not _pid_alive(meta.get("pid")):
                 meta.update(state="interrupted", error="the process running this script ended before it finished")
                 try:
-                    m.write_text(json.dumps(meta, indent=1))
+                    m.write_text(json.dumps(meta, indent=1), encoding="utf-8")
                 except OSError:
                     pass
 
@@ -310,7 +310,7 @@ class Runs:
             for d in sorted(base.iterdir()):
                 if d.name not in live and (d / "meta.json").is_file():
                     try:
-                        live[d.name] = json.loads((d / "meta.json").read_text())
+                        live[d.name] = json.loads((d / "meta.json").read_text(encoding="utf-8"))
                     except json.JSONDecodeError:
                         pass
         return sorted(live.values(), key=lambda m: m["started"], reverse=True)[:50]
@@ -337,7 +337,7 @@ class Runs:
         if not p.is_file():
             raise FileNotFoundError(rel)
         if p.suffix.lower() in (".txt", ".md", ".csv", ".json", ".py", ".yaml", ".yml", ".log", ".jsonl"):
-            with open(p, errors="replace") as f:
+            with open(p, encoding="utf-8", errors="replace") as f:
                 text = f.read(cap + 1)
             return {"run": d.name, "path": rel, "text": text[:cap], "truncated": len(text) > cap}
         return {"run": d.name, "path": rel, "bytes": p.stat().st_size, "text": None, "note": "binary; copy from " + str(p)}

@@ -98,7 +98,7 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
     if saf.get("estop") is True and isinstance(serial, dict) and not serial.get("estop"):
         err.append("safety.estop is true but serial.estop lists no stop commands")
     driver_py = pkg.dir / "driver.py"
-    manual = driver_py.is_file() and "drivers.manual" in driver_py.read_text(errors="replace")
+    manual = driver_py.is_file() and "drivers.manual" in driver_py.read_text(encoding="utf-8", errors="replace")
     if manual and saf.get("estop") is True:
         warn.append("operator-run instrument declares estop: true; a request to a person is not an automatic stop (use estop: false, estop_kind: operator)")
     if manual and saf.get("watchdog_s"):

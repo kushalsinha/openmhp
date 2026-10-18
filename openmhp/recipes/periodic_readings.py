@@ -8,7 +8,7 @@ import time, csv, os
 dev = lab[PARAMS["device"]] if PARAMS["device"] else lab[lab.find(" ".join(PARAMS["signals"]))[0]["id"]]
 path = os.path.join(run_dir, "readings.csv")
 t0, n, alerts = time.time(), 0, []
-with open(path, "w", newline="") as f:
+with open(path, "w", newline="", encoding="utf-8") as f:
     w = csv.writer(f); w.writerow(["t_s", *PARAMS["signals"]])
     while time.time() - t0 < PARAMS["hours"] * 3600:
         vals = dev.call("signals/read", {"names": PARAMS["signals"]})["values"]

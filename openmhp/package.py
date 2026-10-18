@@ -69,7 +69,7 @@ class DevicePackage:
             raise FileNotFoundError(rel)
         if p.suffix.lower() not in TEXT_SUFFIXES:
             return {"path": rel, "bytes": p.stat().st_size, "text": None, "note": "binary resource; fetch out of band"}
-        text = p.read_text(errors="replace")
+        text = p.read_text(encoding="utf-8", errors="replace")
         return {"path": rel, "text": text[:RESOURCE_CAP], "truncated": len(text) > RESOURCE_CAP}
 
     def load_driver_class(self, sim: bool = False):
@@ -104,7 +104,7 @@ def load_package(path: str | Path) -> DevicePackage:
     md = d / "DEVICE.md"
     if not md.is_file():
         raise FileNotFoundError(f"{d} has no DEVICE.md")
-    meta, body = parse_frontmatter(md.read_text())
+    meta, body = parse_frontmatter(md.read_text(encoding="utf-8"))
     if "id" not in meta or "class" not in meta:
         raise ValueError(f"{md}: frontmatter needs at least id and class")
 
@@ -112,7 +112,7 @@ def load_package(path: str | Path) -> DevicePackage:
     for name in ("descriptor.yaml", "descriptor.yml", "descriptor.json"):
         f = d / name
         if f.is_file():
-            desc = json.loads(f.read_text()) if name.endswith(".json") else _yaml_load(f.read_text())
+            desc = json.loads(f.read_text(encoding="utf-8")) if name.endswith(".json") else _yaml_load(f.read_text(encoding="utf-8"))
             break
     device = {**desc.get("device", {}), **{k: meta[k] for k in CARD_FIELDS if k in meta}}
     descriptor = {**desc, "device": device}

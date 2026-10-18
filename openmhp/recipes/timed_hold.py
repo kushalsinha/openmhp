@@ -8,7 +8,7 @@ PARAMS = {"device": None, "setting": "target_temperature", "signal": "block_temp
 import time, csv, os
 dev = lab[PARAMS["device"]] if PARAMS["device"] else lab[lab.find("temperature hold", state="idle")[0]["id"]]
 path = os.path.join(run_dir, "readings.csv")
-with dev, open(path, "w", newline="") as f:
+with dev, open(path, "w", newline="", encoding="utf-8") as f:
     w = csv.writer(f); w.writerow(["t_s", PARAMS["signal"]])
     t0 = time.time()
     try:

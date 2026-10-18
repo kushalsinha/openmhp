@@ -123,6 +123,8 @@ def install(packages_dir: str | Path, http_base: int, dry_run: bool = False) -> 
         return result
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        # no explicit encoding on purpose: systemd and launchd read UTF-8, the locale's encoding on Linux and macOS,
+        # but cmd.exe reads a .bat file in the console code page, so forcing UTF-8 would garble non-ASCII paths
         path.write_text(text)
         result["steps"].append(f"wrote {path}")
         if system == "Linux":

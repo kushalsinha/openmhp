@@ -39,7 +39,16 @@ def dispatch(driver: Driver, msg: dict, client: str) -> dict | None:
 
 
 # ---------------------------------------------------------------- stdio ---- #
+def utf8_stdio(*streams) -> None:
+    """MHP and MCP over stdio are UTF-8. A pipe otherwise uses the locale's encoding, which on Windows is the
+    ANSI code page, so a client's '°C' would arrive as 'Â°C'."""
+    for s in streams:
+        if hasattr(s, "reconfigure"):               # a real text stream, not a test double
+            s.reconfigure(encoding="utf-8", errors=s.errors)
+
+
 def serve_stdio(driver: Driver) -> None:
+    utf8_stdio(sys.stdin, sys.stdout)
     out_lock = threading.Lock()
 
     def send(obj: dict) -> None:

@@ -36,12 +36,12 @@ class Fleet:
         self.path = Path(path) if path else HOME / "fleet.json"
         self.devices: dict[str, dict] = {}
         if self.path.is_file():
-            self.devices = json.loads(self.path.read_text()).get("devices", {})
+            self.devices = json.loads(self.path.read_text(encoding="utf-8")).get("devices", {})
 
     # ---- persistence -----------------------------------------------------
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({"devices": self.devices}, indent=1))
+        self.path.write_text(json.dumps({"devices": self.devices}, indent=1), encoding="utf-8")
 
     @property
     def targets(self) -> dict[str, str]:

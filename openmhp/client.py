@@ -378,8 +378,8 @@ class StdioDevice(Device):
     def __init__(self, cmd: str, name="device", **kw):
         # Windows parses its own command lines (CreateProcess); POSIX shlex would eat the backslashes of C:\...
         argv = cmd if os.name == "nt" else shlex.split(cmd)
-        self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, text=True, bufsize=1)
+        self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     text=True, encoding="utf-8", bufsize=1)    # MHP over stdio is UTF-8
         self._pending: dict[int, dict] = {}
         self._cv = threading.Condition()
         self._eof = False

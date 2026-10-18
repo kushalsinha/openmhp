@@ -679,6 +679,55 @@ def test_stdio_commands_keep_windows_paths():
         dev.proc.wait(10)
 
 
+def test_stdio_transports_carry_utf8():
+    """MHP and MCP over stdio are UTF-8 on every OS. A pipe otherwise uses the locale's encoding, which on Windows
+    is the ANSI code page: the client read a device's 'α' as 'Î±', and the device server and the MCP bridge did
+    the same to what their clients sent."""
+    import subprocess
+    from openmhp.client import StdioDevice
+    text = "1 µL at 40 °C, α-pinene"
+    echo = HOME / "stdio device" / "echo.py"
+    echo.parent.mkdir(exist_ok=True)
+    echo.write_text(ECHO_DEVICE, encoding="utf-8")
+    dev = StdioDevice(f'{sys.executable} "{echo}"')
+    try:
+        assert dev.call("ping", {"note": text})["echo"] == {"note": text}       # the device answers in raw UTF-8
+    finally:
+        dev.proc.stdin.close()
+        dev.proc.wait(10)
+
+    def ask(args, request):
+        """Send one request as raw UTF-8 to a stdio server and return its answer."""
+        env = {**os.environ, "OPENMHP_HOME": str(HOME / "t-utf8")}
+        p = subprocess.Popen([sys.executable, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, env=env)
+        killer = threading.Timer(60, p.kill)
+        killer.start()
+        try:
+            p.stdin.write((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
+            p.stdin.flush()
+            for line in p.stdout:
+                msg = json.loads(line)
+                if msg.get("id") == request["id"]:
+                    return msg
+            raise AssertionError(f"{args}: no answer")
+        finally:
+            killer.cancel()
+            p.stdin.close()                                   # end of input: both servers exit
+            try:
+                p.wait(20)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+
+    unknown = ask(["-m", "openmhp.cli", "serve", "openmhp/devices/arm-01"],
+                  {"jsonrpc": "2.0", "id": 1, "method": "signals/read", "params": {"names": [text]}})
+    assert text in unknown["error"]["message"], unknown              # the device server echoes the name it got
+    ran = ask(["-m", "openmhp.mcp_bridge"], {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                              "params": {"name": "mhp_run", "arguments": {"script": f"print({text!r})"}}})
+    assert text in json.loads(ran["result"]["content"][0]["text"])["stdout"], ran
+
+
 def test_nested_parameter_bounds_come_from_the_descriptor_not_the_driver():
     """A dangerous value inside a structured parameter (a 200 C step in an otherwise valid
     program) must be refused by the declared shape alone. Before shapes were declarable, the

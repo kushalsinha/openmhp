@@ -6,7 +6,7 @@ import pathlib
 
 from openmhp.driver import Driver, Job
 
-DESCRIPTOR = json.loads(pathlib.Path(__file__).with_suffix(".json").read_text()) \
+DESCRIPTOR = json.loads(pathlib.Path(__file__).with_suffix(".json").read_text(encoding="utf-8")) \
     if pathlib.Path(__file__).with_suffix(".json").exists() else {
         # or inline the descriptor here
     }
