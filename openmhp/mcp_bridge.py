@@ -920,7 +920,8 @@ def make_mcp_http_server(bridge: Bridge, host: str = "127.0.0.1", port: int = 18
     Requests carrying an Origin header are refused unless that origin is explicitly allowed, and on a loopback
     bind the Host header must be localhost (DNS-rebinding protection). There are no server-initiated requests
     on this transport, so confirm-gated operations are unavailable over it."""
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
+    from .transport import ExclusiveHTTPServer
     if not token:
         raise ValueError("the MCP HTTP endpoint requires an access token")
     loopback = host in ("127.0.0.1", "localhost", "::1")
@@ -970,7 +971,7 @@ def make_mcp_http_server(bridge: Bridge, host: str = "127.0.0.1", port: int = 18
             denied = self._denied()
             return self._reply(denied[0], {"error": denied[1]}) if denied else self._reply(405, {"error": "use POST /mcp"})
 
-    srv = ThreadingHTTPServer((host, port), H)
+    srv = ExclusiveHTTPServer((host, port), H)
     real = srv.server_address[1]
     allowed_hosts.update({f"127.0.0.1:{real}", f"localhost:{real}", f"[::1]:{real}"})
     return srv

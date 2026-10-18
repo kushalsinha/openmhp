@@ -8,6 +8,7 @@ agents can discover a device with nothing but its URL.
 from __future__ import annotations
 
 import json
+import os
 import time
 import queue
 import sys
@@ -62,6 +63,15 @@ def serve_stdio(driver: Driver) -> None:
 
 
 # ----------------------------------------------------------------- http ---- #
+class ExclusiveHTTPServer(ThreadingHTTPServer):
+    """One server per port. HTTPServer sets SO_REUSEADDR, which on Linux and macOS only lets a restart rebind
+    a port whose old connections are in TIME_WAIT, but on Windows lets a second server bind a port another one
+    is listening on: a client could then reach either, so an agent could command a different device than the
+    one it addressed. Windows rebinds past TIME_WAIT without the option, so it is off there, as
+    socket.create_server() and asyncio also leave it."""
+    allow_reuse_address = os.name != "nt"
+
+
 def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765) -> None:
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):               # quiet
@@ -113,7 +123,7 @@ def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765) -> Non
             resp = dispatch(driver, msg, client)
             self._json(200, resp if resp is not None else {})
 
-    srv = ThreadingHTTPServer((host, port), Handler)   # binds AND listens: we are accepting from here on
+    srv = ExclusiveHTTPServer((host, port), Handler)   # binds AND listens: we are accepting from here on
     print(f"MHP {driver.descriptor['device']['id']} listening on http://{host}:{port}", file=sys.stderr)
 
     def _advertise() -> None:

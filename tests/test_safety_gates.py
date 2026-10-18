@@ -411,6 +411,55 @@ def test_mcp_http_needs_a_token_and_a_trusted_origin():
     assert init["protocolVersion"] == "2025-06-18"
 
 
+def test_a_port_in_use_is_refused_not_shared():
+    """HTTPServer sets SO_REUSEADDR, which on Windows let a second server bind a port another one was listening
+    on. Clients could then reach either server, so an agent could command a different device than the one it
+    addressed. A second device server or MCP endpoint on a busy port must fail on every OS."""
+    import socket
+    from openmhp import discovery
+    from openmhp.package import load_driver
+    from openmhp.transport import serve_http
+    b = Bridge(home=HOME / "t-port")
+    first = make_mcp_http_server(b, port=0, token="t")
+    try:
+        make_mcp_http_server(b, port=first.server_address[1], token="t")
+        raise AssertionError("a second MCP endpoint bound a port in use")
+    except OSError:
+        pass
+    finally:
+        first.server_close()
+
+    real_advertise, discovery.advertise = discovery.advertise, lambda *a, **k: False     # no LAN announcements
+    try:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        threading.Thread(target=serve_http, args=(load_driver("openmhp/devices/arm-01"), "127.0.0.1", port),
+                         daemon=True).start()
+        deadline = time.time() + 10
+        while True:
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=1).close()
+                break
+            except OSError:
+                if time.time() > deadline:
+                    raise
+                time.sleep(0.05)
+        refused = []
+
+        def second():
+            try:
+                serve_http(load_driver("openmhp/devices/arm-01"), "127.0.0.1", port)
+            except OSError as e:
+                refused.append(e)
+        t = threading.Thread(target=second, daemon=True)
+        t.start()
+        t.join(10)
+        assert refused and not t.is_alive(), "a second device server bound a port in use"
+    finally:
+        discovery.advertise = real_advertise
+
+
 def test_cell_handoffs_are_checked():
     from openmhp.devices.sim_arm import SimArm
     from openmhp.devices.sim_thermocycler import SimThermocycler
