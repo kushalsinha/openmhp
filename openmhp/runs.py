@@ -348,6 +348,8 @@ def _pid_alive(pid) -> bool:
         return False
     if pid == os.getpid():
         return False                                # a run from this process not in self.runs did not survive
+    if os.name == "nt":                             # signal 0 is CTRL_C_EVENT on Windows, not a probe
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -355,6 +357,26 @@ def _pid_alive(pid) -> bool:
         return False
     except PermissionError:
         return True
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+    if not 0 < pid <= 0xFFFFFFFF:                   # a DWORD; ctypes would silently truncate anything larger
+        return False
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    h = k32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return ctypes.get_last_error() == 5         # ERROR_ACCESS_DENIED: it exists; any other failure: it is gone
+    try:
+        code = wintypes.DWORD()
+        return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259     # STILL_ACTIVE
+    finally:
+        k32.CloseHandle(h)
 
 
 # --------------------------------------------------------------------- plan ---- #

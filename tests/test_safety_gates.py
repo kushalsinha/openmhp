@@ -479,6 +479,23 @@ def test_run_log_survives_restarts_and_runs_are_audited():
     assert next(m for m in b2.runs.list() if m["id"] == dead)["state"] == "interrupted"
 
 
+def test_pid_probe_never_signals_the_process():
+    """A restarting bridge asks whether the process behind each unfinished run is still alive. os.kill(pid, 0)
+    only probes on POSIX; on Windows signal 0 is CTRL_C_EVENT and the call raised, so a bridge killed during a
+    run could not start again."""
+    import subprocess
+    from openmhp.runs import _pid_alive
+    quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], **quiet)
+    try:
+        assert _pid_alive(child.pid) is True
+    finally:
+        child.kill()
+        child.wait()
+    assert _pid_alive(child.pid) is False                    # gone, and no exception
+    assert _pid_alive(None) is False
+
+
 def test_nested_executor_cannot_report_false_unreachable():
     from openmhp.directory import Directory
     di = Directory(ping_timeout=0.05)
