@@ -120,12 +120,12 @@ class Directory:
     @classmethod
     def from_manifest(cls, path: str) -> "Directory":
         d = cls()
-        for row in json.load(open(path)):
+        for row in json.load(open(path, encoding="utf-8")):
             d.add(row["card"], row["target"])
         return d
 
     def save_manifest(self, path: str) -> None:
-        json.dump([{"card": c, "target": self.targets[i]} for i, c in self.cards.items()], open(path, "w"), indent=1)
+        json.dump([{"card": c, "target": self.targets[i]} for i, c in self.cards.items()], open(path, "w", encoding="utf-8"), indent=1)
 
     # ---- live state ------------------------------------------------------
     def _ping(self, cid: str) -> str:

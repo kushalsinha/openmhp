@@ -128,7 +128,7 @@ class Onboarding:
         for rel, text in files.items():
             p = folder / rel
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(text)
+            p.write_text(text, encoding="utf-8")
         v = validate_path(str(folder))
         s["done"] = time.time()
         self._persist(device_id, s)
@@ -164,13 +164,13 @@ class Onboarding:
     def _load(self, device_id: str) -> dict:
         p = self.dir / device_id / ".onboarding.json"
         if p.is_file():
-            return json.loads(p.read_text())
+            return json.loads(p.read_text(encoding="utf-8"))
         return {"answers": {}, "started": time.time()}
 
     def _persist(self, device_id: str, s: dict) -> None:
         p = self.dir / device_id / ".onboarding.json"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(s, indent=1))
+        p.write_text(json.dumps(s, indent=1), encoding="utf-8")
 
 
 # ---------------------------------------------------------------- generation ---- #

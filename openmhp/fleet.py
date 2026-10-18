@@ -44,14 +44,14 @@ class Fleet:
     # ---- persistence -----------------------------------------------------
     def reload(self) -> "Fleet":
         """Re-read the file. A person may have accepted a configuration in another process (`mhp lab accept`)."""
-        data = json.loads(self.path.read_text()) if self.path.is_file() else {}
+        data = json.loads(self.path.read_text(encoding="utf-8")) if self.path.is_file() else {}
         self.devices, self.retired = data.get("devices", {}), data.get("retired", {})
         return self
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps({"devices": self.devices, **({"retired": self.retired} if self.retired else {})},
-                                        indent=1))
+                                        indent=1), encoding="utf-8")
 
     @property
     def targets(self) -> dict[str, str]:

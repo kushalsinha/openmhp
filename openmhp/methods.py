@@ -159,7 +159,7 @@ class MethodStore:
 
     def _load(self, p: Path) -> dict | None:
         try:
-            rec = yaml.safe_load(p.read_text())
+            rec = yaml.safe_load(p.read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError):
             return None
         return rec if not check_record(rec, str(p)) else None
@@ -192,7 +192,7 @@ class MethodStore:
                 rel = f"methods/{p.name}/{f.name}"
                 if f.suffix == ".yaml":
                     try:
-                        rec = yaml.safe_load(f.read_text())
+                        rec = yaml.safe_load(f.read_text(encoding="utf-8"))
                     except (OSError, yaml.YAMLError) as e:
                         errs.append(f"{rel}: unreadable YAML ({e})")
                         continue
@@ -240,7 +240,7 @@ class MethodStore:
             return m
         hist = self._path(project, name).with_suffix("").with_suffix(".history.jsonl")
         if hist.is_file():
-            for line in hist.read_text().splitlines():
+            for line in hist.read_text(encoding="utf-8").splitlines():
                 try:
                     old = json.loads(line)
                 except json.JSONDecodeError:
@@ -285,7 +285,7 @@ class MethodStore:
     # ---- writing ----------------------------------------------------------
     def _append(self, p: Path, entry: dict) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "a") as f:
+        with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, default=str) + "\n")
 
     def save(self, method: dict, by: str | None = None, note: str | None = None) -> dict:
@@ -335,7 +335,7 @@ class MethodStore:
             raise MethodError("; ".join(errs))
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".yaml.tmp")
-        tmp.write_text(yaml.safe_dump(rec, sort_keys=False, allow_unicode=True))
+        tmp.write_text(yaml.safe_dump(rec, sort_keys=False, allow_unicode=True), encoding="utf-8")
         os.replace(tmp, p)
         return rec
 
@@ -348,7 +348,7 @@ class MethodStore:
         rec = {**m, "status": "retired", "updated": time.time()}
         p = self._path(m["project"], m["name"])
         tmp = p.with_suffix(".yaml.tmp")
-        tmp.write_text(yaml.safe_dump(rec, sort_keys=False, allow_unicode=True))
+        tmp.write_text(yaml.safe_dump(rec, sort_keys=False, allow_unicode=True), encoding="utf-8")
         os.replace(tmp, p)
         return rec
 

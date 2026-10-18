@@ -99,6 +99,14 @@ def device_token(*, create: bool = False, home: Path | None = None) -> str | Non
 
 
 # ---------------------------------------------------------------- stdio ---- #
+def utf8_stdio(*streams) -> None:
+    """MHP and MCP over stdio are UTF-8. A pipe otherwise uses the locale's encoding, which on Windows is the
+    ANSI code page, so a client's '°C' would arrive as 'Â°C'."""
+    for s in streams:
+        if hasattr(s, "reconfigure"):               # a real text stream, not a test double
+            s.reconfigure(encoding="utf-8", errors=s.errors)
+
+
 def serve_stdio(driver: Driver, *, stdin=None, stdout=None) -> None:
     """Newline-delimited JSON-RPC over stdin/stdout.
 
@@ -114,6 +122,7 @@ def serve_stdio(driver: Driver, *, stdin=None, stdout=None) -> None:
     from .driver import _UNLOCKED as NO_WAIT       # the driver's own list of what must not queue
 
     stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
+    utf8_stdio(stdin, stdout)
     out_lock = threading.Lock()
     inbox: "queue.Queue[dict | None]" = queue.Queue()
 

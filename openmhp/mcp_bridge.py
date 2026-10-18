@@ -543,7 +543,7 @@ class Bridge:
             run = self.runs.runs.get(rid)
             if device in devs and run is not None and run.state == "running":
                 try:
-                    with open(run.dir / "events.jsonl", "a") as f:
+                    with open(run.dir / "events.jsonl", "a", encoding="utf-8") as f:
                         f.write(json.dumps({**rec, "run": rid}, default=str) + "\n")
                 except OSError:
                     pass
@@ -901,14 +901,14 @@ class Bridge:
                 return {"exists": str(folder), "note": "package already exists; use op='write' to change files"}
             folder.mkdir(parents=True, exist_ok=True)
             tpl = Path(__file__).parent / "skills" / "openmhp-onboard-device" / "assets"
-            dev_md = (tpl / "DEVICE.template.md").read_text().replace("change-me-01", did).replace("Change-me-01", did)
+            dev_md = (tpl / "DEVICE.template.md").read_text(encoding="utf-8").replace("change-me-01", did).replace("Change-me-01", did)
             dev_md = dev_md.replace("class: generic", f"class: {a.get('class', 'generic')}")
             if a.get("description"):
                 dev_md = dev_md.replace("description: What it is, in one clause. When an agent should pick it, in one clause. What it is not for.",
                                         f"description: {a['description']}")
-            (folder / "DEVICE.md").write_text(dev_md)
-            (folder / "descriptor.yaml").write_text((tpl / "descriptor_template.yaml").read_text())
-            (folder / "driver.py").write_text((tpl / "driver_template.py").read_text())
+            (folder / "DEVICE.md").write_text(dev_md, encoding="utf-8")
+            (folder / "descriptor.yaml").write_text((tpl / "descriptor_template.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+            (folder / "driver.py").write_text((tpl / "driver_template.py").read_text(encoding="utf-8"), encoding="utf-8")
             self.log.write("lab/new", device=did, package=str(folder))
             return {"created": str(folder), "files": ["DEVICE.md", "descriptor.yaml", "driver.py"],
                     "next": "op='write' the real DEVICE.md, descriptor.yaml and driver.py, op='validate', and op='add' with target=<id>"}
@@ -921,7 +921,7 @@ class Bridge:
                 if folder.resolve() not in p.resolve().parents:
                     raise ValueError(f"{rel} escapes the package")
                 p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(text)
+                p.write_text(text, encoding="utf-8")
                 written.append(rel)
             live = self._hosted_from(fleet, folder)
             declared = self._declared(folder)
@@ -1176,11 +1176,11 @@ def http_token(home: Path) -> str:
         return env
     path = home / "http_token"
     if path.is_file():
-        return path.read_text().strip()
+        return path.read_text(encoding="utf-8").strip()
     home.mkdir(parents=True, exist_ok=True)
     tok = secrets.token_urlsafe(32)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(tok)
     return tok
 
@@ -1213,6 +1213,8 @@ def main(argv=None):
         argv = argv[:i] + argv[i + 2:]
     proto = sys.stdout
     if http_port is None:
+        from .transport import utf8_stdio
+        utf8_stdio(sys.stdin, proto)     # MCP over stdio is UTF-8 whatever the locale
         sys.stdout = sys.stderr          # the protocol stream belongs to StdioLoop alone
     targets = dict(arg.split("=", 1) for arg in argv)
     if not targets and directory is None and fleet is None:

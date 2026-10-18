@@ -27,7 +27,7 @@ with dev:
         job = dev.run_method(m["name"], {PARAMS["adapt"]: round(value, 3)}, project=m["project"],
                              run_project=PARAMS["project"], compound=PARAMS["compound"])
         r = job["result"]
-        with open(os.path.join(run_dir, f"run{i}_result.json"), "w") as f:
+        with open(os.path.join(run_dir, f"run{i}_result.json"), "w", encoding="utf-8") as f:
             json.dump(r, f)
         rs = r.get("resolution_min")
         history.append({"run": i, "job": job["id"], "method": job.get("method"), PARAMS["adapt"]: value,
@@ -44,7 +44,7 @@ with dev:
     else:
         print(f"stopped after {PARAMS['max_runs']} runs without reaching {PARAMS['target_resolution']}")
 
-with open(os.path.join(run_dir, "history.json"), "w") as f:
+with open(os.path.join(run_dir, "history.json"), "w", encoding="utf-8") as f:
     json.dump(history, f, indent=1)
 
 # 3. keep what worked, as the next version of the same method (the device validates and versions it)
