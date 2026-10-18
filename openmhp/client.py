@@ -24,6 +24,7 @@ import hashlib
 import importlib
 import itertools
 import json
+import os
 import shlex
 import subprocess
 import threading
@@ -375,7 +376,9 @@ class StdioDevice(Device):
     """Spawn a driver as a subprocess and talk over its stdin/stdout."""
 
     def __init__(self, cmd: str, name="device", **kw):
-        self.proc = subprocess.Popen(shlex.split(cmd), stdin=subprocess.PIPE,
+        # Windows parses its own command lines (CreateProcess); POSIX shlex would eat the backslashes of C:\...
+        argv = cmd if os.name == "nt" else shlex.split(cmd)
+        self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, text=True, bufsize=1)
         self._pending: dict[int, dict] = {}
         self._cv = threading.Condition()

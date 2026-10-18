@@ -588,6 +588,31 @@ def test_entry_points_fail_cleanly():
     assert endless["ok"] and "truncated" in endless["plan"]["verdict"]
 
 
+ECHO_DEVICE = """\
+import json, sys
+for line in sys.stdin.buffer:                 # a stdio device that answers every request with its own params
+    msg = json.loads(line)
+    out = {"jsonrpc": "2.0", "id": msg["id"], "result": {"echo": msg.get("params")}}
+    sys.stdout.buffer.write((json.dumps(out, ensure_ascii=False) + "\\n").encode("utf-8"))
+    sys.stdout.buffer.flush()
+"""
+
+
+def test_stdio_commands_keep_windows_paths():
+    """`stdio:` commands follow the OS's own rules: shlex on POSIX, CreateProcess on Windows. POSIX shlex turned
+    C:\\...\\python.exe into C:...python.exe, so no stdio device could start from a Windows path."""
+    from openmhp.client import StdioDevice
+    folder = HOME / "stdio device"                       # a space in the path, and backslashes on Windows
+    folder.mkdir(exist_ok=True)
+    (folder / "echo.py").write_text(ECHO_DEVICE, encoding="utf-8")
+    dev = StdioDevice(f'{sys.executable} "{folder / "echo.py"}"')
+    try:
+        assert dev.call("ping", {"n": 1})["echo"] == {"n": 1}
+    finally:
+        dev.proc.stdin.close()
+        dev.proc.wait(10)
+
+
 def test_nested_parameter_bounds_come_from_the_descriptor_not_the_driver():
     """A dangerous value inside a structured parameter (a 200 C step in an otherwise valid
     program) must be refused by the declared shape alone. Before shapes were declarable, the
