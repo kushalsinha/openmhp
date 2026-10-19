@@ -465,6 +465,14 @@ Job states: `queued → running → done | failed | cancelled`, plus `waiting_op
 
 ### 5.7 Session leases
 
+`session/release {force: true}` opens a lease held by a session that died holding it. It is
+refused unless a person confirmed it (`approved: true`, the same trusted-host rule as
+`approval: confirm`, so a model cannot assert its way through), and while a job is running it
+is refused outright the first time: the watchdog is armed **only while a lease is held**, so
+breaking the lease on a working instrument would remove the dead man's switch and leave the
+job running unattended. The refusal names what is running and what the watchdog would stop
+doing; re-issuing with `stop: true` winds the work down first and then releases.
+
 `session/acquire {ttl}` gives the calling session exclusive write and invoke rights until `ttl` seconds pass without `session/renew`, or until `session/release`. Every client has its own session id, so independent clients never share a lease. The reference client renews automatically with a heartbeat while it holds a lease, and each run gets its own session whose leases end with the run. If a lease is lost, the next actuating call fails with `NotLeased`, and the client must not assume it still has control. Reads, `ping`, `describe`, `jobs/status`, `jobs/pause`, `jobs/cancel` and `safety/estop` are never blocked by a lease; `jobs/resume` and `safety/reset` are. On a device that declares `watchdog_s`, operating it requires holding the lease (`NotLeased` with `data.reason: "lease_required"`); the reference client acquires it on first use.
 
 ### 5.8 Methods
@@ -719,6 +727,8 @@ Packages are versioned folders checked into the lab's repository. Changing a lim
 | -32020 | DeviceFault | device in `fault` (or a write's outcome is unknown, `data.outcome`); verified reset required |
 | -32021 | DeviceBusy | non-concurrent job running, or reset attempted mid-job |
 | -32022 | EStopActive | device in `estop`; reset required |
+Every error also carries a **recovery taxonomy**, so a caller branches on fields instead of reading prose: `transient` (could the identical request succeed later with nothing changed), `effect` (`none`, `partial` or `unknown`: what reached the device), `recovery` (`retry`, `retry_after`, `abort` or `operator`), `motion` (does recovering move the device, so a neighbour must stay clear) and `state` (what the device is in now). A failed job carries `recovery` for the same reason. Without these a model must infer from wording whether a fault is temporary, and on a non-idempotent operation a wrong inference means repeated actuation rather than a controlled abort.
+
 Every error carries `ts`, the device's own clock at the moment it refused, so a client can align a refusal with its own receipt time and with the `ts` on reads and the `started`/`finished` on jobs.
 
 | -32030 | NotLeased | another session holds the lease (`data.holder`), the lease was lost, or a watchdog device needs one (`data.reason: "lease_required"`) |
@@ -790,7 +800,24 @@ Conformance is behavioural. The reference suite `tests/test_safety_gates.py` exe
 
 ---
 
-### 15.1 Simulated twins and fault injection
+### 15.1 Orderly shutdown and hardware stops
+
+`safety/shutdown {within_s}` is an orderly stop, not an emergency stop. The device stops
+accepting new work, cancels what is running, calls the driver's `on_shutdown(deadline)` hook to
+park safely, and **escalates to a full e-stop if it has not settled when the deadline passes**.
+Like `safety/estop` it is never blocked by a lease, because its purpose is to wind a cell down
+when something elsewhere has gone wrong. `Lab.shutdown_all(within_s)` issues it to every
+connected device in parallel.
+
+A stop records **who caused it**: `client`, `watchdog`, `hardware` or `fault`. A driver that
+can detect a physical stop (a button, a light curtain, a safety relay) calls
+`latch_external_stop(reason, clearance)`, which latches like any e-stop but marks itself
+**not clearable from software**. `safety/reset` then refuses and repeats the `clearance` text
+describing what a person must do at the instrument, rather than appearing to succeed against a
+latch it has no authority over. The descriptor should declare `safety.hardware_stop` so an
+agent knows one exists before it starts.
+
+### 15.2 Simulated twins and fault injection
 
 A package's `sim.py` twin is loaded by `load_driver(path, sim=True)`, which marks it `simulated`. Only a simulated driver answers `sim/fault {on, mode, times?, hang_s?}`; a real device refuses it with `NotSupported`, so the facility cannot be armed against hardware by accident. `on` is `invoke`, `read` or `write`; `mode` is `raise` (vendor code fails, exercising the fail-closed path and an unknown outcome), `hang` (vendor code blocks, exercising the watchdog) or `refuse` (a typed refusal before any actuation, which must not latch a fault). `mode: null` disarms. A twin that can only succeed exercises only the happy path; the orchestrator branches worth testing are the ones reached by deliberate failure.
 
@@ -798,7 +825,7 @@ A package's `sim.py` twin is loaded by `load_driver(path, sim=True)`, which mark
 
 ## 16. Not yet specified
 
-In-band authentication, and authentication for the device HTTP transport; request idempotency tokens; multi-device transactions; descriptor signing; a hosted registry beyond the bundled index; sandboxed script execution; streaming bulk data (results are stored as files next to the run, §3.5); a machine-readable description of hardware watchdogs and device-side safe states. Each has a natural home in the protocol (a `data/` primitive, `params.auth`, a `transaction/` namespace) and will be specified with partner input.
+In-band authentication, and authentication for the device HTTP transport; request idempotency tokens; multi-device transactions (`safety/shutdown` winds a cell down but is not a transaction, and does not roll anything back); descriptor signing; a hosted registry beyond the bundled index; sandboxed script execution; streaming bulk data (results are stored as files next to the run, §3.5); a machine-readable description of hardware watchdogs and device-side safe states. Each has a natural home in the protocol (a `data/` primitive, `params.auth`, a `transaction/` namespace) and will be specified with partner input.
 
 ---
 

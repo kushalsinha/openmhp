@@ -25,12 +25,16 @@ Error handling contract for vendor hooks:
 from __future__ import annotations
 
 import copy
+import json
 import math
+import os
+import re
 import threading
 import time
 import uuid
 import weakref
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 from . import PROTOCOL_VERSION
@@ -40,25 +44,50 @@ from . import PROTOCOL_VERSION
 # Errors (JSON-RPC error codes reserved by MHP in the -32000..-32099 range)
 # --------------------------------------------------------------------------- #
 class MHPError(Exception):
+    """Every failure is a decision an agent has to make, so every failure declares four things.
+
+    ``transient``  could the identical request succeed later without anything changing?
+    ``effect``     what reached the device: "none", "partial" or "unknown".
+    ``recovery``   what the caller should do: "retry", "retry_after", "abort" or "operator".
+    ``motion``     does recovering involve the device moving, so a neighbour must stay clear?
+
+    Without these a model must infer from prose whether a fault is temporary, and an incorrect
+    inference on a non-idempotent operation means repeated actuation rather than a controlled
+    abort. The post-error device state is added by the server, which alone knows it.
+    """
     code = -32000
+    transient = False
+    effect = "none"
+    recovery = "abort"
+    motion = False
 
     def __init__(self, message: str, data: Any = None):
         super().__init__(message)
         self.message = message
         self.data = data
 
+    def taxonomy(self) -> dict:
+        return {"transient": self.transient, "effect": self.effect,
+                "recovery": self.recovery, "motion": self.motion}
+
 
 class MethodNotFound(MHPError):        code = -32601
 class LimitViolation(MHPError):        code = -32010
-class InterlockOpen(MHPError):         code = -32011
-class ApprovalRequired(MHPError):      code = -32012
+class InterlockOpen(MHPError):
+    code, transient, recovery = -32011, True, "operator"      # a person closes the lid
+class ApprovalRequired(MHPError):
+    code, transient, recovery = -32012, True, "operator"      # a person confirms
 class Forbidden(MHPError):             code = -32013
 class InvalidValue(MHPError):          code = -32014
 class MethodRequired(MHPError):        code = -32015
-class DeviceFault(MHPError):           code = -32020
-class DeviceBusy(MHPError):            code = -32021
-class EStopActive(MHPError):           code = -32022
-class NotLeased(MHPError):             code = -32030
+class DeviceFault(MHPError):
+    code, effect, recovery = -32020, "unknown", "operator"    # verified reset, by a person
+class DeviceBusy(MHPError):
+    code, transient, recovery = -32021, True, "retry_after"   # the device is working
+class EStopActive(MHPError):
+    code, recovery = -32022, "operator"
+class NotLeased(MHPError):
+    code, transient, recovery = -32030, True, "retry_after"   # someone else holds it
 class UnknownName(MHPError):           code = -32040
 class JobNotFound(MHPError):           code = -32041
 class NotSupported(MHPError):          code = -32050
@@ -93,6 +122,7 @@ class Job:
     result: Any = None
     error: str | None = None
     result_mismatch: str | None = None   # the result did not match the action's declared `returns`
+    recovery: str | None = None          # what to do about a failure: retry / retry_after / abort / operator
     outcome: str | None = None      # "unknown" when a failure may have left the device in an unknown physical state
     waiting: str | None = None      # what the job is waiting for (e.g. an operator instruction)
     method: dict | None = None      # {name, version, hash, overrides?} when the job runs a saved method
@@ -107,7 +137,7 @@ class Job:
         return {
             "id": self.id, "action": self.action, "state": self.state, "paused": self.paused,
             "progress": round(self.progress, 3), "result": self.result, "error": self.error,
-            "resultMismatch": self.result_mismatch,
+            "resultMismatch": self.result_mismatch, "recovery": self.recovery,
             "outcome": self.outcome, "waiting": self.waiting, "owner": self.owner,
             "method": self.method, "project": self.project, "defaulted": self.defaulted,
             "started": self.started, "finished": self.finished,
@@ -330,6 +360,10 @@ class Driver:
         self.lease_expires: float = 0.0           # time.monotonic() deadline
         self.jobs: dict[str, Job] = {}
         self._sim_fault: dict | None = None
+        self.stop_source: str | None = None        # who latched the stop (C21)
+        self.stop_clearable: bool = True           # False when only a person at the device can clear it
+        self.stop_clearance: str | None = None     # what that person has to do
+        self._shutdown_deadline: float | None = None
         self._active: set[str] = set()
         self.subscribers: list[Callable[[dict], None]] = []
         self._lock = threading.RLock()            # serialises vendor I/O for ordinary requests
@@ -343,6 +377,7 @@ class Driver:
         self._reindex()
         self.setup()
         self._arm_watchdog()
+        self._load_jobs()                      # settled work survives a restart (C11)
 
     def _reindex(self):
         self._index = {
@@ -601,7 +636,7 @@ class Driver:
                 return
             reason = (f"watchdog: no request from lease holder {holder!r} for {silent:.2f}s (limit {wd}s)" if silent > wd
                       else f"watchdog: lease held by {holder!r} expired without release")
-            self._enter_estop_locked()
+            self._enter_estop_locked(source="watchdog")
         threading.Thread(target=self._run_stop_hook, args=("watchdog", reason), daemon=True).start()
 
     def _touch(self, client: str) -> None:
@@ -702,6 +737,10 @@ class Driver:
         return params, applied
 
     def _check_busy(self, spec: dict, kind: str) -> None:
+        d = self._shutdown_deadline
+        if d is not None and time.time() < d and kind == "action":
+            raise DeviceBusy("the device is shutting down; no new work is accepted",
+                             {"shutdownDeadline": d})
         with self._state_lock:
             active = [self.jobs[j] for j in self._active]
         if not active:
@@ -744,6 +783,14 @@ class Driver:
                 raise
             notes["busyNow"] = e.message
         return notes
+
+    def _run_fault_hook(self, reason: str) -> None:
+        """The safe-state hook, run after the state is already published."""
+        try:
+            self.on_fault(reason)
+        except Exception as e:                     # noqa: BLE001
+            with self._state_lock:
+                self.fault_reason = f"{reason}; safe-state hook failed: {type(e).__name__}: {e}"
 
     def _latch_fault(self, reason: str) -> None:
         with self._state_lock:
@@ -933,6 +980,7 @@ class Driver:
             self._active.add(job.id)
             self._recompute_state_locked()
             snap = job.snapshot()
+        self._persist_job(job)
         threading.Thread(target=self._run_job, args=(job,), daemon=True).start()
         if "defaulted" in notes:
             return {"job": snap, "defaulted": notes["defaulted"]}
@@ -981,6 +1029,64 @@ class Driver:
             return
         raise RuntimeError(f"injected fault on {on} (simulated twin)")
 
+    # ---- durable job records (C11) ---------------------------------------- #
+    #
+    # The job table lives in memory, so a crash or a restart loses the record of what just
+    # finished -- exactly when you most want it. Each record is written to disk as it starts
+    # and again as it ends, so a run interrupted at 3am leaves evidence an agent can read
+    # back: the parameters actually used, the result, the error, and the recovery class.
+    JOB_HISTORY = 50                               # most recent records kept per device
+
+    def _job_dir(self) -> Path | None:
+        did = (self.descriptor.get("device") or {}).get("id")
+        if not did or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(did)):
+            return None                            # no stable id: nothing safe to name a folder
+        home = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp"))
+        return home / "jobs" / str(did)
+
+    def _persist_job(self, job: Job) -> None:
+        d = self._job_dir()
+        if d is None:
+            return
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            rec = {**job.snapshot(), "params": job.params,
+                   "device": (self.descriptor.get("device") or {}).get("id")}
+            blob = json.dumps(rec, default=str)
+            if len(blob) > 64_000:                 # a big result belongs in the run folder
+                rec["result"] = {"truncated": True,
+                                 "note": "result too large to persist; see the run that produced it"}
+                blob = json.dumps(rec, default=str)
+            (d / f"{job.id}.json").write_text(blob)
+            kept = sorted(d.glob("job_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+            for stale in kept[self.JOB_HISTORY:]:
+                stale.unlink(missing_ok=True)
+        except OSError:
+            pass                                   # never let bookkeeping break an instrument
+
+    def _load_jobs(self) -> None:
+        d = self._job_dir()
+        if d is None or not d.is_dir():
+            return
+        try:
+            files = sorted(d.glob("job_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+        except OSError:
+            return
+        for f in files[:self.JOB_HISTORY]:
+            try:
+                rec = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
+            if rec.get("state") not in TERMINAL or rec.get("id") in self.jobs:
+                continue                           # only settled work; never resurrect as active
+            self.jobs[rec["id"]] = Job(
+                id=rec["id"], action=rec.get("action", "?"), params=rec.get("params") or {},
+                owner=rec.get("owner"), state=rec["state"], progress=rec.get("progress", 1.0),
+                result=rec.get("result"), error=rec.get("error"), outcome=rec.get("outcome"),
+                recovery=rec.get("recovery"), method=rec.get("method"), project=rec.get("project"),
+                defaulted=rec.get("defaulted"), started=rec.get("started") or 0.0,
+                finished=rec.get("finished"))
+
     def _check_result(self, action: str, result: Any) -> str | None:
         """Compare a result against the action's declared `returns`, if it declares one.
 
@@ -1015,17 +1121,25 @@ class Driver:
             final = "cancelled"
         except Exception as e:                     # noqa: BLE001
             final, error = "failed", f"{type(e).__name__}: {e}"
+        fault_reason = f"job {job.id} ({job.action}) failed: {error}" if final == "failed" else None
         with self._state_lock:                     # publish completion and device state atomically
             job.result, job.error, job.state, job.waiting = result, error, final, None
             job.finished = time.time()
             if final == "done":
                 job.progress = 1.0
             if final == "failed":
-                job.outcome = "unknown"
+                job.outcome = "unknown"            # it may have reached the device
+                job.recovery = "operator"          # a verified reset needs a person
             self._active.discard(job.id)
             self._recompute_state_locked()
-        if final == "failed":
-            self._latch_fault(f"job {job.id} ({job.action}) failed: {error}")
+            if fault_reason and self.state != "estop":
+                # inside the same critical section: SPEC 5.5 requires the job's completion and
+                # the device state to be published together. Latching afterwards leaves a window
+                # in which an observer sees a failed job on an idle device.
+                self.state, self.fault_reason = "fault", fault_reason
+        self._persist_job(job)
+        if fault_reason:
+            self._run_fault_hook(fault_reason)
         self._record_method_run(job)
         self.notify("jobs/finished", {"job": job.snapshot()})
 
@@ -1087,12 +1201,27 @@ class Driver:
             "watchdog_s": self.watchdog_s,
         }
 
-    def _enter_estop_locked(self) -> None:
+    def _enter_estop_locked(self, source: str = "client", clearable: bool = True,
+                            clearance: str | None = None) -> None:
+        """source: client | watchdog | hardware | fault. A hardware latch is not ours to clear:
+        software reset must refuse it and say what has to happen at the instrument instead."""
         self.state = "estop"
+        self.stop_source = source
+        self.stop_clearable = clearable
+        self.stop_clearance = clearance
         for jid in list(self._active):
             j = self.jobs[jid]
             j.cancel_requested, j.paused = True, False
         self.lease = None
+
+    def latch_external_stop(self, reason: str, clearance: str | None = None) -> None:
+        """A driver calls this when the instrument reports a stop the protocol did not cause:
+        a physical button, a light curtain, a safety relay. It latches like any e-stop, but
+        software cannot clear it, so an agent is told plainly what a person has to do."""
+        with self._state_lock:
+            self._enter_estop_locked(source="hardware", clearable=False, clearance=clearance)
+        self.notify("safety/estop", {"by": "hardware", "reason": reason, "stopped": True,
+                                     "clearable": False, "clearance": clearance})
 
     def _run_stop_hook(self, by: str, reason: str | None) -> dict:
         stop_error = None
@@ -1102,6 +1231,57 @@ class Driver:
             stop_error = f"{type(e).__name__}: {e}"
         self.notify("safety/estop", {"by": by, "reason": reason, "stopped": stop_error is None, "stop_error": stop_error})
         return {"state": "estop", "stopped": stop_error is None, "stop_error": stop_error}
+
+    def on_shutdown(self, deadline: float) -> None:
+        """Park the instrument safely before `deadline` (a time.time() value). Override to
+        close a valve, retract a probe, move an arm home. The default does nothing beyond the
+        job cancellation the caller already triggered."""
+
+    def rpc_safety_shutdown(self, p, client):
+        """An orderly stop, which is not an emergency stop.
+
+        E-stop is immediate and harsh. This gives the instrument a stated window to reach a
+        safe resting state, and escalates to a real e-stop if it does not get there. Like
+        e-stop it is never blocked by a lease, because the whole point is to wind a cell down
+        when something elsewhere has gone wrong.
+        """
+        within = p.get("within_s", 30)
+        if not is_finite_number(within) or not 0 < within <= 3600:
+            raise InvalidValue("within_s must be a number of seconds between 0 and 3600")
+        deadline = time.time() + within
+        with self._state_lock:
+            self._shutdown_deadline = deadline
+            active = sorted(self._active)
+            for jid in active:
+                self.jobs[jid].cancel_requested, self.jobs[jid].paused = True, False
+        threading.Thread(target=self._wind_down, args=(client, deadline, p.get("reason")),
+                         daemon=True).start()
+        return {"shutdown": {"within_s": within, "deadline": deadline, "cancelling": active}}
+
+    def _wind_down(self, by: str, deadline: float, reason: str | None) -> None:
+        parked_error = None
+        try:
+            self.on_shutdown(deadline)
+        except Exception as e:                     # noqa: BLE001  parking is best effort
+            parked_error = f"{type(e).__name__}: {e}"
+        while time.time() < deadline:
+            with self._state_lock:
+                if not self._active:
+                    break
+            time.sleep(0.05)
+        with self._state_lock:
+            still_running = sorted(self._active)
+            self._shutdown_deadline = None
+        if still_running or parked_error:
+            # it did not get to a safe state in the window it was given: stop it properly
+            with self._state_lock:
+                self._enter_estop_locked(source="client")
+            self._run_stop_hook(by, f"shutdown did not complete within the deadline: "
+                                    f"{'jobs still active ' + str(still_running) if still_running else parked_error}")
+            self.notify("safety/shutdown", {"by": by, "reason": reason, "outcome": "escalated",
+                                            "jobs": still_running, "park_error": parked_error})
+            return
+        self.notify("safety/shutdown", {"by": by, "reason": reason, "outcome": "parked"})
 
     def rpc_safety_estop(self, p, client):
         """Never waits behind ordinary requests. A stop hook that fails is reported, not hidden."""
@@ -1114,11 +1294,19 @@ class Driver:
         with self._state_lock:
             if self._active:
                 raise DeviceBusy(f"cannot reset while jobs are still active: {sorted(self._active)}")
+        with self._state_lock:
+            if self.state == "estop" and not self.stop_clearable:
+                raise NotSupported(
+                    "this stop was latched at the instrument and cannot be cleared from software; "
+                    + (self.stop_clearance or "a person must clear it at the device"),
+                    {"source": self.stop_source, "clearance": self.stop_clearance})
         ok, detail = self.verify_recovery()
         if not ok:
             raise DeviceFault(f"recovery not verified: {detail}", {"detail": detail})
         with self._state_lock:
             self.state, self.fault_reason = "idle", None
+            self.stop_source = self.stop_clearance = None
+            self.stop_clearable = True
         self.notify("safety/reset", {"by": client, "verified": detail})
         return {"state": "idle", "verified": detail}
 
@@ -1146,7 +1334,51 @@ class Driver:
         return {"holder": client, "ttl": float(ttl)}
 
     def rpc_session_release(self, p, client):
+        """Release your own lease, or force one open when a session died holding it.
+
+        Forcing is deliberately awkward. It is refused unless a person confirmed it -- the
+        same trusted-host rule as `approval: confirm`, so a model cannot assert its way
+        through -- and while a job is running it is refused outright the first time, because
+        the watchdog is armed only while a lease is held: breaking the lease on a working
+        instrument would remove the dead man's switch and leave the job running unattended.
+        The refusal says what is running and what the watchdog would stop doing, so the
+        person can decide. Re-issuing with `stop: true` winds the work down first, then
+        releases.
+        """
         with self._state_lock:
-            if self.lease == client:
-                self.lease = None
-            return {"holder": self._lease_holder()}
+            holder = self._lease_holder()
+            if holder == client or holder is None:
+                if self.lease == client:
+                    self.lease = None
+                return {"holder": self._lease_holder()}
+            if p.get("force") is not True:
+                raise NotLeased(f"the lease is held by {holder!r}; release it from that session, "
+                                f"or force it open with force: true, which a person must confirm",
+                                {"holder": holder})
+            active = sorted(self._active)
+
+        if p.get("approved") is not True:
+            raise ApprovalRequired(
+                f"forcing the lease open takes {holder!r} off this instrument; a person must confirm it",
+                {"holder": holder, "activeJobs": active})
+
+        if active and p.get("stop") is not True:
+            raise DeviceBusy(
+                f"{holder!r} holds the lease and {len(active)} job(s) are still running: {active}. "
+                f"Releasing now would disarm the watchdog" +
+                (f" (it stops this device if the holder goes silent for {self.watchdog_s}s)"
+                 if self.watchdog_s else "") +
+                ", leaving the work running with nothing watching it. Re-issue with stop: true "
+                "to wind the work down first, or e-stop the device if it should halt now.",
+                {"holder": holder, "activeJobs": active, "watchdog_s": self.watchdog_s,
+                 "stopFirst": "session/release {force: true, stop: true, approved: true}"})
+
+        stopped = None
+        if active:
+            stopped = self.rpc_safety_shutdown({"within_s": p.get("within_s", 30),
+                                                "reason": f"lease forced open, taking over from {holder!r}"},
+                                               client)
+        with self._state_lock:
+            self.lease = None
+        self.notify("session/forced", {"by": client, "from": holder, "stopped": bool(active)})
+        return {"holder": None, "forcedFrom": holder, **({"shutdown": stopped["shutdown"]} if stopped else {})}
