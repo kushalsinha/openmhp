@@ -893,6 +893,50 @@ def test_conformance_scores_a_device_behaviourally():
     assert "Levels met: MHP Core, MHP Actions, MHP Safe" in report(r)
 
 
+def test_a_failed_job_and_the_fault_are_published_together():
+    """SPEC 5.5 requires the job's completion and the device state to be published together.
+
+    Latching the fault after publishing the job leaves a window in which an observer sees a
+    failed job on an idle device, and decides the instrument is free. The window is small,
+    so this checks the state with no sleep, and repeatedly: a race that is usually lost is
+    still a race.
+    """
+    from openmhp.driver import Driver
+    from openmhp.client import LocalDevice, RemoteError
+
+    class Boom(Driver):
+        descriptor = {"device": {"id": "boom-01", "class": "generic"},
+                      "actions": [{"name": "go", "duration": "short"}],
+                      "safety": {"estop": True}}
+        def on_read(self, name): return 0
+        def on_write(self, name, value): pass
+        def on_invoke(self, job): raise RuntimeError("vendor code exploded")
+
+    for _ in range(20):
+        d = LocalDevice(Boom())
+        try:
+            d.wait(d.invoke("go"))
+        except RemoteError:
+            pass
+        # no sleep: the job has settled, so the device must already say so
+        assert d.call("device/describe", {"detail": "card"})["state"] == "fault", \
+            "a failed job was visible while the device still read idle"
+
+
+def test_the_error_taxonomy_survives_the_client_boundary():
+    """The fields are useless if the SDK drops them on the way through."""
+    from openmhp.client import LocalDevice, RemoteError
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    d = LocalDevice(SimThermocycler())
+    try:
+        d.read("no_such_signal")
+        raise AssertionError("expected a refusal")
+    except RemoteError as e:
+        for field in ("ts", "transient", "effect", "recovery", "device_state"):
+            assert getattr(e, field, None) is not None, f"the client dropped {field}"
+        assert e.recovery == "abort" and e.effect == "none", e.__dict__
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):
