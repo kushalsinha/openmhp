@@ -96,6 +96,8 @@ print(j["result"])
   `mhp_data op='updates' device=...` shows each pushed result; decide the next run from it.
 - **E-stop.** `mhp_estop` is always allowed and always succeeds. Use it the moment a reading,
   a notification, or the user suggests something is wrong. Then report, do not resume.
+  `device: "*"` stops everything the lab is driving, including instruments a running script
+  opened, and the result names each one; a stopped device needs a person to reset it.
 - **Leases.** Hold a lease (`with dev:` in scripts) whenever a sequence must not be
   interleaved by another agent. Release it when done.
 - **Report** what you read, not what you intended. "Block reached 95.0 °C at 14:02" beats

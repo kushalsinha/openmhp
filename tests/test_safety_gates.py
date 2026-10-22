@@ -208,6 +208,40 @@ def test_estop_does_not_wait_and_fleet_stop_reaches_every_device():
     assert sorted(attempts) == [1, 2, 3] and time.monotonic() - t0 < 2
     assert r["a"]["ok"] is False and r["b"]["ok"] is True and r["c"]["ok"] is False
 
+    # every device includes the ones a script opened: a run works through its own Lab, with its own
+    # session and its own leases, so a stop that walks one connection list spares the instrument the
+    # script is driving -- which is the one case it exists for.
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    protocol = "lab['%s'].invoke('run_protocol', steps=[{'temp': 95, 'hold_s': 30}], cycles=20)"
+    b = Bridge(home=HOME / "t6stop")
+    for name in ("bench", "script-side"):
+        C._inprocess[f"local:{name}.t6stop"] = (SimThermocycler(), "")
+        b.lab.targets[name] = f"local:{name}.t6stop"
+    b.call_tool("mhp_read", {"device": "bench", "signals": ["block_temperature"]})     # the bridge opens one
+    b.call_tool("mhp_run", {"background": True, "script": protocol % "script-side" + "\nimport time\ntime.sleep(20)"})
+    for _ in range(250):
+        if b.lab.open_devices().get("script-side") is not None:
+            break
+        time.sleep(0.02)
+    else:
+        raise AssertionError("the run never opened its device")
+    assert "script-side" not in b.lab.devices                      # and never appears in the bridge's own list
+    r = b.call_tool("mhp_estop", {"device": "*", "reason": "smoke from the lid"})
+    assert r["bench"]["ok"] and r["script-side"]["ok"], r
+    assert [C._inprocess[f"local:{n}.t6stop"][0].state for n in ("bench", "script-side")] == ["estop", "estop"]
+
+    # the run can be over while the protocol it started is not: an in-process driver outlives the lab
+    C._inprocess["local:orphan.t6stop"] = (SimThermocycler(), "")
+    b2 = Bridge(home=HOME / "t6stop2")
+    b2.lab.targets["orphan"] = "local:orphan.t6stop"
+    b2.call_tool("mhp_run", {"script": protocol % "orphan"})
+    orphan = C._inprocess["local:orphan.t6stop"][0]
+    assert orphan.state == "busy" and not b2.lab.devices           # nobody holds it open any more
+    assert b2.call_tool("mhp_estop", {"device": "*"})["orphan"]["ok"]
+    assert orphan.state == "estop"
+    for target in ("local:bench.t6stop", "local:script-side.t6stop", "local:orphan.t6stop"):
+        C.drop_inprocess(target)                                   # leave no stopped twin behind
+
 
 def test_busy_is_derived_from_all_active_jobs():
     release = threading.Event()

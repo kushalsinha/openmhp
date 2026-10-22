@@ -31,6 +31,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import weakref
 from pathlib import Path
 from typing import Any, Callable
 
@@ -583,6 +584,7 @@ class Lab:
         self.directory = directory          # Directory object, or a Device speaking directory/*
         self.session = session or f"lab-{uuid.uuid4().hex[:10]}"
         self.approver, self.observer, self.on_connect = approver, observer, on_connect
+        self._children: list[weakref.ref] = []     # runs and plans: their own session, the same instruments
         self._devices: dict[str, Device] = {}
         self._lock = threading.Lock()
 
@@ -593,10 +595,41 @@ class Lab:
         return cls({}, directory)
 
     def child(self, session: str | None = None, observer: Any = "inherit", approver: Any = "inherit") -> "Lab":
-        return Lab(self.targets, self.directory, session=session,
-                   approver=self.approver if approver == "inherit" else approver,
-                   observer=self.observer if observer == "inherit" else observer,
-                   on_connect=self.on_connect)
+        kid = Lab(self.targets, self.directory, session=session,
+                  approver=self.approver if approver == "inherit" else approver,
+                  observer=self.observer if observer == "inherit" else observer,
+                  on_connect=self.on_connect)
+        with self._lock:                           # weakly: a run that has finished is simply gone
+            self._children = [r for r in self._children if r() is not None] + [weakref.ref(kid)]
+        return kid
+
+    def family(self) -> list["Lab"]:
+        """This lab and every live lab descended from it."""
+        out, stack = [], [self]
+        while stack:
+            lab = stack.pop()
+            if any(lab is seen for seen in out):
+                continue
+            out.append(lab)
+            with lab._lock:
+                lab._children = [r for r in lab._children if r() is not None]
+                kids = [r() for r in lab._children]
+            stack.extend(k for k in kids if k is not None)
+        return out
+
+    def open_devices(self) -> dict[str, Device]:
+        """Every device this lab, or a lab descended from it, has open -- one per name.
+
+        A run and a plan each work through their own ``child()`` Lab, with their own session and
+        their own leases, so the instruments a script opened are in no list this lab keeps. They
+        are instruments this host is driving all the same, which is what the lab-wide safety calls
+        are about: a stop that misses the device a script was driving is worse than no such call.
+        """
+        found: dict[str, Device] = {}
+        for lab in self.family():
+            for name, dev in lab.devices.items():
+                found.setdefault(name, dev)        # same name, same target: one physical device
+        return found
 
     def _dir(self, method: str, params: dict):
         if self.directory is None:
@@ -679,7 +712,7 @@ class Lab:
                 results[n] = {"error": f"{type(e).__name__}: {e}"}
 
         threads = [threading.Thread(target=one, args=item, daemon=True)
-                   for item in list(self._devices.items())]
+                   for item in self.open_devices().items()]
         for t in threads:
             t.start()
         for t in threads:
@@ -687,24 +720,41 @@ class Lab:
         return results
 
     def estop_all(self, reason="lab-wide stop", timeout: float = 10.0) -> dict:
-        """Stops every connected device in parallel; one failure or slow device does not block the others."""
-        devices = list(self._devices.items())
+        """Stops everything this process is driving, in parallel; a failure or a slow device does not
+        block the rest.
+
+        Everything, because that is what the call says: every device this lab has open, every device
+        a run or a plan opened through a lab of its own, and every driver loaded in this process whose
+        lab has gone away but whose job thread has not -- a background run can finish while the
+        protocol it started keeps the block at 95 degC. It reaches this lab's devices only: a driver
+        this process hosts for some other lab is that lab's to stop. Stopping a device twice is
+        harmless; the state latches, and `safety/reset` is a separate, deliberate call.
+        """
+        devices = list(self.open_devices().items())
+        reached = {id(d.driver) for _, d in devices if getattr(d, "driver", None) is not None}
+        named = {t: n for n, t in self.targets.items()}        # this lab's devices, open or not
+        with _inprocess_lock:
+            hosted = [(named[t], drv) for t, (drv, _) in _inprocess.items()
+                      if t in named and id(drv) not in reached]
         results: dict[str, dict] = {}
 
-        def one(n, d):
+        def one(n, stop):
             try:
-                r = d.estop(reason) or {}
+                r = stop() or {}
                 results[n] = {"ok": bool(r.get("stopped", True)), **r}
             except Exception as e:                   # noqa: BLE001
                 results[n] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-        threads = [threading.Thread(target=one, args=item, daemon=True) for item in devices]
+        work = [(n, (lambda d=d: d.estop(reason))) for n, d in devices]
+        work += [(n, (lambda drv=drv: drv.rpc("safety/estop", {"reason": reason}, self.session)))
+                 for n, drv in hosted]
+        threads = [threading.Thread(target=one, args=item, daemon=True) for item in work]
         for t in threads:
             t.start()
         deadline = time.monotonic() + timeout
         for t in threads:
             t.join(max(0.0, deadline - time.monotonic()))
-        for n, _ in devices:
+        for n, _ in work:
             results.setdefault(n, {"ok": False, "error": f"no answer within {timeout}s"})
         return results
 
