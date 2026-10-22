@@ -34,10 +34,12 @@ import secrets
 import uuid
 
 from . import __version__
-from .client import Lab, RemoteError, _inprocess, _remote, drop_inprocess
+from .client import (Lab, PackageChanged, RemoteError, _inprocess, _remote, drop_inprocess,
+                     package_fingerprint, package_folder, pin_package)
 from .directory import Directory
 from .driver import ApprovalRequired
 from .fleet import safe_id
+from .package import declared_rulebook, rulebook_diff
 from .runs import PlanLab, RunLog, Runs
 
 SUPPORTED_MCP_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -172,7 +174,11 @@ TOOLS = [
                      "with mhp_run. op='safety_card' reviews a device before first use. op='events' returns what happened since a "
                      "sequence number (job finished, e-stop, refusals). op='location' records where an instrument stands (id, location); ask the human for it after adding a shared package, because a package cannot know. "
                      "op='list'/'remove'/'reload'/'home' manage membership (reload after a package's files change; release hands this session's leases back); op='new'/'write'/"
-                     "'validate' are for agents that write package files themselves."),
+                     "'validate' are for agents that write package files themselves. A device package IS the configuration "
+                     "the runtime enforces, so it is not yours to change: op='write' writes files, but the device goes on "
+                     "enforcing what a person accepted until op='reload' shows them exactly what would move (limits, approval "
+                     "levels, interlocks) and they accept it. Report that refusal; never route around a limit by rewriting a "
+                     "package."),
      "inputSchema": {"type": "object", "properties": {
          "op": {"type": "string", "enum": ["status", "scan", "add", "onboard", "recipes", "registry", "safety_card", "events",
                                            "location", "remove", "reload", "release", "list", "new", "write", "validate", "home"]},
@@ -267,7 +273,8 @@ INSTRUCTIONS = (
     "on the network; op='add' registers one (also github: community packages, sim=true for a simulated twin). "
     "op='onboard' interviews the human (relay each question in plain words, return answers in the given shape; submit "
     "everything a manual tells you in one call) and then the server writes and validates the device package itself and "
-    "gives you a safety card to read back; finish with op='add'.\n"
+    "gives you a safety card to read back; finish with op='add'. A device package is the rulebook the server enforces, so "
+    "changing one is the owner's decision: op='reload' puts it to them with the exact diff.\n"
     "- Instruments that run methods (GC, HPLC, MS, PXRD, a thermocycler's programs) keep them on the device, per project and "
     "compound. Before invoking any action marked methods: true, ask the device: mhp_method op='find' with the compound and "
     "the project. One match: run it. Several: ask the person which (an autonomous loop with a declared project takes the "
@@ -304,7 +311,13 @@ PROMPTS = {
 class Bridge:
     """The MCP host side. Trust model: the bridge (host) is trusted; the model is not. The model cannot approve
     confirm-gated operations: the bridge asks a person and binds the answer to the exact request, for direct tool
-    calls and for run scripts alike."""
+    calls and for run scripts alike.
+
+    The same rule covers the rulebook itself. A device package is what the runtime enforces, so an agent that
+    could rewrite one and put it into service would be setting its own limits. The fleet record says which
+    package files were accepted for each device, those files are pinned, and loosening them -- by any route --
+    is a change a person is shown and asked about before anything enforces it.
+    """
 
     def __init__(self, targets: dict[str, str] | None = None, directory=None, fleet=None, home: Path | None = None):
         self.fleet = fleet
@@ -328,6 +341,7 @@ class Bridge:
         self.lab = Lab(targets, directory, session=f"bridge-{uuid.uuid4().hex[:8]}", approver=self._approve,
                        observer=self._observe, on_connect=self._on_connect)
         self.runs = Runs(self.lab, self.log, self.home, observer=self._observe)
+        self._pin_packages()
 
     # ---- tools ------------------------------------------------------------
     def call_tool(self, name: str, a: dict):
@@ -382,7 +396,85 @@ class Bridge:
         raise ValueError(f"unknown tool {name}")
 
     def _device(self, name: str):
-        return self.lab[name]
+        try:
+            return self.lab[name]
+        except PackageChanged:
+            self._repin()                       # the owner may have accepted the new configuration in another process
+            return self.lab[name]
+
+    # ---- the accepted configuration ---------------------------------------
+    def _pin_packages(self) -> None:
+        """Pin every package this lab hosts in-process to the configuration on record for it.
+
+        A target with nothing on record -- a fleet written before this host kept fingerprints, or a device named
+        on the command line -- is pinned to the files as they are now: that much is the operator's own choice at
+        startup. From then on a change to those files is a change a person has to accept.
+        """
+        pins = self.fleet.pins() if self.fleet is not None else {}
+        for target in set(self.lab.targets.values()) | set(pins):
+            folder = package_folder(target)
+            if folder is None:                  # http/stdio: whatever it enforces, it is not these files
+                continue
+            fp = pins.get(target)
+            if fp is None:
+                try:
+                    fp = package_fingerprint(folder)
+                except OSError:
+                    continue
+            pin_package(target, fp)
+
+    def _repin(self) -> None:
+        """Read the fleet again and pin again, so `mhp lab accept` run in another terminal takes effect here."""
+        if self.fleet is not None:
+            try:
+                self.fleet.reload()
+            except (OSError, ValueError):       # a fleet file mid-write: the pins already held are still the right ones
+                pass
+        self._pin_packages()
+
+    @staticmethod
+    def _declared(folder) -> dict | None:
+        """The rulebook a package's files declare, or None when they cannot be read as a package. Reading the
+        files (not loading the driver) keeps a device that is running from this folder on its one connection to
+        the hardware, and runs no package code before anyone has accepted it."""
+        if folder is None:
+            return None
+        try:
+            return declared_rulebook(folder)
+        except Exception:                       # noqa: BLE001  a half-written package: there is nothing to compare
+            return None
+
+    @staticmethod
+    def _hosted_from(fleet, folder) -> str | None:
+        """The device in the lab, if any, operating from this package folder. Compared by path, because a folder
+        name and the id in the package's frontmatter need not agree."""
+        want = Path(folder).resolve()
+        for did, entry in fleet.devices.items():
+            f = package_folder(entry["target"])
+            if f and Path(f).resolve() == want:
+                return did
+        return None
+
+    def _confirm_configuration(self, what: str, changes: list[str], instead: str) -> None:
+        """Put a change in what the lab enforces to a person, on the same channel and the same terms as a
+        confirm-gated write: the model cannot answer for them, and with no trusted channel nothing changes.
+        A limit, an interlock or an approval level is only ever loosened by someone who watched it happen."""
+        shown = changes[:30] + ([f"... and {len(changes) - 30} more"] if len(changes) > 30 else [])
+        detail = "\n".join(shown)
+        if not self.can_elicit():
+            self.log.write("confirm/unavailable", op="configuration", what=what, changes=changes)
+            raise _remote(ApprovalRequired.code,
+                          f"{what}: this changes what the lab enforces, and this harness has no trusted confirmation "
+                          f"channel (MCP elicitation), so nothing changed. Ask the user to accept it themselves with "
+                          f"`{instead}`. What would change:\n{detail}",
+                          {"approval": "confirm", "channel": "unavailable", "changes": changes})
+        answer = self.elicit(f"{what}.\n\nWhat this changes in what the lab enforces:\n{detail}\n\n"
+                             "Accept this configuration?")
+        self.log.write("confirm", op="configuration", what=what, answer=answer, changes=changes)
+        if answer != "accept":
+            raise _remote(ApprovalRequired.code,
+                          f"{what}: not accepted ({answer}); the lab keeps the configuration it had.",
+                          {"approval": "confirm", "answer": answer, "changes": changes})
 
     def _on_connect(self, name: str, dev) -> None:
         """Every connection (in-process, HTTP via its SSE stream, stdio) relays what the device pushes. One
@@ -615,14 +707,19 @@ class Bridge:
         fleet = self.fleet
         if fleet is None:
             fleet = self.fleet = Fleet(self.home / "fleet.json")
+            self._pin_packages()
         op = a["op"]
         if op == "status":
             n = len(fleet.devices)
             running = [r for r in self.runs.list() if r["state"] == "running"]
-            unlocated = fleet.unlocated()
+            unlocated, diverged = fleet.unlocated(), fleet.diverged()
             return {"devices": n, "runs_in_progress": len(running), "fleet": str(fleet.path), "elicitation": self.can_elicit(),
                     **({"without_a_location": unlocated,
                         "ask": "Ask the human where these instruments stand, then mhp_lab op='location'."} if unlocated else {}),
+                    **({"configuration_changed": sorted(diverged),
+                        "review": "Their package files are no longer the ones a person accepted, so they are not operated at "
+                                  "all until one is accepted. mhp_lab op='reload' shows the human what changed and asks."}
+                       if diverged else {}),
                     "next": ("The lab is empty. Ask the user whether their instruments already have an OpenMHP address (then op='scan' "
                              "or op='add'), whether a community package exists (op='registry'), or whether to onboard one by interview "
                              "(op='onboard'). Offer op='scan' first; it is free. To try without hardware: op='add' target=<bundled package> sim=true "
@@ -643,6 +740,9 @@ class Bridge:
                 r = self._onboarding.finish(a["id"])
             else:
                 r = self._onboarding.step(a.get("id"), ans)
+            if r.get("package"):                             # the server wrote package files: on the record, like every other write
+                self.log.write("lab/onboard", device=r.get("id"), package=r["package"], files=r.get("files"),
+                               ok=r.get("validation", {}).get("ok"))
             if r.get("validation", {}).get("ok"):
                 r["safety_card"] = self._safety_card_for_package(fleet.packages_dir() / r["id"])
                 r["next"] = ("Read the safety card and the operating procedure back to the human. If they agree, mhp_lab op='add' target='%s'." % r["id"])
@@ -657,12 +757,28 @@ class Bridge:
             target = a["target"]
             if not target.startswith(("http", "pkg:", "sim:", "local:", "stdio:", "github:")) and "/" not in target and not Path(target).exists():
                 target = str(fleet.packages_dir() / safe_id(target))  # a package id under ~/.openmhp/devices
-            card = fleet.add(target, sim=bool(a.get("sim")), location=a.get("location"))
+            card = fleet.add(target, sim=bool(a.get("sim")), location=a.get("location"), accept=False)
             entry = fleet.devices[card["id"]]
+            folder = package_folder(entry["target"])
+            prior = fleet.accepted_rulebook(card["id"])      # in the lab, or removed from it: this id has a rulebook on record
+            declared = self._declared(folder)
+            changes = rulebook_diff(prior, declared) if (prior is not None and declared is not None) else []
+            if changes:
+                try:
+                    self._confirm_configuration(f"{card['id']}: add the package at {folder}, which enforces something other than "
+                                                "the configuration this lab accepted for that device",
+                                                changes, f"mhp lab add {a['target']}")
+                except RemoteError:
+                    fleet.remove(card["id"], retire=False)   # leave the lab exactly as it was before the add
+                    self._forget_device(card["id"], entry["target"])
+                    raise
+            fleet.accept(card["id"])
+            self._pin_packages()
             self.lab.targets[card["id"]] = entry["target"]
             if isinstance(self.lab.directory, Directory):
                 self.lab.directory.add(card, entry["target"])
-            self.log.write("lab/add", device=card["id"], target=entry["target"], sim=bool(a.get("sim")))
+            self.log.write("lab/add", device=card["id"], target=entry["target"], sim=bool(a.get("sim")),
+                           fingerprint=entry.get("fingerprint"), changes=changes or None)
             note = "now discoverable through mhp_find" + ("; this is a SIMULATED twin" if a.get("sim") else "")
             if not card.get("location"):
                 note += ("; it has no location yet. Ask the human where the instrument stands and record it with "
@@ -675,21 +791,31 @@ class Bridge:
             active = self._active_jobs(did)
             if active and not a.get("force"):
                 return {"error": f"{did} has active jobs {active}; let them finish or cancel them first (or pass force=true)"}
+            if op == "reload":
+                if entry is None:
+                    return {"error": f"{did} is not in the lab"}
+                folder = package_folder(target)
+                declared = self._declared(folder)            # None for a target whose rulebook is not local files
+                changes = rulebook_diff(entry.get("rulebook") or {}, declared) if declared is not None else []
+                if changes:                                  # asked before anything is unloaded: a no leaves the device running
+                    self._confirm_configuration(f"{did}: reload the package at {folder}", changes,
+                                                f"mhp lab accept {did}")
             self._forget_device(did, target)
             if op == "remove":
                 ok = fleet.remove(did) if entry else False
                 self.log.write("lab/remove", device=did)
                 return {"removed": did if (ok or target) else None}
-            if entry is None:
-                return {"error": f"{did} is not in the lab"}
-            fleet.remove(did)
-            card = fleet.add(target, sim=bool(entry.get("sim")))
-            new = fleet.devices[card["id"]]
+            was = entry.get("fingerprint")
+            fleet.remove(did, retire=False)                  # replaced in place, not retired
+            card = fleet.add(target, sim=bool(entry.get("sim")), location=entry["card"].get("location") or None, accept=False)
+            new = fleet.accept(card["id"])
+            self._pin_packages()
             self.lab.targets[card["id"]] = new["target"]
             if isinstance(self.lab.directory, Directory):
                 self.lab.directory.add(card, new["target"])
-            self.log.write("lab/reload", device=card["id"], target=new["target"])
-            return {"reloaded": card}
+            self.log.write("lab/reload", device=card["id"], target=new["target"], changes=changes or None,
+                           was=was, now=new.get("fingerprint"))
+            return {"reloaded": card, "accepted": changes or "nothing the device enforces changed"}
         if op == "release":
             self.lab.release_all()
             return {"released": sorted(self.lab.devices)}
@@ -737,6 +863,7 @@ class Bridge:
             (folder / "DEVICE.md").write_text(dev_md)
             (folder / "descriptor.yaml").write_text((tpl / "descriptor_template.yaml").read_text())
             (folder / "driver.py").write_text((tpl / "driver_template.py").read_text())
+            self.log.write("lab/new", device=did, package=str(folder))
             return {"created": str(folder), "files": ["DEVICE.md", "descriptor.yaml", "driver.py"],
                     "next": "op='write' the real DEVICE.md, descriptor.yaml and driver.py, op='validate', and op='add' with target=<id>"}
         if op == "write":
@@ -750,7 +877,18 @@ class Bridge:
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text(text)
                 written.append(rel)
-            return {"package": str(folder), "written": written, "next": "op='validate' then op='add'"}
+            live = self._hosted_from(fleet, folder)
+            declared = self._declared(folder)
+            changes = (rulebook_diff(fleet.devices[live].get("rulebook") or {}, declared)
+                       if live and declared is not None else [])
+            self.log.write("lab/write", package=str(folder), files=written, device=live, changes=changes or None)
+            out = {"package": str(folder), "written": written, "next": "op='validate' then op='add'"}
+            if live:                                         # these files are not what the device is enforcing, and saying so beats a surprise
+                out.update(in_operation=live, changes=changes,
+                           note=f"{live} is in this lab and goes on enforcing the configuration a person accepted for it; "
+                                "writing files does not change that, and it will not load these until someone accepts them.",
+                           next="op='validate', then op='reload' to show the human what changed and ask")
+            return out
         if op == "validate":
             where = fleet.devices.get(a["id"], {}).get("card", {}).get("location")
             return validate_path(str(fleet.packages_dir() / safe_id(a["id"])), location=where)
@@ -791,6 +929,7 @@ class Bridge:
             if entry is not None:
                 self._hooked.discard(id(entry[0]))
             drop_inprocess(target)
+            pin_package(target, None)
 
     # ---- MCP protocol ------------------------------------------------------------
     def handle(self, msg: dict):

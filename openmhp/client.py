@@ -435,11 +435,32 @@ class StdioDevice(Device):
 
 # ------------------------------------------------------------------ in-process drivers ---- #
 _inprocess: dict[str, tuple[Driver, str]] = {}   # target -> (driver, package fingerprint); shared by every client
+_accepted: dict[str, str] = {}                   # target -> the fingerprint a person accepted for it
 _inprocess_lock = threading.Lock()
 
 
 class PackageChanged(RuntimeError):
-    """A package's files changed after its driver was loaded; reload it explicitly."""
+    """A package's files are not the ones this driver was loaded from, or not the ones a person accepted."""
+
+
+def pin_package(target: str, fingerprint: str | None) -> None:
+    """Record the package fingerprint a person accepted for this target; None forgets it.
+
+    A pinned package is loaded only while its files still hash to what was accepted, so a configuration
+    nobody reviewed is never enforced -- however the files came to change: a host tool, a run script, an
+    editor, a `git pull`. Hosts where the person at the keyboard *is* the trusted party (the CLI, the SDK)
+    pin nothing and keep the old behaviour.
+    """
+    with _inprocess_lock:
+        if fingerprint is None:
+            _accepted.pop(target, None)
+        else:
+            _accepted[target] = fingerprint
+
+
+def package_folder(target: str) -> str | None:
+    """The folder a target is hosted from, for the targets whose configuration is local files."""
+    return target.split(":", 1)[1] if target.startswith(("pkg:", "sim:")) else None
 
 
 def package_fingerprint(folder: str | Path) -> str:
@@ -468,11 +489,17 @@ def _load_inprocess(target: str) -> Driver:
         sim = target.startswith("sim:")
         folder = target.split(":", 1)[1]
         fp = package_fingerprint(folder)
+        accepted = _accepted.get(target)
+        if accepted is not None and accepted != fp:
+            raise PackageChanged(f"the package at {folder} changed on disk after this lab accepted it (accepted {accepted}, "
+                                 f"now {fp}); it is not loaded until a person accepts the new configuration, because what a "
+                                 "device enforces is not the agent's to change (mhp_lab op='reload' puts it to them; the "
+                                 "owner can also run `mhp lab accept`)")
         if target in _inprocess:
             drv, old = _inprocess[target]
             if old != fp:
-                raise PackageChanged(f"the package at {folder} changed on disk after it was loaded; "
-                                     "reload it (mhp_lab op='reload') so the enforced configuration matches the files")
+                raise PackageChanged(f"the package at {folder} changed on disk after it was loaded; a person has to accept the "
+                                     "new configuration before it is enforced (mhp_lab op='reload' puts it to them)")
             return drv
         drv = load_driver(folder, sim=sim)
         _inprocess[target] = (drv, fp)

@@ -21,6 +21,7 @@ device is and when an agent should pick it; <= 1024 chars), driver (optional
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import re
@@ -165,3 +166,90 @@ def merge_descriptor(generated: dict, from_package: dict, where: str = "package"
             items[name].update(extra)
         out[section] = list(items.values())
     return out
+
+
+# ---------------------------------------------------------------- the enforced configuration ---- #
+def _flatten_shape(prefix: str, shape, out: dict) -> None:
+    """Flatten a declared parameter shape to one entry per bound the runtime checks.
+
+    A limit buried in a nested step -- the 200 degC inside an otherwise valid protocol (SPEC 7.4) -- is the
+    thing a person most needs to see moving, and it is invisible in a diff of whole json blobs.
+    """
+    if not isinstance(shape, dict):
+        out[prefix] = shape                                   # prose: documentation, nothing is checked (SPEC 4.4)
+        return
+    for field in ("type", "limits", "resolution", "default", "nullable", "enum", "required"):
+        if field in shape:
+            out[f"{prefix}.{field}"] = shape[field]
+    if isinstance(shape.get("properties"), dict):
+        for name, sub_shape in shape["properties"].items():
+            _flatten_shape(f"{prefix}.{name}", sub_shape, out)
+    if isinstance(shape.get("items"), dict):
+        _flatten_shape(f"{prefix}[]", shape["items"], out)
+
+
+def rulebook(descriptor: dict) -> dict:
+    """What the runtime will refuse things over, flattened so two configurations can be compared.
+
+    Limits, approval levels, interlocks, declared types and the safety block are in here; instructions,
+    descriptions and examples are not. The difference matters: the first set decides what the server
+    refuses, the second only tells an agent what to do.
+    """
+    out: dict = {}
+    for section in ("settings", "actions"):
+        for item in descriptor.get(section) or []:
+            n = item.get("name")
+            out[f"{section}.{n}.approval"] = item.get("approval", "auto")
+            out[f"{section}.{n}.interlocks"] = item.get("interlocks") or []
+            out[f"{section}.{n}.limits"] = item.get("limits")
+            if section == "settings":
+                out[f"settings.{n}.type"] = item.get("type", "number")
+                out[f"settings.{n}.during_job"] = bool(item.get("during_job", False))
+            else:
+                out[f"actions.{n}.required"] = item.get("required") or []
+                params = item.get("params")
+                if isinstance(params, dict):
+                    for pname, shape in params.items():
+                        _flatten_shape(f"actions.{n}.params.{pname}", shape, out)
+                elif params is not None:
+                    out[f"actions.{n}.params"] = params
+    safety = descriptor.get("safety") or {}
+    out["safety.estop"] = safety.get("estop")
+    out["safety.estop_kind"] = safety.get("estop_kind")
+    out["safety.watchdog_s"] = safety.get("watchdog_s")
+    return out
+
+
+def declared_rulebook(folder: str | Path) -> dict:
+    """The rulebook a package's files declare, read WITHOUT running any of its code.
+
+    Reading the files rather than loading the driver matters twice over: nothing is imported and no port is
+    opened before a person has accepted the package, and a device already running from this folder keeps its
+    one connection to the hardware. A factory driver declares part of its capabilities in code, so each code
+    file is reported by hash: the yaml alone cannot say whether a binding's limits moved.
+    """
+    pkg = load_package(folder)
+    out = rulebook(pkg.descriptor)
+    entries = (str(pkg.meta.get("driver", "driver.py")), str(pkg.meta.get("sim", "sim.py")))
+    for rel in dict.fromkeys(e.partition(":")[0] for e in entries):
+        p = Path(folder) / rel
+        if p.is_file():
+            out[f"code.{rel}"] = hashlib.sha256(p.read_bytes()).hexdigest()[:12]
+    return out
+
+
+def rulebook_diff(old: dict, new: dict) -> list[str]:
+    """One line per change, in the terms a person decides on: `settings.target_temperature.limits:
+    {"min": 20, "max": 105} -> {"min": 20, "max": 400}`. Empty means nothing the runtime enforces moved."""
+    lines = []
+    for key in sorted(set(old) | set(new)):
+        before, after = old.get(key), new.get(key)
+        if before == after:
+            continue
+        if key not in old:
+            lines.append(f"+ {key}: {json.dumps(after, default=str)}")
+        elif key not in new:
+            lines.append(f"- {key}: was {json.dumps(before, default=str)}")
+        else:
+            lines.append(f"~ {key}: {json.dumps(before, default=str)} -> {json.dumps(after, default=str)}")
+    return lines

@@ -558,7 +558,11 @@ MHP is not a functional-safety system in the IEC 61508 sense. Hard-wired e-stops
 
 ### 7.6 Trust boundary and retries
 
-Package code (`driver.py`, `sim.py`), recipes and `mhp_run` scripts are code the host executes. The runtime can refuse malformed or out-of-limit requests only while the driver and its descriptor are outside the model's authority: a model that can edit a package, or run arbitrary scripts in an unsandboxed host, can change what is enforced. Deployments SHOULD separate package authoring (a code review) from operation, and SHOULD sandbox scripts.
+Package code (`driver.py`, `sim.py`), recipes and `mhp_run` scripts are code the host executes, and a device package *is* the rulebook: every limit, interlock and approval level the runtime enforces comes from it. So the gates above hold only while the package is outside the model's authority. A host that lets a model write a package and then puts it into service has let the model set its own limits, and the refusals it still issues mean nothing.
+
+A host that gives a model any way to write package files — the reference bridge's `mhp_lab op='new'` and `op='write'`, a filesystem tool, an unsandboxed script — MUST therefore record per device which package files were accepted, MUST refuse to operate a device whose files are not those, and MUST put any change in what a device enforces to a person on the same trusted channel as a confirm-gated write, naming the limit, interlock or approval level that would move, before anything enforces it. Writing a file is not the moment to gate; becoming enforced is, and a package can start being enforced because files changed under a host that never wrote them. §9.1 specifies the reference implementation: an accepted fingerprint and rulebook per fleet entry, `mhp_lab op='reload'` to put a change to the owner, and `mhp lab accept` for the owner to accept one themselves.
+
+What this does not reach: a host that executes model-supplied code cannot contain it. An unsandboxed `mhp_run` script can drive vendor libraries directly, and an agent can still introduce a *new* device package of its own rather than loosening an old one. The rule above means no configuration already accepted for a device gets looser without a person seeing it, not that an unsandboxed host is safe. Deployments SHOULD separate package authoring (a code review) from operation, and SHOULD sandbox scripts.
 
 MHP operations are not idempotent. A request can reach a device even when its response is lost, and servers do not deduplicate requests. Clients MUST NOT retry writes or invokes automatically; after a lost response they SHOULD read state or list jobs to reconcile.
 
@@ -601,25 +605,27 @@ MHP defines two transports, mirroring MCP:
 
 ### 9.1 The fleet and `mhp_lab`
 
-A host keeps a **fleet**: the list of devices it knows, persisted as `~/.openmhp/fleet.json`, each entry an id, a target and the device's card. Device packages the host owns are hosted in-process from `~/.openmhp/devices/<id>/`, so a scientist's laptop needs no separate device servers for them. The bridge exposes the fleet through one tool, `mhp_lab`, with these operations:
+A host keeps a **fleet**: the list of devices it knows, persisted as `~/.openmhp/fleet.json`, each entry an id, a target, the device's card and — for a package the host runs in-process — the fingerprint and rulebook that were accepted for it. Device packages the host owns are hosted in-process from `~/.openmhp/devices/<id>/`, so a scientist's laptop needs no separate device servers for them. The bridge exposes the fleet through one tool, `mhp_lab`, with these operations:
 
 | op | Effect |
 |---|---|
 | `status` | how many devices the lab has and what to do next; the agent's starting point |
 | `scan` | mDNS browse plus HTTP probe of localhost and any `hosts` given; returns devices not yet in the fleet |
-| `add` | register a target (`http://host:port`, a package folder, or a package id under `~/.openmhp/devices`); fetches the card; the device is immediately searchable; an id already in the lab at a different target is refused |
+| `add` | register a target (`http://host:port`, a package folder, or a package id under `~/.openmhp/devices`); fetches the card; the device is immediately searchable; an id already in the lab at a different target is refused. A package whose rulebook differs from the one accepted for that id — still in the lab, or removed from it — is a reconfiguration, so a person is asked first; a refusal leaves the lab exactly as it was |
 | `onboard` | a guided interview run by the server: returns the next questions (`ask`, in plain words for the human) and the `shape` of the answer; on completion the server writes DEVICE.md, descriptor.yaml and driver.py, validates, and asks the agent to `add` |
 | `new` | create a package skeleton for an instrument that does not speak MHP yet (for agents that prefer to write files themselves) |
-| `write` | write files (DEVICE.md, descriptor.yaml, driver.py, references, scripts) into that package; paths may not escape it |
+| `write` | write files (DEVICE.md, descriptor.yaml, driver.py, references, scripts) into that package; paths may not escape it. A device already running from that folder goes on enforcing the configuration accepted for it: the result says so, and the log entry names every bound the new files would move |
 | `validate` | run the package validator |
 | `recipes` | search tested procedures (§3.4) |
 | `registry` | search known community packages; add one with `add target="github:owner/repo/path"` |
 | `safety_card` | a readable review of a device before first use: enforced limits, gated actions, e-stop, watchdog, validator findings, and live probes (every action dry-run, an out-of-range write on every bounded setting) |
 | `events` | what happened since a sequence number (§3.5) |
-| `remove`, `reload` | `remove` refuses a device with active jobs unless `force`; both drop the device's connection, directory entry and in-process driver. `reload` loads a package again after its files changed; a changed package is never silently reused |
+| `remove`, `reload` | `remove` refuses a device with active jobs unless `force`; both drop the device's connection, directory entry and in-process driver, and `remove` keeps the configuration that was accepted, so a looser package returning under the same id is still a change. `reload` is where changed files become the rulebook, so it shows a person every limit, interlock and approval level that would move and asks; a decline changes nothing and leaves the device running on what it had |
 | `location` | record where an installed instrument stands; the lab's fleet record, not the package, is the authority |
 | `release` | hand the bridge session's leases back |
 | `list`, `home` | membership and paths |
+
+**The accepted configuration.** Package files are the rulebook, so the fleet record — not the files — is the authority on which rulebook a device enforces, the way it already is for a device's location. `add` and a confirmed `reload` record the package's fingerprint and its rulebook (every limit, interlock, approval level, declared type and bound inside a nested parameter, plus a hash of each code file) in the fleet entry. The host pins those fingerprints: a package whose files no longer hash to what was accepted is not loaded at all, and the refusal says a person has to accept the new configuration. That holds however the files came to change — a host tool, a run script's `open()`, an editor, a `git pull` — and whether or not the driver was already in memory, so a restart cannot quietly adopt a rulebook nobody reviewed. `op='status'` lists the devices in that state, `op='reload'` puts the diff to the owner through elicitation, and the owner can accept it themselves with `mhp lab accept <id>`, which is the trusted channel when the harness has none. Packages a host was pointed at on its command line, and fleets written before the host recorded fingerprints, are pinned to the files as they stand at startup: that much was the operator's own choice, and changes after it are not.
 
 `add` accepts `sim=true` to register a package's **simulated twin** (`sim.py`, declared as `sim:` in the frontmatter) under `<id>-sim`, so protocols can be rehearsed with nothing plugged in. The bundled devices and the community packages all ship one. Onboarding (`onboard`) ends with a safety card the agent reads back to the owner; an agent that has the instrument's manual SHOULD submit everything the manual states in one `answers` call and ask the human only to confirm the limits.
 
@@ -677,6 +683,7 @@ mhp http://bench:18921 write target_temperature 95
 mhp http://bench:18921 invoke run_protocol '{"steps":[...],"cycles":30}' --wait
 mhp http://bench:18921 invoke open_lid --approved      # the person at this terminal confirms
 mhp http://bench:18921 estop "smoke from lid"
+mhp lab accept thermocycler-01                         # the owner accepts an edited package as this lab's rulebook
 ```
 
 The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool.

@@ -115,7 +115,7 @@ def main(argv=None):
         except KeyboardInterrupt:
             return 0
 
-    if a.target == "lab":                   # mhp lab scan [host ...] | add <target> | remove <id> | list | home
+    if a.target == "lab":                   # mhp lab scan [host ...] | add <target> | accept [<id>] | remove <id> | list | home
         from .fleet import Fleet, HOME
         fleet = Fleet()
         v, x = a.verb or "list", a.args
@@ -137,6 +137,26 @@ def main(argv=None):
                 ap.error('usage: mhp lab location <device id> "bay 3, fume hood 2"')
             card = fleet.set_location(x[0], " ".join(x[1:]))
             print(f"{card['id']} is at {card['location']}", file=sys.stderr)
+        elif v == "accept":                 # the owner's own channel: what a bridge must ask a person for, they can do here
+            from .client import package_folder
+            from .package import declared_rulebook, rulebook_diff
+            ids = x or sorted(fleet.diverged())
+            if not ids:
+                print("every package in this lab is the one it was accepted with", file=sys.stderr)
+                return 0
+            for did in ids:
+                entry = fleet.devices.get(did)
+                if entry is None:
+                    ap.error(f"no device {did!r} in this lab")
+                folder = package_folder(entry["target"])
+                if folder is None:
+                    print(f"{did}: {entry['target']} is not a package; its configuration lives elsewhere", file=sys.stderr)
+                    continue
+                changes = rulebook_diff(entry.get("rulebook") or {}, declared_rulebook(folder))
+                for line in changes or ["(nothing the device enforces is different)"]:
+                    print(f"  {line}", file=sys.stderr)
+                fleet.accept(did)
+                print(f"accepted: {did} enforces the package at {folder} from now on", file=sys.stderr)
         elif v == "remove":
             print("removed" if fleet.remove(x[0]) else "not in lab", x[0])
         elif v == "list":
@@ -150,7 +170,7 @@ def main(argv=None):
                 print(f"added {card['id']} ({card['class']}, {card['location']})", file=sys.stderr)
             print(json.dumps(fleet.list(), indent=2))
         else:
-            ap.error(f"unknown lab verb {v} (scan|add|location|remove|list|home|demo)")
+            ap.error(f"unknown lab verb {v} (scan|add|accept|location|remove|list|home|demo)")
         return 0
 
     if a.target == "validate":              # mhp validate <device package folder>

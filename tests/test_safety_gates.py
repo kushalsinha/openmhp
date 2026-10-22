@@ -508,7 +508,13 @@ def test_remove_and_reload_invalidate_routing_and_drivers():
         b.lab[did]; raise AssertionError("a changed package was silently reused")
     except Exception as e:
         assert "changed on disk" in str(e)
+    e = expect(ApprovalRequired.code, lambda: b.call_tool("mhp_lab", {"op": "reload", "id": did}))
+    assert "mhp lab accept" in e.message                     # no elicitation: the owner has their own channel
+    asked = []
+    b.client_caps = {"elicitation": {}}
+    b.send_request = lambda m, p: asked.append(p["message"]) or {"action": "accept", "content": {"confirm": True}}
     assert "reloaded" in b.call_tool("mhp_lab", {"op": "reload", "id": did})
+    assert '"max": 300} -> {"min": 20, "max": 250}' in asked[0]
     expect(LimitViolation.code, lambda: b.call_tool("mhp_write", {"device": did, "name": "target_temperature", "value": 260}))
     b.call_tool("mhp_lab", {"op": "remove", "id": did})
     try:
@@ -522,6 +528,64 @@ def test_remove_and_reload_invalidate_routing_and_drivers():
         b.call_tool("mhp_lab", {"op": "add", "target": str(copy)}); raise AssertionError("duplicate id accepted")
     except ValueError as e:
         assert "already in the lab" in str(e)
+
+
+def test_an_agent_cannot_raise_the_limit_it_is_refused_by():
+    """A device package IS what the runtime enforces, so an agent that could write one and put it into service
+    would be setting its own limits. The configuration a person accepted is pinned, every route to changing it
+    goes through them with the bound that would move, and the log says which one did."""
+    from openmhp.fleet import Fleet
+    home = HOME / "t30"
+    (home / "devices").mkdir(parents=True)
+    pkg = home / "devices" / "thermocycler-01"               # a package id under ~/.openmhp/devices, as op='write' addresses it
+    shutil.copytree("openmhp/devices/thermocycler-01", pkg)
+    desc = pkg / "descriptor.yaml"
+    asked, answer = [], {"action": "decline"}
+    b = Bridge(fleet=Fleet(home / "fleet.json"))
+    b.client_caps = {"elicitation": {}}
+    b.send_request = lambda m, p: asked.append(p["message"]) or answer
+    did = b.call_tool("mhp_lab", {"op": "add", "target": str(pkg), "location": "bench 1"})["added"]["id"]
+    hot = {"device": did, "name": "target_temperature", "value": 300}
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))
+
+    raised = desc.read_text(encoding="utf-8").replace("limits: {min: 4, max: 105}", "limits: {min: 4, max: 400}")
+    r = b.call_tool("mhp_lab", {"op": "write", "id": "thermocycler-01", "files": {"descriptor.yaml": raised}})
+    assert r["in_operation"] == did                          # writing files is allowed, and says what it does not do
+    assert any("settings.target_temperature.limits" in c and "105} -> " in c for c in r["changes"])
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))     # the device enforces what was accepted
+
+    e = expect(ApprovalRequired.code, lambda: b.call_tool("mhp_lab", {"op": "reload", "id": did}))
+    assert "not accepted" in e.message and "105} -> " in asked[-1]         # the person saw the bound, and said no
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))
+
+    b.client_caps = {}                                                     # no trusted channel: nothing moves at all
+    e = expect(ApprovalRequired.code, lambda: b.call_tool("mhp_lab", {"op": "reload", "id": did}))
+    assert "mhp lab accept thermocycler-01" in e.message
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))
+
+    answer, b.client_caps = {"action": "accept", "content": {"confirm": True}}, {"elicitation": {}}
+    b.call_tool("mhp_lab", {"op": "reload", "id": did})                    # the owner accepts it, once, seeing the diff
+    assert b.call_tool("mhp_write", hot)["ok"]
+    assert b.call_tool("mhp_lab", {"op": "list"})["devices"][0]["location"] == "bench 1"   # the fleet record survives a reload
+
+    desc.write_text(desc.read_text(encoding="utf-8").replace("max: 400", "max: 900"), encoding="utf-8")
+    b2 = Bridge(fleet=Fleet(home / "fleet.json"))             # a restart used to load whatever was on disk by then
+    try:
+        b2.lab[did]
+        raise AssertionError("a configuration nobody accepted was enforced")
+    except Exception as e:                                    # noqa: BLE001
+        assert "accepted it" in str(e)
+    assert b2.call_tool("mhp_lab", {"op": "status"})["configuration_changed"] == [did]
+
+    b2.call_tool("mhp_lab", {"op": "remove", "id": did})      # removing a device does not forget what it was accepted with
+    e = expect(ApprovalRequired.code, lambda: b2.call_tool("mhp_lab", {"op": "add", "target": str(pkg)}))
+    assert "900" in e.message
+    assert b2.call_tool("mhp_lab", {"op": "list"})["devices"] == []        # a refused add leaves the lab as it was
+
+    kinds = [ev["kind"] for ev in b.log.recent]
+    assert "lab/write" in kinds and "lab/reload" in kinds
+    assert [ev["answer"] for ev in b.log.recent if ev["kind"] == "confirm"] == ["decline", "accept"]
+    assert all(ev.get("changes") for ev in b.log.recent if ev["kind"] in ("lab/write", "lab/reload", "confirm"))
 
 
 def test_factory_packages_keep_their_capabilities():

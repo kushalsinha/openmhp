@@ -73,6 +73,10 @@ print(j["result"])
   then re-send with `approved: true`. Never set it on your own judgment.
 - **`approval: forbid`** is listed so you know the capability exists. Do not look for another
   path to it.
+- **The package is the rulebook, not a workaround.** `descriptor.yaml` is what the server enforces,
+  so editing a package to widen a limit is not a fix and will not work: the device keeps enforcing
+  the configuration its owner accepted, and `mhp_lab op='reload'` asks them, naming the bound that
+  would move. Report the refusal and the value you needed instead.
 - **Refusals.** `LimitViolation` (-32010): the value is outside physical limits; choose a value
   inside `data.min..max` or ask. `InterlockOpen` (-32011): read the named signal, tell the user
   what must change (lid, door, person in cell). `ApprovalRequired` (-32012): see above.
