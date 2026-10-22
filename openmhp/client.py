@@ -41,14 +41,23 @@ class RemoteError(MHPError):
     """An MHP error raised on the device side and re-raised here."""
 
 
-def _remote(code: int, message: str, data: Any = None) -> RemoteError:
+def _remote(code: int, message: str, data: Any = None, envelope: dict | None = None) -> RemoteError:
+    """Carry the device's own taxonomy across the wire: a caller branches on these fields
+    instead of reading the message, which is the whole point of declaring them."""
     err = RemoteError(message, data)
     err.code = code
+    env = envelope or {}
+    err.ts = env.get("ts")
+    err.transient = env.get("transient")
+    err.effect = env.get("effect")
+    err.recovery = env.get("recovery")
+    err.motion = env.get("motion")
+    err.device_state = env.get("state")
     return err
 
 
 ACTUATING = {"settings/write", "actions/invoke", "jobs/resume", "safety/reset"}
-_APPROVABLE = {"settings/write", "actions/invoke"}
+_APPROVABLE = {"settings/write", "actions/invoke", "session/release"}  # forcing a lease open needs a person
 _OBSERVED = {"settings/write", "actions/invoke", "signals/read", "jobs/pause", "jobs/resume", "jobs/cancel",
              "safety/estop", "safety/reset", "session/acquire", "session/release"}
 
@@ -80,7 +89,7 @@ class Device:
         resp = self._send(msg)
         if "error" in resp:
             e = resp["error"]
-            raise _remote(e["code"], e["message"], e.get("data"))
+            raise _remote(e["code"], e["message"], e.get("data"), e)
         return resp["result"]
 
     def _observe(self, method: str, params: dict, **fields) -> None:
@@ -592,6 +601,29 @@ class Lab:
     def close(self) -> None:
         for d in list(self._devices.values()):
             d.close()
+
+    def shutdown_all(self, within_s: float = 30, reason: str = "lab-wide shutdown") -> dict:
+        """Wind every connected device down in an orderly way, in parallel.
+
+        Use this when one instrument has failed and the rest should stop cleanly rather than
+        be slammed: each parks within the window and escalates to its own e-stop if it cannot.
+        For an immediate stop use estop_all; this is the gentler sibling.
+        """
+        results: dict[str, dict] = {}
+
+        def one(n, d):
+            try:
+                results[n] = d.call("safety/shutdown", {"within_s": within_s, "reason": reason})
+            except Exception as e:                   # noqa: BLE001  one device must not block the rest
+                results[n] = {"error": f"{type(e).__name__}: {e}"}
+
+        threads = [threading.Thread(target=one, args=item, daemon=True)
+                   for item in list(self._devices.items())]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5.0)
+        return results
 
     def estop_all(self, reason="lab-wide stop", timeout: float = 10.0) -> dict:
         """Stops every connected device in parallel; one failure or slow device does not block the others."""

@@ -559,7 +559,7 @@ self-driving-laboratory community including the SiLA and OPC UA LADS standards b
 criteria were not written with OpenMHP in view, which makes them a more useful yardstick than
 any we could propose. Table~\ref{tab:scorecard} scores OpenMHP against all twenty-one.
 
-The weighted result is 39.0 of 46 for a standalone instrument, and 41.0 of 50 including the
+The weighted result is 43.0 of 46 for a standalone instrument, and 46.0 of 50 including the
 two cell-integration criteria that apply to a protocol. Three findings matter more than the
 total.
 
@@ -586,7 +586,12 @@ backward-compatible change, and together they would move the Critical tier from 
 protocol compliance does not establish laboratory interoperability, and these three are
 exactly where that gap opens.
 
-Third, the only outright Fail is C12, instrument self-state: the protocol defines no place
+Third, three gaps remain, and each is a deliberate position rather than an oversight.
+C17 is capped at Partial by the criterion's own rule, not by the tooling: a conformance
+command now scores any device behaviourally and ties the report to the protocol revision it
+reports, but the second dimension asks for a documented, versioned device model, and ours are
+hints. C20 wants a standard robot-access state we have not defined. And the only outright
+Fail is C12, instrument self-state: the protocol defines no place
 for calibration status, qualification state, usage counters or out-of-spec indications. A
 driver may expose them as ordinary signals, but because nothing names them, no two devices
 will agree, which reproduces at the semantic layer the fragmentation the protocol removes at

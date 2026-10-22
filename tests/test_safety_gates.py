@@ -928,6 +928,155 @@ def test_a_twin_can_be_driven_into_failure_and_real_hardware_cannot():
     twin.call("sim/fault", {"mode": None})        # disarm
 
 
+def test_every_refusal_declares_what_to_do_about_it():
+    """C16: a caller branches on fields, never on wording."""
+    from openmhp.client import LocalDevice, RemoteError
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    d = LocalDevice(SimThermocycler())
+    try:
+        d.write("target_temperature", 500)
+        raise AssertionError("expected a limit violation")
+    except RemoteError as e:
+        assert e.transient is False and e.recovery == "abort" and e.effect == "none", e.__dict__
+        assert e.device_state == "idle" and e.ts, e.__dict__
+    try:
+        d.invoke("open_lid")                       # approval: confirm, nobody confirmed
+        raise AssertionError("expected an approval refusal")
+    except RemoteError as e:
+        assert e.transient is True and e.recovery == "operator", e.__dict__
+
+
+def test_shutdown_is_orderly_and_escalates_when_it_cannot_settle():
+    """C21: a stated window to park, then a real e-stop if it is missed."""
+    import time
+    from openmhp.driver import Driver
+    from openmhp.client import LocalDevice
+
+    class Stubborn(Driver):
+        """A job that ignores cancellation, which is exactly what the deadline is for."""
+        descriptor = {"device": {"id": "stubborn-01", "class": "generic"},
+                      "actions": [{"name": "grind", "duration": "long"}],
+                      "safety": {"estop": True}}
+        def on_read(self, name): return 0
+        def on_write(self, name, value): pass
+        def on_invoke(self, job):
+            time.sleep(1.5)
+            return {"done": True}
+
+    d = LocalDevice(Stubborn())
+    d.invoke("grind")
+    r = d.call("safety/shutdown", {"within_s": 0.3, "reason": "a sibling failed"})
+    assert r["shutdown"]["cancelling"], r
+    time.sleep(1.0)
+    assert d.call("device/describe", {"detail": "card"})["state"] == "estop", "it should have escalated"
+
+
+def test_a_hardware_stop_cannot_be_cleared_from_software():
+    from openmhp.driver import NotSupported
+    from openmhp.client import LocalDevice
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    t = SimThermocycler()
+    d = LocalDevice(t)
+    t.latch_external_stop("red button at the bench", clearance="twist the release, then press reset")
+    assert d.call("device/describe", {"detail": "card"})["state"] == "estop"
+    expect(NotSupported.code, lambda: d.call("safety/reset", {}))
+    try:
+        d.call("safety/reset", {})
+    except Exception as e:
+        assert "twist the release" in str(e), e
+
+
+def test_a_forced_release_will_not_quietly_disarm_the_watchdog():
+    """C9: forcing needs a person, and mid-job it is refused until the work is stopped."""
+    import time
+    from openmhp.driver import NotLeased, ApprovalRequired, DeviceBusy
+    from openmhp.client import LocalDevice
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+
+    t = SimThermocycler()
+    a, b = LocalDevice(t, session="agent-a"), LocalDevice(t, session="agent-b")
+    a.acquire(ttl=60)
+    expect(NotLeased.code, lambda: b.call("session/release", {}))
+    expect(ApprovalRequired.code, lambda: b.call("session/release", {"force": True}))
+
+    a.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 2}] * 3, cycles=3)
+    expect(DeviceBusy.code, lambda: b.call("session/release", {"force": True, "approved": True}))
+    try:
+        b.call("session/release", {"force": True, "approved": True})
+    except Exception as e:
+        assert "watchdog" in str(e) and "stop: true" in str(e), e
+
+    r = b.call("session/release", {"force": True, "stop": True, "within_s": 2, "approved": True})
+    assert r["forcedFrom"] == "agent-a", r
+    time.sleep(2.4)
+    assert t.lease is None
+
+
+def test_a_finished_job_survives_a_restart():
+    """C11: the record of what ran is on disk, not only in memory."""
+    from openmhp.client import LocalDevice
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    first = LocalDevice(SimThermocycler())
+    job = first.wait(first.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
+    again = LocalDevice(SimThermocycler())         # a fresh process sees the same history
+    rec = again.call("jobs/status", {"id": job["id"]})["job"]
+    assert rec["state"] == "done" and rec["result"] == job["result"], rec
+
+
+def test_conformance_scores_a_device_behaviourally():
+    """C17: the levels are a command anyone can run, not a claim in a document."""
+    from openmhp.conformance import run, report
+    from openmhp.client import connect
+    r = run(connect("pkg:openmhp/devices/arm-01", "dut"))
+    assert r["Core"]["ok"] and r["Actions"]["ok"] and r["Safe"]["ok"], r
+    assert r["_device"]["mhp"], r["_device"]
+    assert "Levels met: MHP Core, MHP Actions, MHP Safe" in report(r)
+
+
+def test_a_failed_job_and_the_fault_are_published_together():
+    """SPEC 5.5 requires the job's completion and the device state to be published together.
+
+    Latching the fault after publishing the job leaves a window in which an observer sees a
+    failed job on an idle device, and decides the instrument is free. The window is small,
+    so this checks the state with no sleep, and repeatedly: a race that is usually lost is
+    still a race.
+    """
+    from openmhp.driver import Driver
+    from openmhp.client import LocalDevice, RemoteError
+
+    class Boom(Driver):
+        descriptor = {"device": {"id": "boom-01", "class": "generic"},
+                      "actions": [{"name": "go", "duration": "short"}],
+                      "safety": {"estop": True}}
+        def on_read(self, name): return 0
+        def on_write(self, name, value): pass
+        def on_invoke(self, job): raise RuntimeError("vendor code exploded")
+
+    for _ in range(20):
+        d = LocalDevice(Boom())
+        try:
+            d.wait(d.invoke("go"))
+        except RemoteError:
+            pass
+        # no sleep: the job has settled, so the device must already say so
+        assert d.call("device/describe", {"detail": "card"})["state"] == "fault", \
+            "a failed job was visible while the device still read idle"
+
+
+def test_the_error_taxonomy_survives_the_client_boundary():
+    """The fields are useless if the SDK drops them on the way through."""
+    from openmhp.client import LocalDevice, RemoteError
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    d = LocalDevice(SimThermocycler())
+    try:
+        d.read("no_such_signal")
+        raise AssertionError("expected a refusal")
+    except RemoteError as e:
+        for field in ("ts", "transient", "effect", "recovery", "device_state"):
+            assert getattr(e, field, None) is not None, f"the client dropped {field}"
+        assert e.recovery == "abort" and e.effect == "none", e.__dict__
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):

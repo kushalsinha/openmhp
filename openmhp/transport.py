@@ -28,7 +28,10 @@ def dispatch(driver: Driver, msg: dict, client: str) -> dict | None:
             return None
         return {"jsonrpc": "2.0", "id": mid, "result": result}
     except MHPError as e:
-        err = {"code": e.code, "message": e.message, "ts": err_ts}
+        # the taxonomy (C16) travels with every failure, so a caller branches on fields
+        # rather than parsing prose; `state` is what the device is in now, which only it knows
+        err = {"code": e.code, "message": e.message, "ts": err_ts, **e.taxonomy(),
+               "state": getattr(driver, "state", None)}
         if e.data is not None:
             err["data"] = e.data
     except KeyError as e:

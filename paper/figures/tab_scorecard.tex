@@ -18,27 +18,27 @@ C5 & Result retrieval       & 3 & \textbf{Pass} & Headless and execution-linked:
 C6  & Runtime self-description & 2 & Pass    & \texttt{device/describe} with three tiers and \texttt{select}; a generic client enumerates the surface with no prior knowledge. \\
 C7  & Observable state         & 2 & Pass    & \texttt{jobs/status} never blocks on completion; progress, signals, safety and operator events are pushed. \\
 C8  & Reference client         & 2 & Pass    & Python SDK, CLI, MCP bridge, worked examples and tested recipes. \\
-C9  & Concurrent access        & 2 & Partial & Atomic \texttt{session/acquire} with TTL, visible holder, renewal and reconnect. No role-gated administrative clear. \\
+C9  & Concurrent access        & 2 & \textbf{Pass} & Atomic \texttt{session/acquire} with TTL, visible holder, renewal and reconnect, plus a forced release for a session that died holding the lease. Forcing requires a person's confirmation under the same trusted-host rule as \texttt{approval: confirm}, and mid-job it is refused until the work is wound down, because the watchdog is armed only while a lease is held. We read that as the role gate the criterion asks for, with exactly two roles: the model, which cannot, and a person, who can. A stricter reader may hold it at Partial. \\
 C10 & Device/readiness state   & 2 & Pass    & Named states with machine-readable recovery through verified \texttt{safety/reset}. \\
-C11 & Result durability        & 2 & Partial & Run records persist on disk with stable ids; the device job table is in memory, so a server restart loses job-level results. \\
+C11 & Result durability        & 2 & \textbf{Pass} & Each job record is written to disk as it starts and again as it ends, and reloaded at startup, so a run interrupted overnight leaves the parameters actually used, the result, the error and the recovery class readable afterwards. Progressive output already arrives by subscription. \\
 C12 & Instrument self-state    & 2 & \textbf{Fail} & The protocol defines no place for calibration state, qualification, usage counters or out-of-spec flags. A driver may expose them as signals, but nothing names or requires them, so no two devices agree. \\
-C13 & Versioning discipline    & 2 & Partial & \texttt{PROTOCOL\_VERSION} is negotiated at \texttt{initialize} and echoed in \texttt{describe}. No deprecation policy and no support commitment; pre-1.0 states that breaking changes are expected. \\
+C13 & Versioning discipline    & 2 & \textbf{Pass} & \texttt{VERSIONING.md} defines what counts as a breaking change, a 24-month support window per protocol revision after 1.0, a 12-month deprecation path, and how to pin a qualified deployment. It also states plainly that a pre-1.0 revision is not a basis for a regulated deployment. \\
 C14 & Simulation mode          & 3 & \textbf{Pass} & Every package ships a drop-in twin on the same interface, and a twin answers \texttt{sim/fault} to be driven into failure on demand: \texttt{raise} (vendor code fails, exercising fail-closed and an unknown outcome), \texttt{hang} (exercising the watchdog) and \texttt{refuse} (a typed refusal that must not latch). A real device refuses the call with \texttt{NotSupported}. \\
 C15 & Control-loss observability & 3 & \textbf{Pass} & The watchdog is armed while the lease is held; silence past the declared window is itself the signal. The device reports and fails safe without the agent or the network, and the window is declared per device rather than imposed. \\
-C16 & Error recovery taxonomy  & 2 & Partial & Execution effect (\texttt{outcome: unknown}) and post-error state are machine-readable. Transience, recovery class and a physical-motion flag are not declared fields. \\
-C17 & Conformance evidence     & 2 & Partial & Four behavioural levels and a suite that exercises them. No version-tied evidence, and the device-model dimension is weak, which caps this at Partial by the paper's own rule. \\
+C16 & Error recovery taxonomy  & 2 & \textbf{Pass} & Every refusal declares \texttt{transient}, \texttt{effect} (\texttt{none}/\texttt{partial}/\texttt{unknown}), \texttt{recovery} (\texttt{retry}/\texttt{retry\_after}/\texttt{abort}/\texttt{operator}), \texttt{motion} and the post-error \texttt{state}, and a failed job carries its recovery class. A caller branches on fields rather than parsing prose. \\
+C17 & Conformance evidence     & 2 & Partial & \texttt{mhp conformance <target>} scores any device against the levels behaviourally and non-destructively, tying the report to the protocol revision the device reports. The second dimension still caps it: device classes are hints rather than a documented, versioned model, which is the same P-UNDOC cap the criterion applies to an OPC UA server shipped without a LADS NodeSet. \\
 C18 & OS independence          & 2 & Pass    & Pure Python over a neutral network service; the node service installs on Linux, macOS and Windows. \\
 \midrule
 \multicolumn{5}{@{}l}{\textit{Cell integration}}\\
 C19 & Automated load/unload    & 2 & N/A     & A physical property of the instrument; the protocol neither supplies nor obstructs it. \\
 C20 & Motion readiness         & 2 & Partial & Interlocks are live-read booleans that can carry door, lid and clamp state, but no standard robot-access state is defined. \\
-C21 & Safety-event participation & 2 & Partial & E-stop latches until a verified reset, is broadcast, and \texttt{estop\_all} stops every device a session has touched. No latched external hardware-stop reporting and no timed workcell shutdown. \\
+C21 & Safety-event participation & 2 & \textbf{Pass} & A stop records its source (\texttt{client}, \texttt{watchdog}, \texttt{hardware}, \texttt{fault}); a driver reports a physical stop with \texttt{latch\_external\_stop}, which software reset refuses to clear, repeating what a person must do at the instrument. \texttt{safety/shutdown \{within\_s\}} is an orderly stop that escalates to a real e-stop if the window passes, and \texttt{shutdown\_all} winds a whole cell down in parallel. \\
 \bottomrule
 \end{tabular}
 \caption{OpenMHP scored against the twenty-one autonomous-ready procurement criteria of
 Gottstein et al.~\cite{gottstein2026}. Pass = 1.0, Partial = 0.5, Fail = 0.0, weighted.
-Standalone total 39.0 of 46 (85\%); including the two applicable cell-integration criteria,
-41.0 of 50. This is a self-assessment against the published criterion summaries and is
+Standalone total 43.0 of 46 (93\%); including the two applicable cell-integration criteria,
+46.0 of 50. This is a self-assessment against the published criterion summaries and is
 reproducible from the specification and the test suite; the authors' evidence hierarchy
 expects independent proof-of-concept testing, which we have not had performed.}
 \label{tab:scorecard}

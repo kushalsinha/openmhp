@@ -35,7 +35,7 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", help="lab | validate | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("target", help="lab | validate | conformance | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
@@ -156,6 +156,20 @@ def main(argv=None):
     if a.target == "validate":              # mhp validate <device package folder>
         from .validate import main as vmain
         return vmain([a.verb, *a.args])
+
+    if a.target == "conformance":           # mhp conformance <target> [--json]
+        import json as _json
+        from .conformance import run as crun, report as creport
+        if not a.verb:
+            ap.error("mhp conformance <pkg:folder | http://host:port | local:mod:Class>")
+        from .client import connect
+        dev = connect(a.verb, "device-under-test")
+        result = crun(dev)
+        if "--json" in (a.args or []):
+            print(_json.dumps(result, indent=2, default=str))
+        else:
+            print(creport(result))
+        return 0 if all(result.get(lv, {}).get("ok") for lv in ("Core",)) else 1
 
     if a.target == "skills":                # mhp skills install [dir ...]
         from .skills_install import main as smain
