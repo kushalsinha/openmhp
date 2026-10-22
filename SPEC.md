@@ -93,7 +93,9 @@ An MCP host connected to an MHP lab sees **eight operating tools regardless of d
 
 ### 3.4 Programmatic runs
 
-`mhp_run` executes an orchestration script against the lab and returns only what it prints, capped. A script that takes five hundred temperature readings and reports a mean puts one line in the model's context, not five hundred numbers. The script sees the same `Lab` client as §10.3, a `run_dir` folder to save files into, and every call it makes passes the same safety gates as a direct tool call. Hosts SHOULD sandbox script execution; the reference implementation runs scripts in-process so simulated device state is shared, and says so.
+`mhp_run` executes an orchestration script against the lab and returns only what it prints, capped. A script that takes five hundred temperature readings and reports a mean puts one line in the model's context, not five hundred numbers. The script sees a `Lab` offering the client API of §10.3, a `run_dir` folder to save files into, and every call it makes passes the same safety gates, and lands in the same run log, as a direct tool call.
+
+A script is code the host executes, and the host is the trusted side of the protocol (§7.2), so a script a *model* wrote sits inside the trust boundary while its author does not. A host that runs model-authored scripts MUST therefore hand them the audited protocol surface and not the handles that reach past it: the in-process driver object, whose vendor hooks are called only after the gates have passed; an untracked transport call, which skips the host's approval handling and the audit record; and a second client with an approver or observer of its own. The reference bridge wraps the `Lab` and its devices in facades that delegate the documented calls and refuse every other name, naming the call to use instead and recording the attempt in the run log (`script/blocked`); `run/start` records the script's hash, and `run_dir/script.py` keeps its text. Those facades are an API boundary, not a sandbox: they remove the handles, not the capability. Hosts SHOULD sandbox script execution or host devices out of process (§9.1), so that the process running scripts holds no driver object at all, and MAY offer no script execution: `mhp-mcp --no-scripts` (or `OPENMHP_NO_SCRIPTS=1`) omits `mhp_run` from the tool list and refuses it, which is the only configuration in which a model cannot get code to run inside the host. The reference implementation otherwise runs scripts in-process, so simulated device state is shared, and says so.
 
 Three modes matter for real work:
 
@@ -656,7 +658,7 @@ A single MCP server exposes a whole lab to any MCP host through ten generic tool
 | `mhp_invoke` | `actions/invoke` (+ optional wait) |
 | `mhp_job` | `jobs/status`, `jobs/pause`, `jobs/resume`, `jobs/cancel` |
 | `mhp_estop` | `safety/estop` on one device or every device this session touched |
-| `mhp_run` | runs a script against the `Lab` client; returns stdout only (§3.4) |
+| `mhp_run` | runs a script against a facade over the `Lab` client; returns stdout only; absent with `--no-scripts` (§3.4) |
 | `mhp_lab` | fleet management: status, scan, add, onboard, recipes, registry, safety card, events, remove, reload, release (§9.1) |
 | `mhp_data` | runs, their files, the run log, and what devices pushed (`op='updates'`, §8) |
 | `mhp_method` | the device's methods: find, list, get, save, run, diff, retire (§4.5, §5.8) |
@@ -670,9 +672,10 @@ mhp-mcp                                                  # the lab in ~/.openmhp
 mhp-mcp --directory http://directory:18900               # big lab: nothing loaded until searched
 mhp-mcp --directory http://directory:18900 --http 18800  # over HTTP for remote harnesses: bearer token required
 mhp-mcp thermo=http://bench:18921 arm=http://arm-pc:18921   # small lab: cards indexed at start
+mhp-mcp --no-scripts                                     # no mhp_run: nothing the model writes is executed here
 ```
 
-The bridge is the lab's MCP server. Any harness that speaks MCP over stdio or HTTP (Claude Code, Codex, OpenClaw, Hermes, Claude Science, Open Science, or a custom agent) connects to it and sees the same eleven tools.
+The bridge is the lab's MCP server. Any harness that speaks MCP over stdio or HTTP (Claude Code, Codex, OpenClaw, Hermes, Claude Science, Open Science, or a custom agent) connects to it and sees the same eleven tools — ten with `--no-scripts`, which is the deployment that executes no model-authored code (§3.4).
 
 ### 10.2 Command line
 

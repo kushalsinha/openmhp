@@ -24,9 +24,9 @@ HOME = Path(os.environ["OPENMHP_HOME"])
 from openmhp import client as C                                                 # noqa: E402
 from openmhp.adapters import Action, BoundDriver, Setting, Signal               # noqa: E402
 from openmhp.client import Lab, LocalDevice, RemoteError                        # noqa: E402
-from openmhp.driver import (ApprovalRequired, DeviceBusy, DeviceFault, InterlockOpen,  # noqa: E402
+from openmhp.driver import (ApprovalRequired, DeviceBusy, DeviceFault, Forbidden, InterlockOpen,  # noqa: E402
                             InvalidValue, LimitViolation, NotLeased, NotSupported)
-from openmhp.mcp_bridge import Bridge, StdioLoop, make_mcp_http_server          # noqa: E402
+from openmhp.mcp_bridge import TOOLS, Bridge, StdioLoop, make_mcp_http_server   # noqa: E402
 from openmhp.runs import PlanLab, RunLog                                         # noqa: E402
 
 
@@ -291,6 +291,40 @@ def test_runs_never_touch_the_protocol_stream():
     o1 = b.runs.read(r1["run"]["id"], "stdout.txt")["text"]
     o2 = b.runs.read(r2["run"]["id"], "stdout.txt")["text"]
     assert "run one" in o1 and "run two" not in o1 and "run two" in o2 and "jsonrpc" not in o1 + o2
+
+
+def test_a_script_is_handed_the_gated_surface_and_nothing_else():
+    """A run script is code the host executes, so it sits inside the trust boundary while the model that wrote
+    it does not. The lab it gets offers the audited device API only: the in-process driver, the untracked
+    transport call and a Lab with hooks of its own are not reachable, every attempt is refused in terms that
+    name the right call, and the attempt itself lands in the run log."""
+    b = Bridge(home=HOME / "t31")
+    moved = []
+    register("local:probe.t31", drv(settings=[Setting("temp", moved.append, limits={"min": 4, "max": 105})],
+                                   actions=[Action("go", lambda j, p: moved.append("go"), approval="confirm")]))
+    b.lab.targets["thermo"] = "local:probe.t31"
+    for script, reached in (("lab['thermo'].driver.on_write('temp', 900)", "driver"),
+                            ("lab['thermo']._raw_call('settings/write', {'name': 'temp', 'value': 900})", "_raw_call"),
+                            ("lab.child(approver=None)['thermo'].call('actions/invoke', "
+                             "{'name': 'go', 'approved': True})", "child")):
+        r = b.call_tool("mhp_run", {"script": script})
+        assert not r["ok"] and reached in r["error"], (reached, r)
+    assert moved == []                                      # 900 degC never reached the hook, 'go' never ran
+    assert [e["attribute"] for e in b.log.recent if e["kind"] == "script/blocked"] == ["driver", "_raw_call", "child"]
+
+    assert b.call_tool("mhp_run", {"script": "lab['thermo'].write('temp', 50)"})["ok"]      # the gated path still works
+    r = b.call_tool("mhp_run", {"script": "with lab['thermo'] as d:\n    d.write('temp', 900)"})
+    assert not r["ok"] and "above max 105" in json.dumps(r["error"])
+    assert moved == [50]
+    audited = [(e["kind"], e.get("name"), e.get("value")) for e in b.log.recent if e["kind"] in ("write", "refused")]
+    assert ("write", "temp", 50) in audited and ("refused", "temp", 900) in audited
+    assert all(e.get("run") for e in b.log.recent if e["kind"] in ("write", "refused"))     # audited to the run
+
+    off = Bridge(home=HOME / "t31b", scripts=False)         # a host that executes no model-authored code at all
+    assert [t["name"] for t in off.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]] \
+        == [t["name"] for t in TOOLS if t["name"] != "mhp_run"]
+    e = expect(Forbidden.code, lambda: off.call_tool("mhp_run", {"script": "print(1)"}))
+    assert "no scripts" in e.message and "mhp_write" in e.message
 
 
 def test_adapter_outcomes_match_the_backend():

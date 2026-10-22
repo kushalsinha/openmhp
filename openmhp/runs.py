@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import builtins
 import collections
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,7 @@ import time
 import traceback
 import types
 import uuid
+import weakref
 from pathlib import Path
 
 from .client import Device, Lab, RemoteError
@@ -204,6 +206,106 @@ def _virtual_time_module(plan: "PlanLab") -> types.ModuleType:
     return vt
 
 
+# ------------------------------------------------------------------ what a script may reach ---- #
+#
+# A run script is code the host executes (SPEC 7.6), and the host is the trusted side of the protocol, so a
+# script written by a model sits inside the trust boundary while its author does not. The device objects the
+# SDK hands a *person* carry handles that go past the gates on purpose -- the in-process driver, the untracked
+# transport call, a Lab with an approver of its own -- and a script picks them up with one attribute lookup.
+# These facades hand a script the audited protocol surface instead. That is an API boundary, not a sandbox:
+# it removes the handles rather than the capability, so what it buys is that the gated path is the only one a
+# script is given, and that reaching for the others is refused in terms that name the right call and written
+# to the run log. Containing code that goes looking anyway needs a process boundary: host the devices out of
+# process (`mhp node`, http targets, so this process holds no driver at all) or run the bridge
+# with --no-scripts.
+DEVICE_API = ("read", "read_all", "write", "invoke", "run_method", "wait", "wait_until", "status", "pause",
+              "resume", "cancel", "estop", "reset", "acquire", "release", "describe", "resources", "resource",
+              "limits", "methods", "method", "method_find", "method_diff", "method_save", "method_retire",
+              "call", "subscribe")
+LAB_API = ("find", "estop_all", "shutdown_all", "describe_all", "planning")
+
+_INSTEAD = {
+    "driver": "the in-process driver object. on_write and on_invoke are vendor hooks, called only after the "
+              "gates have passed, so reaching them skips limits, interlocks, device state, the lease and the "
+              "audit record. Use dev.write(name, value) and dev.invoke(name, **params).",
+    "_raw_call": "the untracked transport call: it skips the host's approval handling and the audit record. "
+                 "Use dev.call(method, params).",
+    "_send": "the transport itself. Use dev.call(method, params).",
+    "child": "a Lab with hooks of its own; a Lab without an approver passes `approved: true` through "
+             "unchecked, and one without an observer records nothing. Use the lab you were given.",
+    "approver": "the host's confirmation channel. A script cannot answer for a person; ask through the "
+                "device (approval=confirm is put to them by the host).",
+    "observer": "the audit hook. What a run does is recorded whether the script likes it or not.",
+}
+
+_BEHIND: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()      # facade -> (wrapped object, blocked hook)
+
+
+class _ScriptFacade:
+    """Delegates the calls in ``_API`` and refuses everything else.
+
+    The wrapped object is held outside the facade, so the facade carries no attribute that leads back to it
+    and every name the API does not list reaches ``__getattr__``.
+    """
+
+    _API: tuple[str, ...] = ()
+
+    def __init__(self, wrapped, blocked):
+        _BEHIND[self] = (wrapped, blocked)
+
+    def __getattr__(self, attr):
+        if attr.startswith("__") and attr.endswith("__"):           # Python's own lookups, not the script's
+            raise AttributeError(attr)
+        wrapped, blocked = _BEHIND[self]
+        if attr in self._API:
+            return getattr(wrapped, attr)
+        blocked(attr)
+        raise AttributeError(f"a run script cannot reach '{attr}': " +
+                             _INSTEAD.get(attr, f"a script works through the device API ({', '.join(self._API)})."))
+
+
+class ScriptDevice(_ScriptFacade):
+    """The device a script sees: the primitives, jobs, methods and leases, and no way around their gates."""
+
+    _API = DEVICE_API
+
+    @property
+    def name(self) -> str:
+        return _BEHIND[self][0].name
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+
+    def __repr__(self):
+        return f"<device {self.name}>"
+
+
+class ScriptLab(_ScriptFacade):
+    """The lab a script sees. ``lab['id']`` returns a ScriptDevice, in a run and in a plan alike."""
+
+    _API = LAB_API
+
+    def __init__(self, lab, blocked):
+        super().__init__(lab, blocked)
+        self._devices: dict[str, ScriptDevice] = {}                 # facades only; one per name, as the Lab caches
+
+    def __getitem__(self, name: str) -> ScriptDevice:
+        if name not in self._devices:
+            lab, blocked = _BEHIND[self]
+            self._devices[name] = ScriptDevice(lab[name], blocked)
+        return self._devices[name]
+
+    def __contains__(self, name: str) -> bool:
+        return name in _BEHIND[self][0]
+
+    def __repr__(self):
+        return "<lab>"
+
+
 class Runs:
     def __init__(self, lab: Lab, log: RunLog, home: Path | None = None, observer=None):
         self.lab, self.log, self.home = lab, log, home or HOME
@@ -235,7 +337,8 @@ class Runs:
         run = Run(name, script, self.home)
         self.runs[run.id] = run
         run.save()
-        self.log.write("run/start", run=run.id, name=name, background=background, plan=plan is not None)
+        self.log.write("run/start", run=run.id, name=name, background=background, plan=plan is not None,
+                       script_sha=hashlib.sha256(script.encode("utf-8")).hexdigest()[:12])
         own_lab = None
         if plan is not None:
             run_lab = plan
@@ -249,8 +352,11 @@ class Runs:
             k.setdefault("file", run.out)
             builtins.print(*a, **k)
 
-        env = {"lab": run_lab, "run_dir": str(run.dir), "run_id": run.id, "__name__": "__mhp_run__",
-               "__mhp_params__": dict(params or {}), "print": run_print}
+        def blocked(attr, rid=run.id):
+            self.log.write("script/blocked", run=rid, attribute=attr)
+
+        env = {"lab": ScriptLab(run_lab, blocked), "run_dir": str(run.dir), "run_id": run.id,
+               "__name__": "__mhp_run__", "__mhp_params__": dict(params or {}), "print": run_print}
         if plan is not None:
             vt = _virtual_time_module(plan)
             real_import = builtins.__import__

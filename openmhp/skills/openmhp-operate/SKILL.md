@@ -57,6 +57,13 @@ Anything with loops, several devices, or large intermediate data goes in a scrip
 duration, `dev.wait(dev.invoke(...))` to sequence, and print only the summary you need.
 Readings, traces and images stay out of your context.
 
+`lab["id"]` gives you the device API and only that: read, write, invoke, run_method, wait,
+status, pause/resume/cancel, acquire/release, estop, reset, describe, resources, the method
+calls. The driver object and untracked transport calls are not reachable from a script, and
+reaching for them is refused and written to the run log. A limit that refuses you in a tool call
+refuses you here too; report it rather than looking for a way around it. Some labs run no
+scripts at all, and then `mhp_run` is simply absent: drive the instruments step by step.
+
 ```python
 arm, tc = lab["arm-01"], lab["thermocycler-0411"]
 with arm, tc:

@@ -37,7 +37,7 @@ from . import __version__
 from .client import (Lab, PackageChanged, RemoteError, _inprocess, _remote, drop_inprocess,
                      package_fingerprint, package_folder, pin_package)
 from .directory import Directory
-from .driver import ApprovalRequired
+from .driver import ApprovalRequired, Forbidden
 from .fleet import safe_id
 from .package import declared_rulebook, rulebook_diff
 from .runs import PlanLab, RunLog, Runs
@@ -148,7 +148,11 @@ TOOLS = [
                      "no hardware moves, and you get the ordered plan with the steps a human must confirm and the steps that would be "
                      "refused. Show the plan to the user before the real run of anything that heats or moves. "
                      "background=true starts a long run and returns immediately; follow it with mhp_data. "
-                     "Every call the script makes passes the same gates as a direct tool call."),
+                     "Every call the script makes passes the same gates as a direct tool call: `lab` offers the device API "
+                     "(read, write, invoke, run_method, wait, status, acquire/release, methods) and nothing that goes around "
+                     "it, so a script cannot raise a limit, approve its own step or act unrecorded. Reaching for the driver "
+                     "object or an untracked call fails and is logged; report the refusal instead. Some hosts run no scripts "
+                     "at all, and then this tool is absent."),
      "inputSchema": {"type": "object", "properties": {
          "script": {"type": "string"}, "recipe": {"type": "string", "description": "name from mhp_lab op='recipes'"},
          "params": {"type": "object", "description": "recipe PARAMS overrides"}, "name": {"type": "string", "description": "label for the run"},
@@ -319,7 +323,10 @@ class Bridge:
     is a change a person is shown and asked about before anything enforces it.
     """
 
-    def __init__(self, targets: dict[str, str] | None = None, directory=None, fleet=None, home: Path | None = None):
+    def __init__(self, targets: dict[str, str] | None = None, directory=None, fleet=None, home: Path | None = None,
+                 scripts: bool | None = None):
+        off = os.environ.get("OPENMHP_NO_SCRIPTS", "").strip().lower() not in ("", "0", "false", "no")
+        self.scripts = (not off) if scripts is None else bool(scripts)   # --no-scripts: no code from the model runs here
         self.fleet = fleet
         self._onboarding = None
         self._hooked: set[int] = set()
@@ -357,6 +364,12 @@ class Bridge:
             self.notify_harness("error", f"E-STOP {a['device']}: {a.get('reason', '')}")
             return r
         if name == "mhp_run":
+            if not self.scripts:
+                raise _remote(Forbidden.code,
+                              "this bridge runs no scripts (--no-scripts), so mhp_run and recipes are unavailable. Drive the "
+                              "instruments step by step with mhp_write, mhp_invoke and mhp_job, or ask the user to run the "
+                              "script themselves with `mhp` or the SDK, where they are the trusted party.",
+                              {"scripts": False})
             return self.run_tool(a)
         if name == "mhp_lab":
             return self.lab_op(a)
@@ -394,6 +407,11 @@ class Bridge:
             fn = {"status": dev.status, "pause": dev.pause, "resume": dev.resume, "cancel": dev.cancel}[op]
             return fn(a["id"])
         raise ValueError(f"unknown tool {name}")
+
+    def tools(self) -> list:
+        """The tool surface this bridge offers. A bridge that runs no scripts does not offer mhp_run, rather than
+        offering it and refusing every call: an absent tool is a capability the model never plans around."""
+        return TOOLS if self.scripts else [t for t in TOOLS if t["name"] != "mhp_run"]
 
     def _device(self, name: str):
         try:
@@ -714,6 +732,7 @@ class Bridge:
             running = [r for r in self.runs.list() if r["state"] == "running"]
             unlocated, diverged = fleet.unlocated(), fleet.diverged()
             return {"devices": n, "runs_in_progress": len(running), "fleet": str(fleet.path), "elicitation": self.can_elicit(),
+                    **({} if self.scripts else {"scripts": False}),
                     **({"without_a_location": unlocated,
                         "ask": "Ask the human where these instruments stand, then mhp_lab op='location'."} if unlocated else {}),
                     **({"configuration_changed": sorted(diverged),
@@ -827,7 +846,10 @@ class Bridge:
         if op == "recipes":
             from . import recipes as R
             return {"recipes": R.search(a.get("query", ""), self._recipes(), limit=int(a.get("limit", 8))),
-                    "how": "mhp_run recipe=<name> params={...} plan=true first; then without plan. Your own recipes go in ~/.openmhp/recipes/."}
+                    "how": ("mhp_run recipe=<name> params={...} plan=true first; then without plan. Your own recipes go in "
+                            "~/.openmhp/recipes/." if self.scripts else
+                            "this bridge runs no scripts (--no-scripts); these are listed to read, not to run. Their steps "
+                            "are ordinary mhp_write/mhp_invoke calls you can make one at a time.")}
         if op == "registry":
             from .registry import search as rsearch
             return {"packages": rsearch(a.get("query", "")), "how": "mhp_lab op='add' target='github:...' (sim=true for a rehearsal twin)"}
@@ -953,7 +975,7 @@ class Bridge:
         if m == "logging/setLevel":
             return self._ok(mid, {})
         if m == "tools/list":
-            return self._ok(mid, {"tools": TOOLS})
+            return self._ok(mid, {"tools": self.tools()})
         if m == "resources/list":            # only devices this session has opened; the directory is the catalogue
             res = [{"uri": "mhp://runs/latest/stdout.txt", "name": "latest run output", "mimeType": "text/plain"},
                    {"uri": "mhp://log/today", "name": "today's run log", "mimeType": "application/x-ndjson"}]
@@ -1141,6 +1163,10 @@ def http_token(home: Path) -> str:
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     directory, http_port, fleet, origins = None, None, None, []
+    scripts = None
+    if "--no-scripts" in argv:
+        argv = [x for x in argv if x != "--no-scripts"]
+        scripts = False
     if "--fleet" in argv:
         from .fleet import Fleet
         i = argv.index("--fleet")
@@ -1168,7 +1194,9 @@ def main(argv=None):
         from .fleet import Fleet
         fleet = Fleet()                  # ~/.openmhp/fleet.json, possibly empty: mhp_lab fills it
         print(f"MHP bridge: lab from {fleet.path} ({len(fleet.devices)} devices)", file=sys.stderr)
-    bridge = Bridge(targets, directory, fleet)
+    bridge = Bridge(targets, directory, fleet, scripts=scripts)
+    if not bridge.scripts:
+        print("MHP bridge: running no scripts; mhp_run is not offered and recipes are read-only", file=sys.stderr)
     if http_port is not None:
         token = http_token(bridge.home)
         print(f"MHP bridge: send 'Authorization: Bearer <token>'; the token is in {bridge.home / 'http_token'} "
