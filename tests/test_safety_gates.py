@@ -259,6 +259,68 @@ def test_busy_is_derived_from_all_active_jobs():
     assert c.wait(j)["state"] == "done" and d.state == "idle"
 
 
+def test_a_stop_is_read_and_answered_while_a_slow_request_is_in_flight():
+    """`safety/estop` MUST NOT wait behind ordinary requests. Over HTTP each request arrives on its
+    own thread, but stdio read one line, handled it, then read the next, so a stop sent while a
+    three-second read was in flight was not even read until the read had finished. It is answered
+    now while the read is still blocked, and ordinary requests still run in the order they arrive:
+    one instrument, one queue."""
+    import queue as q
+
+    from openmhp.transport import serve_stdio
+    entered, release = threading.Event(), threading.Event()
+
+    def slow():
+        entered.set()
+        release.wait(5)
+        return 20.0
+
+    d = drv(signals=[Signal("t", slow)], settings=[Setting("x", lambda v: None, limits={"min": 0, "max": 9})],
+            estop=lambda: None)
+    answers, events, inbox = [], [], q.Queue()
+
+    class Pipe:                                        # stdin as a pipe: lines arrive when pushed
+        def __iter__(self):
+            return iter(self.q.get, None)
+        q = inbox
+
+    class Sink:                                        # stdout, one complete message per write
+        def write(self, text):
+            if text.strip():
+                m = json.loads(text)
+                (answers if m.get("id") is not None else events).append(m)
+
+        def flush(self):
+            pass
+
+    threading.Thread(target=lambda: serve_stdio(d, stdin=Pipe(), stdout=Sink()), daemon=True).start()
+
+    def push(mid, method, params=None):
+        inbox.put(json.dumps({"jsonrpc": "2.0", "id": mid, "method": method, "params": params or {}}) + "\n")
+
+    def wait_for(mid, within=3.0):
+        deadline = time.monotonic() + within
+        while time.monotonic() < deadline:
+            if any(a.get("id") == mid for a in list(answers)):
+                return time.monotonic()
+            time.sleep(0.01)
+        raise AssertionError(f"no answer to {mid} within {within}s; got {[a.get('id') for a in answers]}")
+
+    push(1, "signals/read", {"names": ["t"]})
+    assert entered.wait(2), "the slow read never reached the device"
+    t0 = time.monotonic()
+    push(2, "safety/estop", {"reason": "smoke"})
+    push(3, "settings/write", {"name": "x", "value": 1})
+    push(4, "settings/write", {"name": "x", "value": 2})
+    assert wait_for(2) - t0 < 1.0, "the stop queued behind the read"
+    assert [a["id"] for a in answers] == [2] and d.state == "estop"      # answered, and the read still blocked
+    assert any(e.get("method") == "notifications/safety/estop" for e in events), events
+    release.set()
+    wait_for(4)
+    assert [a["id"] for a in answers] == [2, 1, 3, 4]                    # the stop jumped; the rest kept order
+    inbox.put(None)
+
+
 def test_uncertain_write_latches_fault_and_reaches_a_safe_state():
     safe = []
     d = drv(settings=[Setting("x", fails(OSError("reply lost")), limits={"min": 0, "max": 1})],

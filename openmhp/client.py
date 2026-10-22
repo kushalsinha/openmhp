@@ -422,6 +422,7 @@ class StdioDevice(Device):
                                      stdout=subprocess.PIPE, text=True, bufsize=1)
         self._pending: dict[int, dict] = {}
         self._cv = threading.Condition()
+        self._write_lock = threading.Lock()        # one pipe: a stop and a write must not interleave
         self._eof = False
         self.notifications: list[dict] = []
         threading.Thread(target=self._reader, daemon=True).start()
@@ -451,8 +452,9 @@ class StdioDevice(Device):
         if self._eof:
             raise ConnectionError(f"{self.name}: driver process has exited")
         try:
-            self.proc.stdin.write(json.dumps(msg) + "\n")
-            self.proc.stdin.flush()
+            with self._write_lock:                 # the line, not the exchange: the answer is waited for below
+                self.proc.stdin.write(json.dumps(msg) + "\n")
+                self.proc.stdin.flush()
         except (BrokenPipeError, OSError) as e:
             raise ConnectionError(f"{self.name}: driver process is not accepting input ({e})") from None
         deadline = time.monotonic() + self.timeout

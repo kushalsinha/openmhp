@@ -99,16 +99,45 @@ def device_token(*, create: bool = False, home: Path | None = None) -> str | Non
 
 
 # ---------------------------------------------------------------- stdio ---- #
-def serve_stdio(driver: Driver) -> None:
+def serve_stdio(driver: Driver, *, stdin=None, stdout=None) -> None:
+    """Newline-delimited JSON-RPC over stdin/stdout.
+
+    Reading never waits on handling. An instrument has one serial port, so ordinary requests are
+    still handled one at a time and in the order they arrive -- a client that pipelines a write and
+    then a read means them that way round. But the calls that must not wait behind device I/O are
+    answered the moment they are read, each on a thread of its own: `safety/estop` above all, and the
+    status, describe and lease calls the driver already handles outside its request lock. Before this,
+    a stop sent while a three-second read was in flight was not even *read* until the read finished,
+    which made the one call an agent may always make the one call that queued. Over HTTP every
+    request already arrives on its own thread; stdio was the odd one out.
+    """
+    from .driver import _UNLOCKED as NO_WAIT       # the driver's own list of what must not queue
+
+    stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
     out_lock = threading.Lock()
+    inbox: "queue.Queue[dict | None]" = queue.Queue()
 
     def send(obj: dict) -> None:
         with out_lock:
-            sys.stdout.write(json.dumps(obj) + "\n")
-            sys.stdout.flush()
+            stdout.write(json.dumps(obj) + "\n")
+            stdout.flush()
 
+    def answer(msg: dict) -> None:
+        try:
+            resp = dispatch(driver, msg, client="stdio")
+            if resp is not None:
+                send(resp)
+        except Exception:                          # noqa: BLE001  dispatch answers its own errors; this is
+            pass                                   # a broken pipe, and there is nowhere left to report it
+
+    def ordinary() -> None:
+        for msg in iter(inbox.get, None):
+            answer(msg)
+
+    worker = threading.Thread(target=ordinary, daemon=True, name="mhp-stdio-requests")
+    worker.start()
     driver.subscribers.append(send)
-    for line in sys.stdin:
+    for line in stdin:
         line = line.strip()
         if not line:
             continue
@@ -117,9 +146,12 @@ def serve_stdio(driver: Driver) -> None:
         except json.JSONDecodeError:
             send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
             continue
-        resp = dispatch(driver, msg, client="stdio")
-        if resp is not None:
-            send(resp)
+        if msg.get("method") in NO_WAIT:
+            threading.Thread(target=answer, args=(msg,), daemon=True).start()
+        else:
+            inbox.put(msg)
+    inbox.put(None)                                # stdin closed: finish the request in flight, then stop
+    worker.join(30.0)
 
 
 # ----------------------------------------------------------------- http ---- #
