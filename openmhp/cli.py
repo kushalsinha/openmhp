@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import sys
 
 from .client import connect, RemoteError
@@ -44,16 +45,25 @@ def main(argv=None):
     ap.add_argument("--sim", action="store_true", help="(lab add) use the package's simulated twin")
     ap.add_argument("--location", help="(lab add) where the instrument stands, e.g. \"bay 3, fume hood 2\"")
     ap.add_argument("--http", type=int, metavar="PORT", help="(serve) listen on HTTP instead of stdio; (node) base port, one per package")
+    ap.add_argument("--host", metavar="ADDR", help="(serve|node|serve-directory) bind address: 127.0.0.1 keeps a device on this machine, 0.0.0.0 serves the network (node's default)")
+    ap.add_argument("--token", help="device bearer token: required by a server reachable from the network, and presented by the client verbs (OPENMHP_DEVICE_TOKEN)")
+    ap.add_argument("--no-auth", action="store_true", help="(serve|node) serve the network with no token; remote callers are then served but cannot confirm approval-gated operations")
     ap.add_argument("--install-service", action="store_true", help="(node) run in the background from now on, across reboots, with no terminal open")
     ap.add_argument("--uninstall-service", action="store_true", help="(node) remove a service installed with --install-service")
     ap.add_argument("--service-status", action="store_true", help="(node) is a service installed, and is it running")
     ap.add_argument("--dry-run-service", action="store_true", help="(node --install-service) print what would be written and run, but do neither")
     a = ap.parse_args(argv)
 
+    def _serve_token():
+        """What the operator asked for: a token of their own, none at all, or the default (one is
+        generated as soon as the bind address is reachable from another machine)."""
+        return False if a.no_auth else a.token
+
     if a.target == "serve":
         from .transport import serve_http, serve_stdio
         drv = _load_driver(a.verb)
-        return serve_http(drv, port=a.http) if a.http else serve_stdio(drv)
+        return serve_http(drv, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
+            else serve_stdio(drv)
 
     if a.target == "node":                  # mhp node <packages-dir> [--http BASE_PORT] [--install-service | ...]
         import threading
@@ -99,6 +109,9 @@ def main(argv=None):
                 return 1
             return 0
 
+        from .transport import device_token, device_token_file, is_loopback
+        host = a.host or "0.0.0.0"              # a node exists to serve other machines; see the token below
+        token = False if a.no_auth else (a.token or (None if is_loopback(host) else device_token(create=True)))
         print(f"serving {len(folders)} package(s) from {root}, ports {base}..{base + len(folders) - 1}", file=sys.stderr)
         for i, folder in enumerate(folders):
             port = base + i
@@ -107,8 +120,15 @@ def main(argv=None):
             except Exception as e:                          # noqa: BLE001  one bad package must not take the rest down
                 print(f"  {folder.name:24s} SKIPPED: {type(e).__name__}: {e}", file=sys.stderr)
                 continue
-            threading.Thread(target=serve_http, args=(drv,), kwargs={"host": "0.0.0.0", "port": port}, daemon=True).start()
-            print(f"  {drv.descriptor['device']['id']:24s} http://0.0.0.0:{port}  ({folder})", file=sys.stderr)
+            threading.Thread(target=serve_http, args=(drv,), kwargs={"host": host, "port": port, "token": token},
+                             daemon=True).start()
+            print(f"  {drv.descriptor['device']['id']:24s} http://{host}:{port}  ({folder})", file=sys.stderr)
+        if token:
+            where = ("the token you supplied" if a.token else
+                     "OPENMHP_DEVICE_TOKEN" if os.environ.get("OPENMHP_DEVICE_TOKEN") else str(device_token_file()))
+            print(f"these devices require 'Authorization: Bearer <token>' on /rpc and /events; the token is in "
+                  f"{where}.\n  On the machine running the bridge:  export OPENMHP_DEVICE_TOKEN=<token>\n"
+                  f"  GET /mhp.json stays open, so `mhp lab scan` still finds them.", file=sys.stderr)
         print("advertising on the LAN if zeroconf is installed (pip install \"openmhp[all]\"); Ctrl-C to stop", file=sys.stderr)
         try:
             threading.Event().wait()
@@ -200,9 +220,10 @@ def main(argv=None):
         from .transport import serve_http, serve_stdio
         d = Directory.from_manifest(a.verb) if a.verb.endswith(".json") else \
             Directory.from_targets(dict(t.split("=", 1) for t in [a.verb, *a.args]))
-        return serve_http(d, port=a.http) if a.http else serve_stdio(d)
+        return serve_http(d, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
+            else serve_stdio(d)
 
-    dev = connect(a.target)
+    dev = connect(a.target, token=a.token)
     v, x = a.verb, a.args
     try:
         if v == "find":      out = dev.call("directory/search", {"query": " ".join(x)})["results"]

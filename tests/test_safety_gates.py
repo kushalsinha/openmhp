@@ -445,6 +445,80 @@ def test_mcp_http_needs_a_token_and_a_trusted_origin():
     assert init["protocolVersion"] == "2025-06-18"
 
 
+def test_a_device_takes_approved_only_from_a_channel_it_can_place():
+    """`approved: true` is the host's statement that a person confirmed this exact request (7.2), so a
+    device may take it only from a caller its transport can place: the machine it runs on, or one
+    holding its token. A stranger reaching an open port is neither, and the flag is dropped before the
+    gates ever see it. An address another machine can reach is not served without a token unless the
+    operator asks for that."""
+    import socket
+
+    from openmhp.transport import device_token, dispatch, is_loopback, serve_http
+    opened = []
+
+    def device():
+        return drv(actions=[Action("open_lid", lambda j, p: opened.append(1), approval="confirm")], estop=lambda: None)
+
+    def free_port():                      # a free port, not a fixed one: CI runners are shared
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def post(port, params, token=None):
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/rpc", headers=headers,
+                                     data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "actions/invoke",
+                                                      "params": params}).encode())
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+
+    local, locked = free_port(), free_port()
+    for port, token in ((local, None), (locked, "secret-device-token")):
+        threading.Thread(target=serve_http, args=(device(),),
+                         kwargs={"host": "127.0.0.1", "port": port, "token": token}, daemon=True).start()
+    for port in (local, locked):
+        for _ in range(200):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=2).read()
+                break
+            except OSError:
+                time.sleep(0.02)
+        else:
+            raise AssertionError(f"the device on {port} never answered")
+
+    assert "error" in post(local, {"name": "open_lid"})                        # loopback, unconfirmed: refused
+    assert "result" in post(local, {"name": "open_lid", "approved": True})     # the person at this terminal
+    assert len(opened) == 1
+
+    for guess in (None, "guessed-token"):                                      # behind a token, the flag is
+        try:                                                                   # worth no more than the token
+            post(locked, {"name": "open_lid", "approved": True}, token=guess)
+            raise AssertionError("an unauthenticated request was served")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401 and b"Bearer" in e.read()
+    assert "result" in post(locked, {"name": "open_lid", "approved": True}, token="secret-device-token")
+    assert len(opened) == 2
+    nameplate = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{locked}/mhp.json", timeout=5).read())
+    assert nameplate["device"]["id"]                   # discovery stays open, so `mhp lab scan` still works
+
+    r = dispatch(device(), {"jsonrpc": "2.0", "id": 1, "method": "actions/invoke",
+                            "params": {"name": "open_lid", "approved": True}}, "10.0.0.9", trusted=False)
+    assert r["error"]["code"] == ApprovalRequired.code and r["error"]["data"]["ignoredApproved"] is True
+    assert "cannot assert it" in r["error"]["message"] and len(opened) == 2
+
+    dev = C.connect(f"http://127.0.0.1:{locked}", token="secret-device-token")      # the SDK carries the token
+    assert dev.call("actions/invoke", {"name": "open_lid", "approved": True}) is not None
+    e = expect(Forbidden.code, lambda: C.connect(f"http://127.0.0.1:{locked}", token="").call(
+        "actions/invoke", {"name": "open_lid"}))
+    assert "OPENMHP_DEVICE_TOKEN" in e.message                                      # and says what is missing
+
+    assert [is_loopback(a) for a in ("127.0.0.1", "::1", "localhost", "0.0.0.0", "10.0.0.9")] \
+        == [True, True, True, False, False]
+    assert device_token() is None                      # a client never invents a secret of its own
+
+
 def test_cell_handoffs_are_checked():
     from openmhp.devices.sim_arm import SimArm
     from openmhp.devices.sim_thermocycler import SimThermocycler

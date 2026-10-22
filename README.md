@@ -307,6 +307,13 @@ mhp node ~/instruments --http 18900
 mhp node ~/instruments --http 18900 --install-service
 ```
 
+A node serves other machines, so it generates a token the first time it starts
+(`~/.openmhp/device_token`) and requires `Authorization: Bearer <token>` on `/rpc` and `/events`.
+Copy it to the machine running the bridge (`export OPENMHP_DEVICE_TOKEN=...`); discovery stays
+open, so `mhp lab scan` still finds the devices. `--host 127.0.0.1` keeps a node to its own
+machine and needs no token; `--no-auth` serves the network without one, and callers from off the
+machine can then no longer confirm approval-gated operations.
+
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of
 contact behavior, and keep the manufacturer's safety systems in place. OpenMHP is currently an

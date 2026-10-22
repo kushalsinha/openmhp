@@ -7,22 +7,38 @@ agents can discover a device with nothing but its URL.
 """
 from __future__ import annotations
 
+import hmac
 import json
+import os
+import secrets
 import time
 import queue
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
-from .driver import Driver, MHPError
+from .driver import ApprovalRequired, Driver, MHPError
 
 
-def dispatch(driver: Driver, msg: dict, client: str) -> dict | None:
-    """Turn one JSON-RPC request into one response (None for notifications)."""
+def dispatch(driver: Driver, msg: dict, client: str, *, trusted: bool = True) -> dict | None:
+    """Turn one JSON-RPC request into one response (None for notifications).
+
+    ``trusted`` is the transport's statement that this caller is a host in the sense of SPEC 7.2:
+    the side that can report what a person said. `approved: true` is exactly that report, so a
+    caller the transport cannot place -- a stranger on the network reaching an open port -- has it
+    dropped here, before the gates ever see it. Everything else it asked for is still served: the
+    device simply refuses the step that needed a human, and says why.
+    """
     mid = msg.get("id")
+    params = msg.get("params") or {}
+    ignored_approved = False
+    if not trusted and isinstance(params, dict) and params.get("approved") is not None:
+        params = {k: v for k, v in params.items() if k != "approved"}
+        ignored_approved = True
     err_ts = time.time()                 # device-anchored, so a client can align it with its own receipt
     try:
-        result = driver.rpc(msg.get("method", ""), msg.get("params") or {}, client)
+        result = driver.rpc(msg.get("method", ""), params, client)
         if mid is None:
             return None
         return {"jsonrpc": "2.0", "id": mid, "result": result}
@@ -33,11 +49,53 @@ def dispatch(driver: Driver, msg: dict, client: str) -> dict | None:
                "state": getattr(driver, "state", None)}
         if e.data is not None:
             err["data"] = e.data
+        if ignored_approved and e.code == ApprovalRequired.code:
+            err["message"] += ("; the `approved` flag in this request was ignored because this channel cannot "
+                               "assert it: it is neither this machine nor authenticated to this device")
+            err["data"] = {**(e.data or {}), "ignoredApproved": True}
     except KeyError as e:
         err = {"code": -32602, "message": f"missing param {e}", "ts": err_ts}
     except Exception as e:                          # noqa: BLE001
         err = {"code": -32603, "message": f"{type(e).__name__}: {e}", "ts": err_ts}
     return {"jsonrpc": "2.0", "id": mid, "error": err}
+
+
+# ------------------------------------------------------- authentication and the trust boundary ---- #
+def is_loopback(addr: str) -> bool:
+    """True for an address that no other machine can reach. `0.0.0.0` and `::` are not: they are
+    every address this host has, which is the point of asking."""
+    a = (addr or "").strip().strip("[]").lower()
+    return a.startswith("127.") or a in ("::1", "0:0:0:0:0:0:0:1", "localhost")
+
+
+def device_token_file(home: Path | None = None) -> Path:
+    if home is None:
+        from .fleet import HOME                       # late: fleet imports the client, which imports this
+        home = HOME
+    return Path(home) / "device_token"
+
+
+def device_token(*, create: bool = False, home: Path | None = None) -> str | None:
+    """OPENMHP_DEVICE_TOKEN, or the token in <home>/device_token (created with mode 0600).
+
+    A server creates it when it is about to listen where another machine can reach it; a client
+    only ever reads it. So a client on the same machine needs no configuration, and a client
+    anywhere else is handed the secret deliberately. Same shape as the bridge's own http_token.
+    """
+    env = os.environ.get("OPENMHP_DEVICE_TOKEN")
+    if env:
+        return env
+    path = device_token_file(home)
+    if path.is_file():
+        return path.read_text().strip() or None
+    if not create:
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tok = secrets.token_urlsafe(32)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(tok)
+    return tok
 
 
 # ---------------------------------------------------------------- stdio ---- #
@@ -65,7 +123,23 @@ def serve_stdio(driver: Driver) -> None:
 
 
 # ----------------------------------------------------------------- http ---- #
-def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765) -> None:
+def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765, *,
+               token: str | bool | None = None) -> None:
+    """Serve one device over HTTP (+SSE).
+
+    ``token`` gates POST /rpc and GET /events with ``Authorization: Bearer <token>``. The default,
+    None, means: nothing while the bind address is loopback, where the operating system is already
+    the boundary, and a generated token (``~/.openmhp/device_token``) the moment the address is one
+    another machine can reach -- a port that operates an instrument should not answer the whole
+    network unasked. Pass False to serve it open anyway, behind a proxy that authenticates or on an
+    isolated instrument VLAN; requests from off this machine are then served, but cannot assert
+    `approved` (SPEC 7.2). GET /mhp.json is the device's nameplate and stays open either way, so
+    `mhp lab scan` and discovery keep working.
+    """
+    generated = token is None
+    if generated:
+        token = False if is_loopback(host) else device_token(create=True)
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):               # quiet
             pass
@@ -78,9 +152,21 @@ def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765) -> Non
             self.end_headers()
             self.wfile.write(body)
 
+        def _authorized(self) -> bool:
+            if not token:
+                return True
+            auth = self.headers.get("Authorization", "")
+            return auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].encode(), str(token).encode())
+
+        def _unauthorized(self) -> None:
+            self._json(401, {"error": "this device requires 'Authorization: Bearer <token>'; the operator has "
+                                      "the token (OPENMHP_DEVICE_TOKEN or ~/.openmhp/device_token on its host)"})
+
         def do_GET(self):
-            if self.path == "/mhp.json":            # discovery document
+            if self.path == "/mhp.json":            # discovery document: the nameplate, not control
                 self._json(200, driver.rpc("device/describe", {}, "discovery"))
+            elif self.path == "/events" and not self._authorized():
+                self._unauthorized()
             elif self.path == "/events":            # SSE stream of notifications
                 q: queue.Queue = queue.Queue()
                 driver.subscribers.append(q.put)
@@ -106,6 +192,8 @@ def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765) -> Non
         def do_POST(self):
             if self.path != "/rpc":
                 return self._json(404, {"error": "POST /rpc"})
+            if not self._authorized():
+                return self._unauthorized()
             n = int(self.headers.get("Content-Length", 0))
             client = self.headers.get("X-MHP-Client", self.client_address[0])
             try:
@@ -113,11 +201,20 @@ def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765) -> Non
             except json.JSONDecodeError:
                 return self._json(400, {"jsonrpc": "2.0", "id": None,
                                         "error": {"code": -32700, "message": "parse error"}})
-            resp = dispatch(driver, msg, client)
+            # authenticated, or local: either way the transport can place this caller well enough
+            # to pass on what it says about a person. Anything else gets its `approved` dropped.
+            resp = dispatch(driver, msg, client, trusted=bool(token) or is_loopback(self.client_address[0]))
             self._json(200, resp if resp is not None else {})
 
     srv = ThreadingHTTPServer((host, port), Handler)   # binds AND listens: we are accepting from here on
     print(f"MHP {driver.descriptor['device']['id']} listening on http://{host}:{port}", file=sys.stderr)
+    if token and generated:
+        where = "OPENMHP_DEVICE_TOKEN" if os.environ.get("OPENMHP_DEVICE_TOKEN") else str(device_token_file())
+        print(f"  reachable from the network, so /rpc and /events require 'Authorization: Bearer <token>'; "
+              f"the token is in {where}. On another machine: export OPENMHP_DEVICE_TOKEN=<token>", file=sys.stderr)
+    elif not token and not is_loopback(host):
+        print("  WARNING: no authentication and reachable from the network. Requests from off this machine "
+              "are served but cannot confirm approval-gated operations.", file=sys.stderr)
 
     def _advertise() -> None:
         """Off the startup path on purpose. The socket accepts connections the moment the line

@@ -28,12 +28,13 @@ import shlex
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from .driver import ApprovalRequired, Driver, MHPError, NotLeased
+from .driver import ApprovalRequired, Driver, Forbidden, MHPError, NotLeased
 
 
 class RemoteError(MHPError):
@@ -322,17 +323,49 @@ class LocalDevice(Device):
         super().close()
 
 
+def _device_token(url: str, given: str | None) -> str | None:
+    """The bearer token to present to a device server (SPEC 9.1).
+
+    An explicit one wins; then OPENMHP_DEVICE_TOKEN, which the operator set for this process; then
+    the token file, but only for a device on this machine, because that file is our own server's
+    secret and is not volunteered to a host that did not issue it.
+    """
+    if given is not None:
+        return given or None
+    import os
+    from urllib.parse import urlsplit
+
+    from .transport import device_token, is_loopback
+    return os.environ.get("OPENMHP_DEVICE_TOKEN") or (
+        device_token() if is_loopback(urlsplit(url).hostname or "") else None)
+
+
 class HttpDevice(Device):
-    def __init__(self, url: str, name="device", client_id: str | None = None, **kw):
+    def __init__(self, url: str, name="device", client_id: str | None = None, *,
+                 token: str | None = None, **kw):
         self.url = url.rstrip("/")
+        self.token = _device_token(self.url, token)
         super().__init__(name, session=kw.pop("session", None) or client_id, **kw)
+
+    def _headers(self) -> dict:
+        h = {"X-MHP-Client": self.session}
+        if self.token:
+            h["Authorization"] = f"Bearer {self.token}"
+        return h
 
     def _send(self, msg):
         req = urllib.request.Request(
             self.url + "/rpc", data=json.dumps(msg).encode(),
-            headers={"Content-Type": "application/json", "X-MHP-Client": self.session})
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
-            return json.loads(r.read())
+            headers={"Content-Type": "application/json", **self._headers()})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code != 401:                    # a refusal the device meant to make comes back as JSON-RPC
+                raise
+            raise _remote(Forbidden.code, f"{self.url} requires a bearer token: set OPENMHP_DEVICE_TOKEN to the "
+                                          "token on the device's host (~/.openmhp/device_token there), or pass "
+                                          "token=... to connect()", {"status": 401}) from None
 
     def _start_events(self):
         """Consume GET /events (Server-Sent Events) on a daemon thread and reconnect if it drops."""
@@ -345,7 +378,7 @@ class HttpDevice(Device):
             backoff = 0.5
             while not stop.is_set():
                 try:
-                    req = urllib.request.Request(self.url + "/events", headers={"X-MHP-Client": self.session})
+                    req = urllib.request.Request(self.url + "/events", headers=self._headers())
                     resp = urllib.request.urlopen(req, timeout=60)     # the server keeps alive every 15 s
                     self._sse_resp = resp
                     backoff = 0.5
@@ -516,9 +549,13 @@ def drop_inprocess(target: str) -> bool:
 
 
 def connect(target: str, name: str = "device", **kw) -> Device:
-    """target: 'http://host:port' | 'stdio:<command>' | 'local:<module>:<DriverClass>' | 'pkg:<folder>' | 'sim:<folder>'"""
+    """target: 'http://host:port' | 'stdio:<command>' | 'local:<module>:<DriverClass>' | 'pkg:<folder>' | 'sim:<folder>'
+
+    ``token`` is the device's bearer token, and applies to http targets only.
+    """
     if target.startswith("http://") or target.startswith("https://"):
         return HttpDevice(target, name, **kw)
+    kw.pop("token", None)                    # a bearer token means nothing to a pipe or an import
     if target.startswith("stdio:"):
         return StdioDevice(target[len("stdio:"):], name, **kw)
     if target.startswith(("local:", "pkg:", "sim:")):
