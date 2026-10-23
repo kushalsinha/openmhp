@@ -109,7 +109,9 @@ Every `mhp_run` is a **run** with a folder under `~/.openmhp/runs/<id>/` holding
 
 A run's `meta.json` is written when it starts, and a run whose process ended before it finished is reported as `interrupted`. Script output goes only to the run's own file; nothing redirects the process's standard output, which the MCP transport owns.
 
-The **run log** is append-only JSONL, one file per day under `~/.openmhp/log/`. The bridge records every call made through its clients, from direct tools and from run scripts (tagged with the run id): reads, writes, invokes, refusals, confirmations, e-stops and leases, plus scans, adds, plans, run boundaries and events from in-process devices. Sequence numbers continue across restarts; a cursor older than memory is served from disk, and the answer says `complete: false` when history is missing. Events from devices served over HTTP are not yet consumed (§16). `mhp_lab op="events" since=<seq>` returns what happened after a point, so a returning agent can catch up; the same events are pushed to the harness as MCP logging messages when it declared the capability. A run is reproducible from its script and the log, and a lab-notebook entry can be generated from them.
+The **run log** is append-only JSONL, one file per day under `~/.openmhp/log/`. The bridge records every call made through its clients, from direct tools and from run scripts (tagged with the run id): reads, writes, invokes, refusals, confirmations, e-stops and leases, plus scans, adds, plans, run boundaries and events from in-process devices. Sequence numbers continue across restarts; a cursor older than memory is served from disk.
+
+Each record MUST carry `prev`, the digest of the record before it, and `hash`, its own, both recomputable from the line itself; the first record of all follows a digest of zeroes. A reader then gets two different answers rather than one: `complete: false` when history is **missing** (the cursor is older than the files, a write failed, or the sequence has a hole), and `verified: {ok: false, broken: [...]}` when what was served is **not what was written**, naming the record where the chain breaks. `mhp_data op="audit"` and `mhp log audit` check every record on disk from the first line to the last. This is tamper-evidence, not tamper-proofing — whoever can write the files can rewrite the chain along with them, and signing the head is §16 — but an edit no longer leaves the record claiming to be whole: a changed reading and a deleted refusal are each pointed at by sequence number. A record that never reached disk leaves the same break as a deleted one, which is the truth about the file. Events from devices served over HTTP are not yet consumed (§16). `mhp_lab op="events" since=<seq>` returns what happened after a point, so a returning agent can catch up; the same events are pushed to the harness as MCP logging messages when it declared the capability. A run is reproducible from its script and the log, and a lab-notebook entry can be generated from them.
 
 ### 3.6 Examples in the descriptor
 
@@ -458,7 +460,7 @@ A write whose outcome is unknown (the command may have reached the device but th
      "progress":1.0,"result":{"cycles_completed":30,"final_block_temperature":72}}}}
 ```
 
-Job states: `queued → running → done | failed | cancelled`, plus `waiting_operator` for operator-run instruments (§9.1). A `failed` job carries `outcome: "unknown"` and puts the device in `fault` until a verified `safety/reset`. Busy is derived from all active jobs: a non-concurrent action is refused while any job runs, and a `concurrent` one may run alongside. A job's completion and the device state are published together. Adapters MUST report the backend's terminal outcome (a cancelled or aborted backend job is not `done`) and MUST NOT report a cancel the backend has not honoured.
+Job states: `queued → running → done | failed | cancelled`, plus `waiting_operator` for operator-run instruments (§9.1). A `failed` job carries `outcome: "unknown"` and puts the device in `fault` until a verified `safety/reset`. Busy is derived from all active jobs: a non-concurrent action is refused while any job runs, and a `concurrent` one may run alongside. A job's completion and the device state are published together. Settled job records that a device keeps on disk, and reads back as its own history after a restart, carry a digest of the record: one that does not match it is still returned, because dropping evidence is worse, but it carries `unverified` saying so, so an edited result is never presented as what the instrument reported. Adapters MUST report the backend's terminal outcome (a cancelled or aborted backend job is not `done`) and MUST NOT report a cancel the backend has not honoured.
 
 ### 5.6 Safety
 
@@ -700,6 +702,7 @@ mhp http://bench:18921 invoke run_protocol '{"steps":[...],"cycles":30}' --wait
 mhp http://bench:18921 invoke open_lid --approved      # the person at this terminal confirms
 mhp http://bench:18921 estop "smoke from lid"
 mhp lab accept thermocycler-01                         # the owner accepts an edited package as this lab's rulebook
+mhp log audit                                          # is the record on disk still what was written?
 ```
 
 The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool.
@@ -848,7 +851,7 @@ A package's `sim.py` twin is loaded by `load_driver(path, sim=True)`, which mark
 
 ## 16. Not yet specified
 
-In-band authentication (`params.auth`; the device HTTP transport authenticates at the transport level today, §9.1); request idempotency tokens; multi-device transactions (`safety/shutdown` winds a cell down but is not a transaction, and does not roll anything back); descriptor signing; a hosted registry beyond the bundled index; sandboxed script execution; streaming bulk data (results are stored as files next to the run, §3.5); a machine-readable description of hardware watchdogs and device-side safe states. Each has a natural home in the protocol (a `data/` primitive, `params.auth`, a `transaction/` namespace) and will be specified with partner input.
+In-band authentication (`params.auth`; the device HTTP transport authenticates at the transport level today, §9.1); request idempotency tokens; multi-device transactions (`safety/shutdown` winds a cell down but is not a transaction, and does not roll anything back); descriptor signing, and signing the run log's chain head so that a rewrite by whoever holds the files is detectable too (§3.5); a hosted registry beyond the bundled index; sandboxed script execution; streaming bulk data (results are stored as files next to the run, §3.5); a machine-readable description of hardware watchdogs and device-side safe states. Each has a natural home in the protocol (a `data/` primitive, `params.auth`, a `transaction/` namespace) and will be specified with partner input.
 
 ---
 

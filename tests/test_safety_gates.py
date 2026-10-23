@@ -1214,6 +1214,77 @@ def test_a_finished_job_survives_a_restart():
     assert rec["state"] == "done" and rec["result"] == job["result"], rec
 
 
+def test_the_record_cannot_be_edited_without_showing_it():
+    """SPEC 3.5 calls the run log append-only and says the answer reports `complete: false` when
+    history is missing, but nothing checked either: a changed reading and a deleted refusal still
+    came back `complete: true`. Every record now carries the digest of the one before it, so a
+    rewrite, a deletion and a reorder each break the chain where they happened."""
+    home = HOME / "t7log"
+    log = RunLog(home)
+    log.write("read", device="tc-01", values={"block_temperature": 22.0})
+    log.write("write", device="tc-01", name="target_temperature", value=95, ok=True)
+    log.write("refused", op="write", device="tc-01", code=LimitViolation.code, message="300 is above max 105")
+    again = RunLog(home)                                   # the chain continues across a restart
+    again.write("job", device="tc-01", action="run_protocol", state="done")
+    clean = again.audit()
+    assert clean["ok"] and clean["records"] == 4 and clean["chained"] == 4, clean
+    w = again.window(0, limit=10)                          # a cursor older than memory: read back
+    assert w["complete"] and w["verified"]["ok"] and w["verified"]["of"] == "disk", w
+    assert log.window(0, limit=10)["verified"] == {"ok": True, "records": 3, "chained": 3,
+                                                   "broken": [], "of": "memory"}
+
+    f = sorted((home / "log").glob("*.jsonl"))[-1]         # now edit the record the audit's way
+    kept = []
+    for line in f.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        e = json.loads(line)
+        if e["kind"] == "refused":
+            continue                                       # delete the refusal
+        if e["kind"] == "read":
+            e["values"]["block_temperature"] = 72.0        # change the reading
+        kept.append(json.dumps(e, default=str))
+    io.open(f, "w", encoding="utf-8", newline="\n").write("\n".join(kept) + "\n")
+
+    after = RunLog(home)
+    after.recent.clear()                                   # a reader with nothing in memory
+    w = after.window(0, limit=10)
+    assert [e["seq"] for e in w["events"]] == [1, 2, 4], w["events"]
+    assert w["complete"] is False, "a deleted record is missing history"
+    assert w["verified"]["ok"] is False and w["verified"]["of"] == "disk"
+    kinds = {(b["seq"], b["kind"]) for b in w["verified"]["broken"]}
+    assert (1, "rewritten") in kinds, kinds                # the changed reading
+    assert (4, "missing") in kinds and (4, "chain") in kinds, kinds        # the deleted refusal
+    a = after.audit()
+    assert a["ok"] is False and a["records"] == 3 and a["files"] == [f.name]
+    assert "tamper-evident" in a["note"]
+
+    broke = HOME / "t7err"                                 # a record that never reached disk
+    (broke / "log").parent.mkdir(parents=True, exist_ok=True)
+    (broke / "log").write_text("not a directory", encoding="utf-8")
+    stderr, sys.stderr = sys.stderr, io.StringIO()         # the warning is the point, not the noise
+    try:
+        nowhere = RunLog(broke)
+        nowhere.write("read", device="tc-01", values={"x": 1})
+    finally:
+        warned, sys.stderr = sys.stderr.getvalue(), stderr
+    assert "history on disk is incomplete" in warned, warned
+    assert nowhere.write_errors == 1 and nowhere.window(0)["complete"] is False
+
+    # A job record is read back as the device's own history, so it carries its own digest too.
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    first = LocalDevice(SimThermocycler())
+    job = first.wait(first.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
+    rec_file = HOME / "jobs" / "thermocycler-01" / f"{job['id']}.json"
+    rec = json.loads(rec_file.read_text(encoding="utf-8"))
+    assert rec["digest"] and rec["result"] == job["result"]
+    rec["result"] = {"cycles_completed": 99}
+    rec_file.write_text(json.dumps(rec), encoding="utf-8")
+    restored = LocalDevice(SimThermocycler()).call("jobs/status", {"id": job["id"]})["job"]
+    assert restored["result"] == {"cycles_completed": 99}   # still returned: dropping evidence is worse
+    assert "does not match its own digest" in restored["unverified"], restored
+
+
 def test_conformance_scores_a_device_behaviourally():
     """C17: the levels are a command anyone can run, not a claim in a document."""
     from openmhp.conformance import run, report

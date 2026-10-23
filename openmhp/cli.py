@@ -36,7 +36,7 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", help="lab | validate | conformance | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("target", help="lab | log | validate | conformance | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
@@ -196,6 +196,20 @@ def main(argv=None):
     if a.target == "validate":              # mhp validate <device package folder>
         from .validate import main as vmain
         return vmain([a.verb, *a.args])
+
+    if a.target == "log":                   # mhp log [since] | mhp log audit
+        from .runs import RunLog
+        log = RunLog()
+        if a.verb == "audit":
+            r = log.audit()
+            print(json.dumps(r, indent=2, default=str))
+            return 0 if r["ok"] else 1
+        w = log.window(int(a.verb or 0), int((a.args or [100])[0]))
+        for e in w["events"]:
+            print(json.dumps(e, default=str))
+        print(f"# seq {w['seq']}, complete={w['complete']}, verified={w['verified']['ok']} "
+              f"({w['verified']['records']} records); mhp log audit checks the whole record", file=sys.stderr)
+        return 0 if w["complete"] and w["verified"]["ok"] else 1
 
     if a.target == "conformance":           # mhp conformance <target> [--json]
         import json as _json

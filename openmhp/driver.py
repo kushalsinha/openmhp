@@ -132,6 +132,7 @@ class Job:
     finished: float | None = None
     cancel_requested: bool = False
     paused: bool = False
+    unverified: str | None = None   # restored from disk and did not match its own digest
 
     def snapshot(self) -> dict:
         return {
@@ -141,6 +142,7 @@ class Job:
             "outcome": self.outcome, "waiting": self.waiting, "owner": self.owner,
             "method": self.method, "project": self.project, "defaulted": self.defaulted,
             "started": self.started, "finished": self.finished,
+            **({"unverified": self.unverified} if self.unverified else {}),
         }
 
 
@@ -1068,6 +1070,11 @@ class Driver:
     # finished -- exactly when you most want it. Each record is written to disk as it starts
     # and again as it ends, so a run interrupted at 3am leaves evidence an agent can read
     # back: the parameters actually used, the result, the error, and the recovery class.
+    #
+    # Each record carries a digest of itself, because these files are read back as the
+    # device's own history. A record that does not match it is still returned -- dropping
+    # evidence is worse -- but it says `unverified`, so a reading or a result that was edited
+    # on disk is not presented as what the instrument reported.
     JOB_HISTORY = 50                               # most recent records kept per device
 
     def _job_dir(self) -> Path | None:
@@ -1085,12 +1092,11 @@ class Driver:
             d.mkdir(parents=True, exist_ok=True)
             rec = {**job.snapshot(), "params": job.params,
                    "device": (self.descriptor.get("device") or {}).get("id")}
-            blob = json.dumps(rec, default=str)
-            if len(blob) > 64_000:                 # a big result belongs in the run folder
+            if len(json.dumps(rec, default=str)) > 64_000:   # a big result belongs in the run folder
                 rec["result"] = {"truncated": True,
                                  "note": "result too large to persist; see the run that produced it"}
-                blob = json.dumps(rec, default=str)
-            (d / f"{job.id}.json").write_text(blob)
+            rec["digest"] = _digest(rec)           # of the record as stored, truncation included
+            (d / f"{job.id}.json").write_text(json.dumps(rec, default=str))
             kept = sorted(d.glob("job_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
             for stale in kept[self.JOB_HISTORY:]:
                 stale.unlink(missing_ok=True)
@@ -1112,7 +1118,15 @@ class Driver:
                 continue
             if rec.get("state") not in TERMINAL or rec.get("id") in self.jobs:
                 continue                           # only settled work; never resurrect as active
+            stored = rec.pop("digest", None)
+            if stored is None:
+                unverified = "this record carries no digest, so what it says cannot be checked"
+            elif stored != _digest(rec):
+                unverified = "this record does not match its own digest: it was changed after the job ended"
+            else:
+                unverified = None
             self.jobs[rec["id"]] = Job(
+                unverified=unverified,
                 id=rec["id"], action=rec.get("action", "?"), params=rec.get("params") or {},
                 owner=rec.get("owner"), state=rec["state"], progress=rec.get("progress", 1.0),
                 result=rec.get("result"), error=rec.get("error"), outcome=rec.get("outcome"),

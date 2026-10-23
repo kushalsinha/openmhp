@@ -10,7 +10,8 @@ Script output goes to the run only: scripts get a `print` bound to the run's
 output file. Nothing redirects the process's stdout, which the MCP transport owns.
 
 The *run log* is an append-only JSONL file per day under ~/.openmhp/log/, with a
-sequence number that continues across restarts. Every call a direct tool or a
+sequence number that continues across restarts and each record chained to the one
+before it, so an edit after the fact is detectable. Every call a direct tool or a
 run script makes through the lab's clients is recorded, with the run id.
 
 *Plan mode* executes a script against a PlanLab: reads are real, every write and
@@ -49,56 +50,172 @@ RUN_ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
 
 # ------------------------------------------------------------------ run log ---- #
 class RunLog:
+    """Append-only JSONL, one file per day, with every record chained to the one before it.
+
+    Each record carries ``prev``, the digest of the record before it, and ``hash``, its own.
+    Both are recomputable from the line itself, so a changed value, a deleted line and a
+    reordered pair each break the chain where they happened, and ``audit()`` says where.
+
+    This is tamper-*evidence*, not tamper-proofing: whoever can write the file can rewrite the
+    chain along with it, and signing the head is listed in SPEC 16 as unspecified. What it ends
+    is a record that answered ``complete: true`` after a reading had been changed and a refusal
+    deleted -- the state in which an edit left no trace at all. A record that failed to reach
+    disk leaves the same break as a deleted one, which is the truth: the file is missing a line.
+    """
+
+    GENESIS = "0" * 32                               # what the first record of all follows
+
     def __init__(self, home: Path | None = None):
         self.dir = (home or HOME) / "log"
         self._lock = threading.Lock()
         self.recent: list[dict] = []                 # ring buffer for fast `since`
         self.write_errors = 0
-        self.seq = self._last_seq_on_disk()
+        self.seq, self.head = self._tail_on_disk()
 
     def _files(self) -> list[Path]:
         return sorted(self.dir.glob("*.jsonl")) if self.dir.is_dir() else []
 
-    def _last_seq_on_disk(self) -> int:
+    @classmethod
+    def digest(cls, ev: dict) -> str:
+        """A record's own digest: every field of it except the digest, and except `persisted`,
+        which is this process's note to itself and never reaches the file."""
+        body = {k: v for k, v in ev.items() if k not in ("hash", "persisted")}
+        return hashlib.sha256(json.dumps(body, sort_keys=True, default=str,
+                                         separators=(",", ":")).encode("utf-8")).hexdigest()[:32]
+
+    def _tail_on_disk(self) -> tuple[int, str]:
+        """The sequence number and digest the next record has to follow."""
         for f in reversed(self._files()):
             try:
-                lines = [l for l in f.read_text(errors="replace").splitlines() if l.strip()]
+                lines = [l for l in f.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
             except OSError:
                 continue
             for line in reversed(lines):
                 try:
-                    return int(json.loads(line)["seq"])
+                    e = json.loads(line)
+                    return int(e["seq"]), str(e.get("hash") or self.GENESIS)
                 except (ValueError, KeyError, TypeError):
                     continue
-        return 0
+        return 0, self.GENESIS
 
     def write(self, kind: str, **fields) -> dict:
         ev = {"ts": time.time(), "kind": kind, **fields}
         with self._lock:
             self.seq += 1
-            ev["seq"] = self.seq
+            ev["seq"], ev["prev"] = self.seq, self.head
+            ev["hash"] = self.head = self.digest(ev)
             self.recent.append(ev)
             del self.recent[:-500]
             try:
                 self.dir.mkdir(parents=True, exist_ok=True)
-                with open(self.dir / (time.strftime("%Y-%m-%d") + ".jsonl"), "a") as f:
+                with open(self.dir / (time.strftime("%Y-%m-%d") + ".jsonl"), "a", encoding="utf-8") as f:
                     f.write(json.dumps(ev, default=str) + "\n")
             except OSError as e:
                 self.write_errors += 1
                 ev["persisted"] = False
-                print(f"[openmhp] run log write failed ({e}); history on disk is incomplete", file=sys.stderr)
+                print(f"[openmhp] run log write failed ({e}); history on disk is incomplete, and the chain "
+                      f"breaks at seq {ev['seq']}", file=sys.stderr)
         return ev
 
+    # ---- reading it back, and checking it ---------------------------------- #
+    @classmethod
+    def _step(cls, st: dict, e: dict) -> None:
+        """Check one record against the one before it. `st` carries the walk."""
+        seq = e.get("seq")
+        if "hash" not in e:
+            st["unchained"] += 1
+            st["prev"] = None                        # nothing for the next record to follow
+        else:
+            st["chained"] += 1
+            if e["hash"] != cls.digest(e):
+                st["broken"].append({"seq": seq, "kind": "rewritten",
+                                     "problem": "contents do not match this record's own digest"})
+            elif st["prev"] is not None and e.get("prev") != st["prev"]:
+                st["broken"].append({"seq": seq, "kind": "chain",
+                                     "problem": "does not follow the record before it; one was removed, "
+                                                "reordered or rewritten"})
+            st["prev"] = e["hash"]
+        if st["last_seq"] is not None and seq != st["last_seq"] + 1:
+            st["broken"].append({"seq": seq, "kind": "missing",
+                                 "problem": f"the sequence jumps from {st['last_seq']} to {seq}"})
+        if isinstance(seq, int):
+            st["last_seq"] = seq
+
+    @staticmethod
+    def _walk(prev: str | None = None) -> dict:
+        return {"prev": prev, "last_seq": None, "broken": [], "chained": 0, "unchained": 0}
+
+    @staticmethod
+    def _missing(verdict: dict) -> bool:
+        return any(b.get("kind") in ("missing", "unreadable") for b in verdict["broken"])
+
+    @staticmethod
+    def _verdict(st: dict, records: int) -> dict:
+        return {"ok": not st["broken"], "records": records, "chained": st["chained"],
+                **({"unchained": st["unchained"]} if st["unchained"] else {}),
+                "broken": st["broken"][:10],
+                **({"more": len(st["broken"]) - 10} if len(st["broken"]) > 10 else {})}
+
+    @classmethod
+    def verify(cls, events: list[dict], *, prev: str | None = None) -> dict:
+        """Check records against their own digests and against each other. `prev` is the digest
+        the first one must follow, when the caller knows it; a window that starts mid-chain
+        does not, so the first link is taken on trust and every later one is checked."""
+        st = cls._walk(prev)
+        for e in events:
+            cls._step(st, e)
+        return cls._verdict(st, len(events))
+
+    def audit(self) -> dict:
+        """Walk every record on disk and check the chain from the first line to the last.
+
+        This is the question `complete` was never able to answer: not "did I serve you
+        everything I have" but "is what is on disk still what was written".
+        """
+        st, records, files = self._walk(self.GENESIS), 0, []
+        for f in self._files():
+            files.append(f.name)
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    for n, line in enumerate(fh, 1):
+                        if not line.strip():
+                            continue
+                        try:
+                            e = json.loads(line)
+                        except json.JSONDecodeError:
+                            st["broken"].append({"file": f.name, "line": n, "kind": "unreadable",
+                                                 "problem": "not a JSON record"})
+                            st["prev"] = None
+                            continue
+                        records += 1
+                        self._step(st, e)
+            except OSError as e:
+                st["broken"].append({"file": f.name, "kind": "unreadable", "problem": f"unreadable ({e})"})
+                st["prev"] = None
+        return {**self._verdict(st, records), "files": files, "head": self.head,
+                "writeErrors": self.write_errors,
+                "note": "tamper-evident, not tamper-proof: whoever can write these files can "
+                        "rewrite the chain with them"}
+
     def window(self, seq: int, limit: int = 100) -> dict:
-        """Events with seq > `seq`. Falls back to disk when the cursor is older than memory."""
+        """Events with seq > `seq`. Falls back to disk when the cursor is older than memory.
+
+        `complete` says whether this is everything after the cursor; `verified` says whether
+        the records still match their own digests and each other. Served from memory, verified
+        says nothing about the files -- `audit()` is what reads those.
+        """
         with self._lock:
             oldest = self.recent[0]["seq"] if self.recent else self.seq + 1
             if seq + 1 >= oldest:
-                return {"events": [e for e in self.recent if e["seq"] > seq][:limit], "seq": self.seq, "complete": True}
+                events = [e for e in self.recent if e["seq"] > seq][:limit]
+                v = self.verify(events)
+                return {"events": events, "seq": self.seq,
+                        "complete": self.write_errors == 0 and not self._missing(v),
+                        "verified": {**v, "of": "memory"}}
         events, first_seen = [], None
         for f in self._files():
             try:
-                for line in f.read_text(errors="replace").splitlines():
+                for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
                     try:
                         e = json.loads(line)
                     except json.JSONDecodeError:
@@ -108,11 +225,18 @@ class RunLog:
                     if e.get("seq", 0) > seq:
                         events.append(e)
                         if len(events) >= limit:
-                            return {"events": events, "seq": self.seq, "complete": first_seen is not None and first_seen <= seq + 1}
+                            v = self.verify(events)
+                            return {"events": events, "seq": self.seq,
+                                    "complete": (first_seen is not None and first_seen <= seq + 1
+                                                 and not self._missing(v)),
+                                    "verified": {**v, "of": "disk"}}
             except OSError:
                 continue
+        v = self.verify(events)
         return {"events": events, "seq": self.seq,
-                "complete": self.write_errors == 0 and (first_seen is None or first_seen <= seq + 1)}
+                "complete": (self.write_errors == 0 and (first_seen is None or first_seen <= seq + 1)
+                             and not self._missing(v)),
+                "verified": {**v, "of": "disk"}}
 
     def since(self, seq: int, limit: int = 100) -> list[dict]:
         return self.window(seq, limit)["events"]
