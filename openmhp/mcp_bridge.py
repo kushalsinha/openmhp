@@ -46,22 +46,28 @@ SUPPORTED_MCP_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 RESULT_CAP = 4000        # bytes of a job result kept in logs and update buffers; the full result stays on the job
 
 
-def _cap(result):
-    """A job result small enough for a log line: bulky arrays (a chromatogram trace) are replaced by their size."""
+def _cap(result, job: str | None = None):
+    """A job result small enough for a log line: a bulky value (a chromatogram trace) is replaced by
+    its size and by the call that returns the real one. The placeholder has to name something that
+    works, so it names the job: the device holds that result in full while it is running, and reads
+    it back from the file beside its record after a restart, for as long as the record is kept."""
     if result is None:
         return None
+    where = f"mhp_job op='status' id='{job}'" if job else "jobs/status on the job that produced it"
+
+    def omitted(v):
+        s = json.dumps(v, default=str)
+        n = len(v) if hasattr(v, "__len__") else "?"
+        return f"<{type(v).__name__} of {n} items, {len(s)} bytes; not in this record -- fetch it with {where}>"
+
     try:
         if len(json.dumps(result, default=str)) <= RESULT_CAP:
             return result
     except (TypeError, ValueError):
         return str(result)[:RESULT_CAP]
     if isinstance(result, dict):
-        out = {}
-        for k, v in result.items():
-            s = json.dumps(v, default=str)
-            out[k] = v if len(s) <= 800 else f"<{type(v).__name__} of {len(v) if hasattr(v, '__len__') else '?'} items, {len(s)} bytes; read the job result>"
-        return out
-    return str(result)[:RESULT_CAP]
+        return {k: (v if len(json.dumps(v, default=str)) <= 800 else omitted(v)) for k, v in result.items()}
+    return omitted(result)          # a bare 50,000-point trace: its repr truncated is not data
 _OBSERVED_KINDS = {"settings/write": "write", "actions/invoke": "invoke", "signals/read": "read", "jobs/pause": "job/pause",
                    "jobs/resume": "job/resume", "jobs/cancel": "job/cancel", "safety/estop": "estop", "safety/reset": "reset",
                    "session/acquire": "lease/acquire", "session/release": "lease/release"}
@@ -405,7 +411,8 @@ class Bridge:
             job = r["job"]
             if a.get("wait"):
                 job = dev.wait(job)
-                self.log.write("job", device=a["device"], action=a["name"], state=job["state"], result=job.get("result"))
+                self.log.write("job", device=a["device"], action=a["name"], state=job["state"],
+                               result=_cap(job.get("result"), job.get("id")))
             return job
         if name == "mhp_job":
             op = a.get("op") or ("cancel" if a.get("cancel") else "status")
@@ -522,7 +529,7 @@ class Bridge:
             j = params["job"]
             rec.update(job=j.get("id"), action=j.get("action"), state=j.get("state"), progress=j.get("progress"),
                        **({"method": j["method"]} if j.get("method") else {}), **({"project": j["project"]} if j.get("project") else {}),
-                       **({"result": _cap(j.get("result"))} if m == "jobs/finished" else {}),
+                       **({"result": _cap(j.get("result"), j.get("id"))} if m == "jobs/finished" else {}),
                        **{k: v for k, v in params.items() if k != "job"})
         else:
             rec.update(params)
@@ -543,7 +550,8 @@ class Bridge:
         if m in self._LOGGED_EVENTS:
             ev = self.log.write("device/" + m, device=device, **{k: v for k, v in params.items() if k != "job"},
                                 **({"job": params["job"]["id"], "state": params["job"]["state"], "method": params["job"].get("method"),
-                                    "result": _cap(params["job"].get("result"))} if "job" in params else {}))
+                                    "result": _cap(params["job"].get("result"), params["job"].get("id"))}
+                                   if "job" in params else {}))
             level = "error" if ("estop" in m or "fault" in m or "watchdog" in m) else "info"
             self.notify_harness(level, f"{device}: {m} " + json.dumps({k: v for k, v in ev.items() if k not in ("ts", "kind", "seq", "device")}, default=str)[:300])
 
@@ -728,7 +736,7 @@ class Bridge:
                                  run_project=a.get("run_project"), compound=a.get("compound"), wait=a.get("wait", True) is not False)
             if job["state"] in ("done", "failed", "cancelled"):
                 self.log.write("job", device=dev.name, action=job["action"], state=job["state"], method=job.get("method"),
-                               project=job.get("project"), result=_cap(job.get("result")))
+                               project=job.get("project"), result=_cap(job.get("result"), job.get("id")))
             return {"job": job}
         raise ValueError(f"unknown method op {op}")
 

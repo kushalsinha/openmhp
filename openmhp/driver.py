@@ -1108,6 +1108,8 @@ class Driver:
     # evidence is worse -- but it says `unverified`, so a reading or a result that was edited
     # on disk is not presented as what the instrument reported.
     JOB_HISTORY = 50                               # most recent records kept per device
+    RESULT_INLINE = 8_000                          # a bigger result is written beside the record
+    RESULT_FILE_CAP = 4_000_000                    # and a bigger one than that does not fit at all
 
     def _device_dir(self, kind: str) -> Path | None:
         did = (self.descriptor.get("device") or {}).get("id")
@@ -1179,16 +1181,50 @@ class Driver:
             d.mkdir(parents=True, exist_ok=True)
             rec = {**job.snapshot(), "params": job.params,
                    "device": (self.descriptor.get("device") or {}).get("id")}
-            if len(json.dumps(rec, default=str)) > 64_000:   # a big result belongs in the run folder
-                rec["result"] = {"truncated": True,
-                                 "note": "result too large to persist; see the run that produced it"}
-            rec["digest"] = _digest(rec)           # of the record as stored, truncation included
+            if rec.get("result") is not None:
+                blob = json.dumps(rec["result"], default=str)
+                if len(blob) > self.RESULT_INLINE:
+                    rec["result"] = self._save_result(d, job.id, blob)
+            rec["digest"] = _digest(rec)           # of the record as stored, the pointer included
             (d / f"{job.id}.json").write_text(json.dumps(rec, default=str))
-            kept = sorted(d.glob("job_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
-            for stale in kept[self.JOB_HISTORY:]:
-                stale.unlink(missing_ok=True)
+            self._trim_jobs(d)
         except OSError:
             pass                                   # never let bookkeeping break an instrument
+
+    def _save_result(self, d: Path, jid: str, blob: str) -> dict:
+        """A result too big for its record goes in a file beside it, with the same lifetime.
+
+        The record used to replace it with "see the run that produced it", which is not a place:
+        a direct invoke has no run, and nothing said where the data went. Now the record points
+        at a file that exists for exactly as long as the record does, and jobs/status reads it
+        back, so a pointer either resolves or says it is gone.
+        """
+        if len(blob) > self.RESULT_FILE_CAP:
+            return {"truncated": True, "bytes": len(blob), "saved": None,
+                    "note": f"result is over {self.RESULT_FILE_CAP} bytes and is not kept with the job "
+                            "record; data this size belongs in a file in the run folder (SPEC 3.5)"}
+        (d / "results").mkdir(exist_ok=True)
+        (d / "results" / f"{jid}.json").write_text(blob, encoding="utf-8")
+        return {"truncated": True, "bytes": len(blob), "saved": f"results/{jid}.json",
+                "note": "the full result is in this file beside the job record; jobs/status returns it"}
+
+    def _trim_jobs(self, d: Path) -> None:
+        kept = sorted(d.glob("job_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for stale in kept[self.JOB_HISTORY:]:
+            stale.unlink(missing_ok=True)
+            (d / "results" / f"{stale.stem}.json").unlink(missing_ok=True)   # one lifetime, not two
+
+    def _resolve_result(self, snap: dict) -> dict:
+        """A record restored from disk points at its result file; read it when someone asks."""
+        r = snap.get("result")
+        if not (isinstance(r, dict) and r.get("saved")):
+            return snap
+        d = self._job_dir()
+        try:
+            return {**snap, "result": json.loads((d / r["saved"]).read_text(encoding="utf-8"))}
+        except (OSError, ValueError, TypeError):
+            return {**snap, "result": {**r, "saved": None,
+                                       "note": "the result file this record pointed at is gone"}}
 
     def _load_jobs(self) -> None:
         d = self._job_dir()
@@ -1285,7 +1321,8 @@ class Driver:
 
     def rpc_jobs_status(self, p, client):
         with self._state_lock:
-            return {"job": self._job(p["id"]).snapshot()}
+            snap = self._job(p["id"]).snapshot()
+        return {"job": self._resolve_result(snap)}       # outside the lock: this may read a file
 
     def rpc_jobs_list(self, p, client):
         with self._state_lock:

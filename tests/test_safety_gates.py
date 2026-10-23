@@ -977,6 +977,81 @@ def test_nested_parameter_bounds_come_from_the_descriptor_not_the_driver():
     expect(InvalidValue.code,   lambda: d.invoke("run", dry_run=True, steps=[{"temp": "hot"}]))
 
 
+def test_a_result_too_big_for_the_log_can_still_be_fetched():
+    """A bulky result is replaced in the log by a placeholder, and the placeholder said "read the
+    job result" while the job record on disk said "see the run that produced it" -- which is not a
+    place: a direct invoke has no run, and nothing kept the data. The placeholder now names the
+    call that returns it, and the result lives in a file beside the record with the same lifetime,
+    so it survives a restart and is deleted with it."""
+    from openmhp.mcp_bridge import _cap
+
+    trace = [[i * 0.01, i * 1.5] for i in range(6000)]              # a chromatogram, ~110 KB
+    def gc(did="gc-9", **kw):
+        return BoundDriver(device={"id": did, "class": "gc"}, safety={"estop": False, "watchdog_s": None},
+                           actions=[Action("inject", lambda job, params: {"peaks": 3, "trace": trace}),
+                                    Action("small", lambda job, params: {"peaks": 3})], **kw)
+
+    def settled(did, jid):
+        """jobs/status reports done as soon as the state changes; the record lands just after."""
+        f = HOME / "jobs" / did / f"{jid}.json"
+        for _ in range(200):
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+                if rec.get("state") in ("done", "failed", "cancelled"):
+                    return rec
+            except (OSError, ValueError):
+                pass
+            time.sleep(0.02)
+        raise AssertionError(f"no settled record for {jid}")
+
+    d = gc()
+    dev = LocalDevice(d)
+    job = dev.wait(dev.invoke("inject"))
+    assert len(job["result"]["trace"]) == 6000                      # the device returns it whole
+
+    logged = _cap(job["result"], job["id"])
+    assert f"mhp_job op='status' id='{job['id']}'" in logged["trace"], logged
+    assert logged["peaks"] == 3
+    assert f"id='{job['id']}'" in _cap(trace, job["id"]), "a bare list used to become a truncated repr"
+
+    rec = settled("gc-9", job["id"])
+    assert rec["result"]["saved"] == f"results/{job['id']}.json" and rec["result"]["bytes"] > 100_000, rec
+    again = LocalDevice(gc()).call("jobs/status", {"id": job["id"]})["job"]     # a fresh process
+    assert len(again["result"]["trace"]) == 6000, "the placeholder did not resolve after a restart"
+
+    gone = HOME / "jobs" / "gc-9" / rec["result"]["saved"]          # and when the file is not there
+    gone.unlink()
+    said = LocalDevice(gc()).call("jobs/status", {"id": job["id"]})["job"]["result"]
+    assert said["saved"] is None and "is gone" in said["note"], said
+
+    big = gc("gc-big")                                              # too big even for a file beside it
+    big.RESULT_FILE_CAP = 1000
+    j2 = LocalDevice(big).wait(LocalDevice(big).invoke("inject"))
+    r2 = settled("gc-big", j2["id"])["result"]
+    assert r2["saved"] is None and "run folder" in r2["note"] and r2["bytes"] > 100_000, r2
+    assert not (HOME / "jobs" / "gc-big" / "results").exists()      # no pointer, so no orphan either
+
+    small = gc("gc-small")                                          # a small result stays inline
+    js = LocalDevice(small).wait(LocalDevice(small).invoke("small"))
+    assert settled("gc-small", js["id"])["result"] == {"peaks": 3}
+
+    ev = gc("gc-evict")                                             # and one lifetime, not two
+    ev.JOB_HISTORY = 2
+    c = LocalDevice(ev)
+    ids = [settled("gc-evict", c.wait(c.invoke("inject"))["id"])["id"] for _ in range(4)]
+    folder = HOME / "jobs" / "gc-evict"
+    assert len(list(folder.glob("job_*.json"))) == 2
+    assert sorted(p.stem for p in (folder / "results").iterdir()) == sorted(ids[-2:]), ids
+
+    # the inconsistency: mhp_invoke with wait=true logged the result uncut
+    b = Bridge(home=HOME / "t9b")
+    register("local:probe.gc9", gc("gc-bridge"))
+    b.lab.targets["gc"] = "local:probe.gc9"
+    b.call_tool("mhp_invoke", {"device": "gc", "name": "inject", "wait": True})
+    line = next(e for e in reversed(b.log.since(0, 200)) if e["kind"] == "job")
+    assert "mhp_job op='status'" in line["result"]["trace"], line
+
+
 def test_a_prose_parameter_shape_still_loads_and_is_simply_unchecked():
     """The legacy form stays valid so existing packages keep working; it just buys nothing."""
     from openmhp.driver import Driver
