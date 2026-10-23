@@ -35,5 +35,7 @@ actions:
 safety:
   estop: true
   interlocks: [connected]
-  watchdog_s: null
-  notes: E-stop ends the running acquisition. It does not cool the oven or shut off gases.
+  watchdog_s: 300
+  watchdog_action: release
+  notes: E-stop ends the running acquisition; it does not cool the oven or shut off gases. Five minutes of silence from
+    the controller releases the lease and reports it rather than abandoning a run halfway through its oven program.

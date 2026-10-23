@@ -270,6 +270,39 @@ def test_recipe_closes_the_loop():
     assert m["source"]["kind"] == "agent"
 
 
+def test_non_ascii_survives_package_method_and_run():
+    """Lab text is full of °C, µL and Greek letters. Package files, method records and run files are UTF-8 on
+    every OS; with the locale's encoding, Windows (cp1252) loaded '°C' as 'Â°C', could not save a method for
+    α-pinene (leaving a .yaml.tmp behind), and returned run output as 'ÂµL'."""
+    text = "Inject 1 µL at 40 °C; α-pinene elutes first."
+    pkg = package_copy("gc-01")
+    with open(os.path.join(pkg, "DEVICE.md"), "a", encoding="utf-8") as f:
+        f.write("\n" + text + "\n")
+    with open(os.path.join(pkg, "references", "terpenes.md"), "w", encoding="utf-8") as f:
+        f.write(text)
+    d = connect(f"sim:{pkg}", "gc-01")
+    assert text in d.describe("summary")["instructions"] and d.resource("references/terpenes.md") == text
+    params = {"oven_program": PROG, "injection_volume_ul": 1, "carrier_flow_ml_min": 1.5, "sample": "α-pinene in hexane"}
+    saved = d.method_save({"name": "pinene", "project": "terpenes", "action": "run_method", "compounds": ["α-pinene"],
+                           "params": params, "notes": text})["saved"]
+    assert saved["compounds"] == ["α-pinene"] and saved["notes"] == text
+    root = d.driver.methods.root
+    d.close()
+    store = MethodStore(root, method_driven=lambda: ["run_method"])          # read back from disk, hash checked
+    rec = store.get("terpenes/pinene")
+    assert rec["params"]["sample"] == "α-pinene in hexane" and rec["notes"] == text
+    assert store.find("α-pinene")["method"]["name"] == "pinene"
+    leftovers = [f for _, _, files in os.walk(pkg) for f in files if f.endswith(".tmp")]
+    assert not leftovers and validate_path(pkg)["ok"], leftovers
+
+    b = fresh_bridge()
+    res = b.call_tool("mhp_run", {"script": f"print({text!r})\n"
+                                            f"open(run_dir + '/notes.txt', 'w', encoding='utf-8').write({text!r})"})
+    assert res["ok"] and text in res["stdout"], res
+    for path in ("script.py", "stdout.txt", "notes.txt"):
+        assert text in b.call_tool("mhp_data", {"op": "read", "run": res["run"]["id"], "path": path})["text"], path
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

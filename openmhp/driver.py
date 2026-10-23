@@ -100,6 +100,11 @@ class JobCancelled(Exception):
 TERMINAL = ("done", "failed", "cancelled")
 
 
+def reading_id() -> str:
+    """One reading, one id, in the same shape as a job id: what the agent cites."""
+    return "read_" + uuid.uuid4().hex[:8]
+
+
 def _digest(value) -> str:
     import hashlib
     import json
@@ -132,6 +137,7 @@ class Job:
     finished: float | None = None
     cancel_requested: bool = False
     paused: bool = False
+    unverified: str | None = None   # restored from disk and did not match its own digest
 
     def snapshot(self) -> dict:
         return {
@@ -141,6 +147,7 @@ class Job:
             "outcome": self.outcome, "waiting": self.waiting, "owner": self.owner,
             "method": self.method, "project": self.project, "defaulted": self.defaulted,
             "started": self.started, "finished": self.finished,
+            **({"unverified": self.unverified} if self.unverified else {}),
         }
 
 
@@ -335,6 +342,14 @@ class _WatchdogScheduler:
 
 _WATCHDOGS = _WatchdogScheduler()
 
+# What the instrument writes to its own record, and what it calls each one. Mutations and
+# safety only: reads belong to the caller's record, not the instrument's.
+RECORDED = {"settings/write": "write", "actions/invoke": "invoke", "safety/estop": "estop",
+            "safety/reset": "reset", "safety/shutdown": "shutdown", "session/acquire": "lease",
+            "session/release": "release", "jobs/cancel": "cancel", "jobs/pause": "pause",
+            "jobs/resume": "resume", "methods/save": "method/save", "methods/delete": "method/retire",
+            "sim/fault": "sim/fault"}
+
 # Methods that never wait behind device I/O: stopping, status and lease bookkeeping.
 _UNLOCKED = {"safety/estop", "ping", "jobs/status", "jobs/list", "jobs/cancel", "jobs/pause",
              "session/acquire", "session/renew", "session/release", "device/describe", "safety/limits",
@@ -371,6 +386,7 @@ class Driver:
         self._last_seen: dict[str, float] = {}
         self._closed = False
         self._methods = None
+        self._own_record = None                      # the instrument's own record, opened on first write
         if self.package_dir and self.package is None:
             from .package import load_package
             self.attach_package(load_package(self.package_dir))
@@ -604,13 +620,35 @@ class Driver:
                 pass
 
     def emit_signal(self, name: str, value: Any) -> None:
-        self.notify("signals/update", {"name": name, "value": value, "ts": time.time()})
+        self.notify("signals/update", {"name": name, "value": value, "ts": time.time(), "id": reading_id()})
 
     # ---- watchdog and leases ------------------------------------------- #
+    #
+    # Declaring a window does two separable things: it makes a lease mandatory for every
+    # actuating request, and it decides what happens when the holder goes silent. Bundling
+    # the second into the first is what pushed authors of long-running instruments to
+    # declare no window at all -- see watchdog_action.
+    WATCHDOG_ACTIONS = ("estop", "release")
+
     @property
     def watchdog_s(self) -> float | None:
         wd = (self.descriptor.get("safety") or {}).get("watchdog_s")
         return float(wd) if is_finite_number(wd) and wd > 0 else None
+
+    @property
+    def watchdog_action(self) -> str:
+        """What this device does when the lease holder goes silent.
+
+        ``estop`` (the default) stops it, which is right for an instrument that is only safe
+        while something is minding it. ``release`` drops the lease instead and leaves the work
+        running, so another controller can take the instrument over: the only honest answer
+        for an instrument whose job must not be interrupted -- electrolysis, a laser
+        acquisition, an oven program -- where stopping is itself the damage. Either way the
+        silence is reported as ``notifications/safety/watchdog``. Anything unrecognised fails
+        safe as ``estop``.
+        """
+        a = (self.descriptor.get("safety") or {}).get("watchdog_action") or "estop"
+        return a if a in self.WATCHDOG_ACTIONS else "estop"
 
     def _arm_watchdog(self) -> None:
         if self.watchdog_s and not self._closed:
@@ -623,7 +661,9 @@ class Driver:
         return None
 
     def _watchdog_check(self) -> None:
-        wd = self.watchdog_s
+        """One silence, one event. Both actions clear the lease, which disarms the check, so a
+        controller that never comes back is reported once rather than every quarter second."""
+        wd, action = self.watchdog_s, self.watchdog_action
         if not wd or self._closed:
             return
         with self._state_lock:
@@ -636,8 +676,16 @@ class Driver:
                 return
             reason = (f"watchdog: no request from lease holder {holder!r} for {silent:.2f}s (limit {wd}s)" if silent > wd
                       else f"watchdog: lease held by {holder!r} expired without release")
-            self._enter_estop_locked(source="watchdog")
-        threading.Thread(target=self._run_stop_hook, args=("watchdog", reason), daemon=True).start()
+            active = sorted(self._active)
+            if action == "estop":
+                self._enter_estop_locked(source="watchdog")
+            else:
+                self.lease = None                  # hand the instrument over; the work keeps running
+        self.notify("safety/watchdog", {"action": action, "holder": holder, "silent_s": round(silent, 2),
+                                        "watchdog_s": wd, "reason": reason, "activeJobs": active,
+                                        "stopped": action == "estop"})
+        if action == "estop":
+            threading.Thread(target=self._run_stop_hook, args=("watchdog", reason), daemon=True).start()
 
     def _touch(self, client: str) -> None:
         self._last_seen[client] = time.monotonic()
@@ -653,7 +701,8 @@ class Driver:
             if dry_run:
                 return {_NOTED_DRY_RUN_LEASE: True}
             raise NotLeased("this device declares a watchdog: acquire a lease (session/acquire) and keep it renewed "
-                            "before operating it", {"reason": "lease_required", "watchdog_s": self.watchdog_s})
+                            "before operating it", {"reason": "lease_required", "watchdog_s": self.watchdog_s,
+                                                    "watchdog_action": self.watchdog_action})
         return {}
 
     # ---- safety gates -------------------------------------------------- #
@@ -792,6 +841,16 @@ class Driver:
             with self._state_lock:
                 self.fault_reason = f"{reason}; safe-state hook failed: {type(e).__name__}: {e}"
 
+    def _record_event(self, kind: str, **fields) -> None:
+        """A safety event no request asked for: a watchdog trip, a hardware latch, a fault."""
+        log = self._record_log()
+        if log is None:
+            return
+        try:
+            log.write(kind, device=(self.descriptor.get("device") or {}).get("id"), **fields)
+        except Exception:                          # noqa: BLE001
+            pass
+
     def _latch_fault(self, reason: str) -> None:
         with self._state_lock:
             if self.state == "estop":
@@ -802,6 +861,7 @@ class Driver:
         except Exception as e:                     # noqa: BLE001
             reason = f"{reason}; safe-state hook failed: {type(e).__name__}: {e}"
             self.fault_reason = reason
+        self._record_event("fault", reason=reason)
         self.notify("safety/fault", {"reason": reason})
 
     def _recompute_state_locked(self) -> None:
@@ -816,10 +876,22 @@ class Driver:
         if handler is None:
             raise MethodNotFound(f"unknown method {method}")
         self._touch(client)
-        if method in _UNLOCKED:
-            return handler(params, client)
-        with self._lock:
-            return handler(params, client)
+        try:
+            if method in _UNLOCKED:
+                result = handler(params, client)
+            else:
+                with self._lock:
+                    result = handler(params, client)
+        except Exception as e:                     # noqa: BLE001  recorded, then re-raised unchanged
+            if method in RECORDED:
+                self._record(method, params, client, error=(
+                    {"code": e.code, "message": e.message, **({"data": e.data} if e.data is not None else {})}
+                    if isinstance(e, MHPError) else
+                    {"code": -32603, "message": f"{type(e).__name__}: {e}"}))
+            raise
+        if method in RECORDED:
+            self._record(method, params, client, result=result)
+        return result
 
     # lifecycle
     def rpc_initialize(self, p, client):
@@ -901,6 +973,9 @@ class Driver:
         return {"signals": self.descriptor.get("signals", [])}
 
     def rpc_signals_read(self, p, client):
+        """Every reading carries an id, so a number an agent writes down can be pointed back at
+        the record that produced it. An action result is citable by its job id; a reading was
+        citable by nothing at all, which left "the block was at 72" with nothing behind it."""
         names = p.get("names") or list(self._index["signals"])
         out = {}
         for n in names:
@@ -909,7 +984,7 @@ class Driver:
             self._sim_trip("read", pre=True)
             self._sim_trip("read")
             out[n] = self.on_read(n)
-        return {"values": out, "ts": time.time()}
+        return {"values": out, "ts": time.time(), "id": reading_id()}
 
     def rpc_signals_subscribe(self, p, client):
         return {"subscribed": p.get("names") or "all"}
@@ -1035,14 +1110,76 @@ class Driver:
     # finished -- exactly when you most want it. Each record is written to disk as it starts
     # and again as it ends, so a run interrupted at 3am leaves evidence an agent can read
     # back: the parameters actually used, the result, the error, and the recovery class.
+    #
+    # Each record carries a digest of itself, because these files are read back as the
+    # device's own history. A record that does not match it is still returned -- dropping
+    # evidence is worse -- but it says `unverified`, so a reading or a result that was edited
+    # on disk is not presented as what the instrument reported.
     JOB_HISTORY = 50                               # most recent records kept per device
+    RESULT_INLINE = 8_000                          # a bigger result is written beside the record
+    RESULT_FILE_CAP = 4_000_000                    # and a bigger one than that does not fit at all
 
-    def _job_dir(self) -> Path | None:
+    def _device_dir(self, kind: str) -> Path | None:
         did = (self.descriptor.get("device") or {}).get("id")
         if not did or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(did)):
             return None                            # no stable id: nothing safe to name a folder
         home = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp"))
-        return home / "jobs" / str(did)
+        return home / kind / str(did)
+
+    def _job_dir(self) -> Path | None:
+        return self._device_dir("jobs")
+
+    # ---- the instrument's own record ------------------------------------- #
+    #
+    # The run log belongs to the host, and only the MCP bridge keeps one: the same write from
+    # the CLI, from an SDK script or from a plain HTTP request left no trace anywhere, because
+    # the client's audit hook does nothing unless the caller passed an observer and only the
+    # bridge does. A record that exists only when the caller chooses to keep it is not a
+    # record, so the instrument keeps its own, beside its job records, of everything that was
+    # done to it and every refusal -- whoever asked, over whatever transport.
+    #
+    # Reads are not in it. They are high-volume (a wait_until loop polls once a second) and
+    # they are the caller's business; what was *done* to the instrument is the instrument's.
+    # The host's log keeps both, from its own side, and the two are separate views on purpose.
+
+    def _record_log(self):
+        """This device's record, opened on first use. None when the device has no stable id."""
+        if self._own_record is None:
+            d = self._device_dir("records")
+            if d is None:
+                return None
+            from .runs import RunLog                # deferred: runs imports the client, which imports this
+            self._own_record = RunLog(d.parent, d.name)
+        return self._own_record
+
+    def _record(self, method: str, params: dict, client: str, *, result=None, error=None) -> None:
+        log = self._record_log()
+        if log is None:
+            return
+        kind = RECORDED[method]
+        ev = {"device": (self.descriptor.get("device") or {}).get("id"), "by": client}
+        for key, into in (("name", "name"), ("value", "value"), ("id", "job"), ("reason", "reason")):
+            if params.get(key) is not None:
+                ev[into] = params[key]
+        if method == "actions/invoke":
+            ev["params"] = params.get("params") or None
+            for k in ("method", "project", "compound"):        # provenance for a saved method
+                if params.get(k):
+                    ev[k] = params[k]
+            job = (result or {}).get("job") if isinstance(result, dict) else None
+            if job:
+                ev["job"] = job.get("id")
+        if params.get("dryRun") is True:
+            ev["dry_run"] = True
+        if params.get("approved") is True:
+            ev["approved"] = True                  # the flag this device honoured, and from whom
+        try:
+            if error is not None:
+                log.write("refused", op=kind, code=error["code"], message=error["message"], **ev)
+            else:
+                log.write(kind, ok=True, **ev)
+        except Exception:                          # noqa: BLE001
+            pass                                   # never let bookkeeping break an instrument
 
     def _persist_job(self, job: Job) -> None:
         d = self._job_dir()
@@ -1052,17 +1189,50 @@ class Driver:
             d.mkdir(parents=True, exist_ok=True)
             rec = {**job.snapshot(), "params": job.params,
                    "device": (self.descriptor.get("device") or {}).get("id")}
-            blob = json.dumps(rec, default=str)
-            if len(blob) > 64_000:                 # a big result belongs in the run folder
-                rec["result"] = {"truncated": True,
-                                 "note": "result too large to persist; see the run that produced it"}
-                blob = json.dumps(rec, default=str)
-            (d / f"{job.id}.json").write_text(blob)
-            kept = sorted(d.glob("job_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
-            for stale in kept[self.JOB_HISTORY:]:
-                stale.unlink(missing_ok=True)
+            if rec.get("result") is not None:
+                blob = json.dumps(rec["result"], default=str)
+                if len(blob) > self.RESULT_INLINE:
+                    rec["result"] = self._save_result(d, job.id, blob)
+            rec["digest"] = _digest(rec)           # of the record as stored, the pointer included
+            (d / f"{job.id}.json").write_text(json.dumps(rec, default=str))
+            self._trim_jobs(d)
         except OSError:
             pass                                   # never let bookkeeping break an instrument
+
+    def _save_result(self, d: Path, jid: str, blob: str) -> dict:
+        """A result too big for its record goes in a file beside it, with the same lifetime.
+
+        The record used to replace it with "see the run that produced it", which is not a place:
+        a direct invoke has no run, and nothing said where the data went. Now the record points
+        at a file that exists for exactly as long as the record does, and jobs/status reads it
+        back, so a pointer either resolves or says it is gone.
+        """
+        if len(blob) > self.RESULT_FILE_CAP:
+            return {"truncated": True, "bytes": len(blob), "saved": None,
+                    "note": f"result is over {self.RESULT_FILE_CAP} bytes and is not kept with the job "
+                            "record; data this size belongs in a file in the run folder (SPEC 3.5)"}
+        (d / "results").mkdir(exist_ok=True)
+        (d / "results" / f"{jid}.json").write_text(blob, encoding="utf-8")
+        return {"truncated": True, "bytes": len(blob), "saved": f"results/{jid}.json",
+                "note": "the full result is in this file beside the job record; jobs/status returns it"}
+
+    def _trim_jobs(self, d: Path) -> None:
+        kept = sorted(d.glob("job_*.json"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for stale in kept[self.JOB_HISTORY:]:
+            stale.unlink(missing_ok=True)
+            (d / "results" / f"{stale.stem}.json").unlink(missing_ok=True)   # one lifetime, not two
+
+    def _resolve_result(self, snap: dict) -> dict:
+        """A record restored from disk points at its result file; read it when someone asks."""
+        r = snap.get("result")
+        if not (isinstance(r, dict) and r.get("saved")):
+            return snap
+        d = self._job_dir()
+        try:
+            return {**snap, "result": json.loads((d / r["saved"]).read_text(encoding="utf-8"))}
+        except (OSError, ValueError, TypeError):
+            return {**snap, "result": {**r, "saved": None,
+                                       "note": "the result file this record pointed at is gone"}}
 
     def _load_jobs(self) -> None:
         d = self._job_dir()
@@ -1079,7 +1249,15 @@ class Driver:
                 continue
             if rec.get("state") not in TERMINAL or rec.get("id") in self.jobs:
                 continue                           # only settled work; never resurrect as active
+            stored = rec.pop("digest", None)
+            if stored is None:
+                unverified = "this record carries no digest, so what it says cannot be checked"
+            elif stored != _digest(rec):
+                unverified = "this record does not match its own digest: it was changed after the job ended"
+            else:
+                unverified = None
             self.jobs[rec["id"]] = Job(
+                unverified=unverified,
                 id=rec["id"], action=rec.get("action", "?"), params=rec.get("params") or {},
                 owner=rec.get("owner"), state=rec["state"], progress=rec.get("progress", 1.0),
                 result=rec.get("result"), error=rec.get("error"), outcome=rec.get("outcome"),
@@ -1151,7 +1329,8 @@ class Driver:
 
     def rpc_jobs_status(self, p, client):
         with self._state_lock:
-            return {"job": self._job(p["id"]).snapshot()}
+            snap = self._job(p["id"]).snapshot()
+        return {"job": self._resolve_result(snap)}       # outside the lock: this may read a file
 
     def rpc_jobs_list(self, p, client):
         with self._state_lock:
@@ -1199,6 +1378,7 @@ class Driver:
             "approval": {**{s["name"]: s.get("approval", "auto") for s in self.descriptor.get("settings", [])},
                          **{a["name"]: a.get("approval", "auto") for a in self.descriptor.get("actions", [])}},
             "watchdog_s": self.watchdog_s,
+            **({"watchdog_action": self.watchdog_action} if self.watchdog_s else {}),
         }
 
     def _enter_estop_locked(self, source: str = "client", clearable: bool = True,
@@ -1220,10 +1400,13 @@ class Driver:
         software cannot clear it, so an agent is told plainly what a person has to do."""
         with self._state_lock:
             self._enter_estop_locked(source="hardware", clearable=False, clearance=clearance)
+        self._record_event("estop", by="hardware", reason=reason, clearable=False, clearance=clearance)
         self.notify("safety/estop", {"by": "hardware", "reason": reason, "stopped": True,
                                      "clearable": False, "clearance": clearance})
 
     def _run_stop_hook(self, by: str, reason: str | None) -> dict:
+        if by == "watchdog":                       # no request behind it, so rpc() never sees it
+            self._record_event("estop", by=by, reason=reason)
         stop_error = None
         try:
             self.on_estop()
@@ -1321,7 +1504,8 @@ class Driver:
                 raise NotLeased("device is leased to another client", {"holder": holder})
             self.lease, self.lease_expires = client, time.monotonic() + float(ttl)
             self._last_seen[client] = time.monotonic()
-        return {"holder": client, "ttl": float(ttl), "watchdog_s": self.watchdog_s}
+        return {"holder": client, "ttl": float(ttl), "watchdog_s": self.watchdog_s,
+                **({"watchdog_action": self.watchdog_action} if self.watchdog_s else {})}
 
     def rpc_session_renew(self, p, client):
         ttl = p.get("ttl", 60)
@@ -1341,7 +1525,7 @@ class Driver:
         through -- and while a job is running it is refused outright the first time, because
         the watchdog is armed only while a lease is held: breaking the lease on a working
         instrument would remove the dead man's switch and leave the job running unattended.
-        The refusal says what is running and what the watchdog would stop doing, so the
+        The refusal says what is running and what the watchdog would have done, so the
         person can decide. Re-issuing with `stop: true` winds the work down first, then
         releases.
         """
@@ -1367,10 +1551,13 @@ class Driver:
                 f"{holder!r} holds the lease and {len(active)} job(s) are still running: {active}. "
                 f"Releasing now would disarm the watchdog" +
                 (f" (it stops this device if the holder goes silent for {self.watchdog_s}s)"
+                 if self.watchdog_s and self.watchdog_action == "estop" else
+                 f" (after {self.watchdog_s}s of silence it would hand this instrument over, not stop it)"
                  if self.watchdog_s else "") +
                 ", leaving the work running with nothing watching it. Re-issue with stop: true "
                 "to wind the work down first, or e-stop the device if it should halt now.",
                 {"holder": holder, "activeJobs": active, "watchdog_s": self.watchdog_s,
+                 **({"watchdog_action": self.watchdog_action} if self.watchdog_s else {}),
                  "stopFirst": "session/release {force: true, stop: true, approved: true}"})
 
         stopped = None

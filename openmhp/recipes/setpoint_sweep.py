@@ -20,7 +20,7 @@ with dev:
             dev.write(PARAMS["setting"], PARAMS["restore"])
         except Exception as e:
             print(f"CLEANUP FAILED: could not restore {PARAMS['setting']} to {PARAMS['restore']}: {e}")
-with open(os.path.join(run_dir, "sweep.csv"), "w", newline="") as f:
+with open(os.path.join(run_dir, "sweep.csv"), "w", newline="", encoding="utf-8") as f:
     w = csv.writer(f); w.writerow(["setpoint", "measured_mean", "measured_sd"]); w.writerows(rows)
 print("setpoint  measured  sd")
 for v, m, s in rows:

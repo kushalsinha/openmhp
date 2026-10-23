@@ -26,7 +26,7 @@ def load() -> list[dict]:
                 with urllib.request.urlopen(src, timeout=5) as r:
                     data = json.loads(r.read())
             elif Path(src).is_file():
-                data = json.loads(Path(src).read_text())
+                data = json.loads(Path(src).read_text(encoding="utf-8"))
             else:
                 continue
             entries += data.get("packages", [])

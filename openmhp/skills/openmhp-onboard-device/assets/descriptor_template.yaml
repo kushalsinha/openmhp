@@ -45,4 +45,5 @@ safety:
   estop: true
   interlocks: [door_closed]
   watchdog_s: 10
+  watchdog_action: estop        # or: release -- hand the instrument over and keep running
   notes: What e-stop physically does.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import sys
 
 from .client import connect, RemoteError
@@ -35,7 +36,7 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", help="lab | validate | conformance | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("target", help="lab | log | validate | conformance | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
@@ -44,16 +45,25 @@ def main(argv=None):
     ap.add_argument("--sim", action="store_true", help="(lab add) use the package's simulated twin")
     ap.add_argument("--location", help="(lab add) where the instrument stands, e.g. \"bay 3, fume hood 2\"")
     ap.add_argument("--http", type=int, metavar="PORT", help="(serve) listen on HTTP instead of stdio; (node) base port, one per package")
+    ap.add_argument("--host", metavar="ADDR", help="(serve|node|serve-directory) bind address: 127.0.0.1 keeps a device on this machine, 0.0.0.0 serves the network (node's default)")
+    ap.add_argument("--token", help="device bearer token: required by a server reachable from the network, and presented by the client verbs (OPENMHP_DEVICE_TOKEN)")
+    ap.add_argument("--no-auth", action="store_true", help="(serve|node) serve the network with no token; remote callers are then served but cannot confirm approval-gated operations")
     ap.add_argument("--install-service", action="store_true", help="(node) run in the background from now on, across reboots, with no terminal open")
     ap.add_argument("--uninstall-service", action="store_true", help="(node) remove a service installed with --install-service")
     ap.add_argument("--service-status", action="store_true", help="(node) is a service installed, and is it running")
     ap.add_argument("--dry-run-service", action="store_true", help="(node --install-service) print what would be written and run, but do neither")
     a = ap.parse_args(argv)
 
+    def _serve_token():
+        """What the operator asked for: a token of their own, none at all, or the default (one is
+        generated as soon as the bind address is reachable from another machine)."""
+        return False if a.no_auth else a.token
+
     if a.target == "serve":
         from .transport import serve_http, serve_stdio
         drv = _load_driver(a.verb)
-        return serve_http(drv, port=a.http) if a.http else serve_stdio(drv)
+        return serve_http(drv, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
+            else serve_stdio(drv)
 
     if a.target == "node":                  # mhp node <packages-dir> [--http BASE_PORT] [--install-service | ...]
         import threading
@@ -99,6 +109,9 @@ def main(argv=None):
                 return 1
             return 0
 
+        from .transport import device_token, device_token_file, is_loopback
+        host = a.host or "0.0.0.0"              # a node exists to serve other machines; see the token below
+        token = False if a.no_auth else (a.token or (None if is_loopback(host) else device_token(create=True)))
         print(f"serving {len(folders)} package(s) from {root}, ports {base}..{base + len(folders) - 1}", file=sys.stderr)
         for i, folder in enumerate(folders):
             port = base + i
@@ -107,15 +120,22 @@ def main(argv=None):
             except Exception as e:                          # noqa: BLE001  one bad package must not take the rest down
                 print(f"  {folder.name:24s} SKIPPED: {type(e).__name__}: {e}", file=sys.stderr)
                 continue
-            threading.Thread(target=serve_http, args=(drv,), kwargs={"host": "0.0.0.0", "port": port}, daemon=True).start()
-            print(f"  {drv.descriptor['device']['id']:24s} http://0.0.0.0:{port}  ({folder})", file=sys.stderr)
+            threading.Thread(target=serve_http, args=(drv,), kwargs={"host": host, "port": port, "token": token},
+                             daemon=True).start()
+            print(f"  {drv.descriptor['device']['id']:24s} http://{host}:{port}  ({folder})", file=sys.stderr)
+        if token:
+            where = ("the token you supplied" if a.token else
+                     "OPENMHP_DEVICE_TOKEN" if os.environ.get("OPENMHP_DEVICE_TOKEN") else str(device_token_file()))
+            print(f"these devices require 'Authorization: Bearer <token>' on /rpc and /events; the token is in "
+                  f"{where}.\n  On the machine running the bridge:  export OPENMHP_DEVICE_TOKEN=<token>\n"
+                  f"  GET /mhp.json stays open, so `mhp lab scan` still finds them.", file=sys.stderr)
         print("advertising on the LAN if zeroconf is installed (pip install \"openmhp[all]\"); Ctrl-C to stop", file=sys.stderr)
         try:
             threading.Event().wait()
         except KeyboardInterrupt:
             return 0
 
-    if a.target == "lab":                   # mhp lab scan [host ...] | add <target> | remove <id> | list | home
+    if a.target == "lab":                   # mhp lab scan [host ...] | add <target> | accept [<id>] | remove <id> | list | home
         from .fleet import Fleet, HOME
         fleet = Fleet()
         v, x = a.verb or "list", a.args
@@ -137,6 +157,26 @@ def main(argv=None):
                 ap.error('usage: mhp lab location <device id> "bay 3, fume hood 2"')
             card = fleet.set_location(x[0], " ".join(x[1:]))
             print(f"{card['id']} is at {card['location']}", file=sys.stderr)
+        elif v == "accept":                 # the owner's own channel: what a bridge must ask a person for, they can do here
+            from .client import package_folder
+            from .package import declared_rulebook, rulebook_diff
+            ids = x or sorted(fleet.diverged())
+            if not ids:
+                print("every package in this lab is the one it was accepted with", file=sys.stderr)
+                return 0
+            for did in ids:
+                entry = fleet.devices.get(did)
+                if entry is None:
+                    ap.error(f"no device {did!r} in this lab")
+                folder = package_folder(entry["target"])
+                if folder is None:
+                    print(f"{did}: {entry['target']} is not a package; its configuration lives elsewhere", file=sys.stderr)
+                    continue
+                changes = rulebook_diff(entry.get("rulebook") or {}, declared_rulebook(folder))
+                for line in changes or ["(nothing the device enforces is different)"]:
+                    print(f"  {line}", file=sys.stderr)
+                fleet.accept(did)
+                print(f"accepted: {did} enforces the package at {folder} from now on", file=sys.stderr)
         elif v == "remove":
             print("removed" if fleet.remove(x[0]) else "not in lab", x[0])
         elif v == "list":
@@ -150,19 +190,32 @@ def main(argv=None):
                 print(f"added {card['id']} ({card['class']}, {card['location']})", file=sys.stderr)
             print(json.dumps(fleet.list(), indent=2))
         else:
-            ap.error(f"unknown lab verb {v} (scan|add|location|remove|list|home|demo)")
+            ap.error(f"unknown lab verb {v} (scan|add|accept|location|remove|list|home|demo)")
         return 0
 
     if a.target == "validate":              # mhp validate <device package folder>
         from .validate import main as vmain
         return vmain([a.verb, *a.args])
 
+    if a.target == "log":                   # mhp log [since] | mhp log audit
+        from .runs import RunLog
+        log = RunLog()
+        if a.verb == "audit":
+            r = log.audit()
+            print(json.dumps(r, indent=2, default=str))
+            return 0 if r["ok"] else 1
+        w = log.window(int(a.verb or 0), int((a.args or [100])[0]))
+        for e in w["events"]:
+            print(json.dumps(e, default=str))
+        print(f"# seq {w['seq']}, complete={w['complete']}, verified={w['verified']['ok']} "
+              f"({w['verified']['records']} records); mhp log audit checks the whole record", file=sys.stderr)
+        return 0 if w["complete"] and w["verified"]["ok"] else 1
+
     if a.target == "conformance":           # mhp conformance <target> [--json]
         import json as _json
         from .conformance import run as crun, report as creport
         if not a.verb:
             ap.error("mhp conformance <pkg:folder | http://host:port | local:mod:Class>")
-        from .client import connect
         dev = connect(a.verb, "device-under-test")
         result = crun(dev)
         if "--json" in (a.args or []):
@@ -180,9 +233,10 @@ def main(argv=None):
         from .transport import serve_http, serve_stdio
         d = Directory.from_manifest(a.verb) if a.verb.endswith(".json") else \
             Directory.from_targets(dict(t.split("=", 1) for t in [a.verb, *a.args]))
-        return serve_http(d, port=a.http) if a.http else serve_stdio(d)
+        return serve_http(d, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
+            else serve_stdio(d)
 
-    dev = connect(a.target)
+    dev = connect(a.target, token=a.token)
     v, x = a.verb, a.args
     try:
         if v == "find":      out = dev.call("directory/search", {"query": " ".join(x)})["results"]

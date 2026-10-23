@@ -27,7 +27,7 @@ def load_all(extra_dirs: list[Path] | None = None) -> list[dict]:
         for p in sorted(d.glob("*.py")):
             if p.name.startswith("_"):
                 continue
-            text = p.read_text()
+            text = p.read_text(encoding="utf-8")
             meta = dict(re.findall(r"^#\s*(recipe|needs|asks|summary):\s*(.+)$", text, re.M))
             if "recipe" not in meta:
                 continue

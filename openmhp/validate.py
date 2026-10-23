@@ -94,15 +94,27 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
         err.append("safety.estop missing (true/false)")
     if "watchdog_s" not in saf:
         err.append("safety.watchdog_s missing (a number of seconds, or null)")
+    wd_action = saf.get("watchdog_action")
+    if wd_action is not None and wd_action not in ("estop", "release"):
+        err.append(f"safety.watchdog_action must be 'estop' or 'release' (got {wd_action!r})")
+    if saf.get("watchdog_s") and (wd_action or "estop") == "estop" and saf.get("estop") is not True:
+        err.append("safety.watchdog_action is 'estop' (the default) but safety.estop is not true: the watchdog would "
+                   "claim a stop this device cannot perform; declare watchdog_action: release")
+    if wd_action and not saf.get("watchdog_s"):
+        warn.append(f"safety.watchdog_action is '{wd_action}' but watchdog_s is null, so nothing watches the holder")
     serial = d.get("serial")
     if saf.get("estop") is True and isinstance(serial, dict) and not serial.get("estop"):
         err.append("safety.estop is true but serial.estop lists no stop commands")
     driver_py = pkg.dir / "driver.py"
-    manual = driver_py.is_file() and "drivers.manual" in driver_py.read_text(errors="replace")
+    manual = driver_py.is_file() and "drivers.manual" in driver_py.read_text(encoding="utf-8", errors="replace")
     if manual and saf.get("estop") is True:
         warn.append("operator-run instrument declares estop: true; a request to a person is not an automatic stop (use estop: false, estop_kind: operator)")
     if manual and saf.get("watchdog_s"):
         warn.append("operator-run instrument declares a watchdog; nothing stops automatically if the agent goes silent")
+    if not manual and not saf.get("watchdog_s"):
+        warn.append("safety.watchdog_s is null: nothing notices if the controller dies holding the lease, and "
+                    "operating this device needs no lease at all. An instrument that must keep running unattended "
+                    "can declare a window with watchdog_action: release rather than switching the watchdog off")
     if "driver.py" not in pkg.resources:
         warn.append("no driver.py in the package")
     # units: UCUM is the declared vocabulary (SPEC 4.4). Common non-UCUM spellings have an

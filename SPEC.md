@@ -93,7 +93,9 @@ An MCP host connected to an MHP lab sees **eight operating tools regardless of d
 
 ### 3.4 Programmatic runs
 
-`mhp_run` executes an orchestration script against the lab and returns only what it prints, capped. A script that takes five hundred temperature readings and reports a mean puts one line in the model's context, not five hundred numbers. The script sees the same `Lab` client as §10.3, a `run_dir` folder to save files into, and every call it makes passes the same safety gates as a direct tool call. Hosts SHOULD sandbox script execution; the reference implementation runs scripts in-process so simulated device state is shared, and says so.
+`mhp_run` executes an orchestration script against the lab and returns only what it prints, capped. A script that takes five hundred temperature readings and reports a mean puts one line in the model's context, not five hundred numbers. The script sees a `Lab` offering the client API of §10.3, a `run_dir` folder to save files into, and every call it makes passes the same safety gates, and lands in the same run log, as a direct tool call.
+
+A script is code the host executes, and the host is the trusted side of the protocol (§7.2), so a script a *model* wrote sits inside the trust boundary while its author does not. A host that runs model-authored scripts MUST therefore hand them the audited protocol surface and not the handles that reach past it: the in-process driver object, whose vendor hooks are called only after the gates have passed; an untracked transport call, which skips the host's approval handling and the audit record; and a second client with an approver or observer of its own. The reference bridge wraps the `Lab` and its devices in facades that delegate the documented calls and refuse every other name, naming the call to use instead and recording the attempt in the run log (`script/blocked`); `run/start` records the script's hash, and `run_dir/script.py` keeps its text. Those facades are an API boundary, not a sandbox: they remove the handles, not the capability. Hosts SHOULD sandbox script execution or host devices out of process (§9.1), so that the process running scripts holds no driver object at all, and MAY offer no script execution: `mhp-mcp --no-scripts` (or `OPENMHP_NO_SCRIPTS=1`) omits `mhp_run` from the tool list and refuses it, which is the only configuration in which a model cannot get code to run inside the host. The reference implementation otherwise runs scripts in-process, so simulated device state is shared, and says so.
 
 Three modes matter for real work:
 
@@ -107,7 +109,11 @@ Every `mhp_run` is a **run** with a folder under `~/.openmhp/runs/<id>/` holding
 
 A run's `meta.json` is written when it starts, and a run whose process ended before it finished is reported as `interrupted`. Script output goes only to the run's own file; nothing redirects the process's standard output, which the MCP transport owns.
 
-The **run log** is append-only JSONL, one file per day under `~/.openmhp/log/`. The bridge records every call made through its clients, from direct tools and from run scripts (tagged with the run id): reads, writes, invokes, refusals, confirmations, e-stops and leases, plus scans, adds, plans, run boundaries and events from in-process devices. Sequence numbers continue across restarts; a cursor older than memory is served from disk, and the answer says `complete: false` when history is missing. Events from devices served over HTTP are not yet consumed (§16). `mhp_lab op="events" since=<seq>` returns what happened after a point, so a returning agent can catch up; the same events are pushed to the harness as MCP logging messages when it declared the capability. A run is reproducible from its script and the log, and a lab-notebook entry can be generated from them.
+The **run log** is append-only JSONL, one file per day under `~/.openmhp/log/`. The bridge records every call made through its clients, from direct tools and from run scripts (tagged with the run id): reads, writes, invokes, refusals, confirmations, e-stops and leases, plus scans, adds, plans, run boundaries and events from in-process devices. Sequence numbers continue across restarts; a cursor older than memory is served from disk.
+
+Each record MUST carry `prev`, the digest of the record before it, and `hash`, its own, both recomputable from the line itself; the first record of all follows a digest of zeroes. A reader then gets two different answers rather than one: `complete: false` when history is **missing** (the cursor is older than the files, a write failed, or the sequence has a hole), and `verified: {ok: false, broken: [...]}` when what was served is **not what was written**, naming the record where the chain breaks. `mhp_data op="audit"` and `mhp log audit` check every record on disk from the first line to the last. This is tamper-evidence, not tamper-proofing — whoever can write the files can rewrite the chain along with them, and signing the head is §16 — but an edit no longer leaves the record claiming to be whole: a changed reading and a deleted refusal are each pointed at by sequence number. A record that never reached disk leaves the same break as a deleted one, which is the truth about the file. Events from devices served over HTTP are not yet consumed (§16). `mhp_lab op="events" since=<seq>` returns what happened after a point, so a returning agent can catch up; the same events are pushed to the harness as MCP logging messages when it declared the capability. A run is reproducible from its script and the log, and a lab-notebook entry can be generated from them. A logged read carries the reading id the device returned (§5.3), so a number in that entry resolves to one line of the record.
+
+The run log is the **host's** record, and only the MCP bridge keeps one. So every device MUST also keep its **own**, under `~/.openmhp/records/<device-id>/` in the reference implementation, written by whichever process hosts the driver: every `settings/write` and `actions/invoke` with the value and the parameters actually used, every refusal with its code, every e-stop, reset and orderly shutdown, every lease taken and returned, every saved or retired method, and the safety events no request asked for — a watchdog trip, a stop latched at the instrument, a fault. Each line names who asked (`by`) and whether this device honoured an `approved` flag. It is written on the device side of the network, so it does not depend on the caller: the same write from the CLI, from an SDK script, from a run script or from a plain `POST /rpc` is in it. Signal reads are not: they are high-volume and are the caller's business, and the host's log keeps them. `mhp_data op="record" device=<id>` reads it back for a device this host serves; reading a remote instrument's own record is not yet a wire call (§16).
 
 ### 3.6 Examples in the descriptor
 
@@ -244,7 +250,8 @@ actions:                         # INVOKE -> job
 safety:
   estop: true                    # driver implements safety/estop
   interlocks: [lid_closed]
-  watchdog_s: 10                 # while a session holds the lease: fail safe if it goes silent this long (§6)
+  watchdog_s: 10                 # while a session holds the lease: act if it goes silent this long (§6)
+  watchdog_action: estop         # and what to do then: estop (default), or release the lease and keep running
   notes: E-stop cuts block and lid heaters; the block cools passively.
 
 locations:                       # optional, device-class specific extensions
@@ -419,10 +426,12 @@ Returns the descriptor (§4) at the requested `detail` tier (`card | summary | f
 
 ```json
 → {"method":"signals/read","params":{"names":["block_temperature","lid_closed"]}}
-← {"result":{"values":{"block_temperature":22.0,"lid_closed":true},"ts":1788991266.5}}
+← {"result":{"values":{"block_temperature":22.0,"lid_closed":true},"ts":1788991266.5,"id":"read_7f2a91c4"}}
 ```
 
 `names` omitted means all signals. `signals/subscribe` asks the server to push `notifications/signals/update` for the named signals; over HTTP these arrive on the `/events` SSE stream, over stdio as interleaved notification lines.
+
+Every result MUST carry `id`, a **reading id**, and every `signals/update` notification MUST carry one too: a value that was pushed is as citable as one that was asked for. An action result has a job id; a reading had nothing, so a number an agent wrote into a conclusion could not be pointed back at the record that produced it. The id is what a host records beside the values (§3.5), what a run writes next to each row of `readings.csv`, and what an agent cites. It identifies the reading; it is not a handle to fetch it again, because a reading is a moment and the device does not keep it.
 
 ### 5.4 Settings (write)
 
@@ -455,12 +464,12 @@ A write whose outcome is unknown (the command may have reached the device but th
      "progress":1.0,"result":{"cycles_completed":30,"final_block_temperature":72}}}}
 ```
 
-Job states: `queued → running → done | failed | cancelled`, plus `waiting_operator` for operator-run instruments (§9.1). A `failed` job carries `outcome: "unknown"` and puts the device in `fault` until a verified `safety/reset`. Busy is derived from all active jobs: a non-concurrent action is refused while any job runs, and a `concurrent` one may run alongside. A job's completion and the device state are published together. Adapters MUST report the backend's terminal outcome (a cancelled or aborted backend job is not `done`) and MUST NOT report a cancel the backend has not honoured.
+Job states: `queued → running → done | failed | cancelled`, plus `waiting_operator` for operator-run instruments (§9.1). A `failed` job carries `outcome: "unknown"` and puts the device in `fault` until a verified `safety/reset`. Busy is derived from all active jobs: a non-concurrent action is refused while any job runs, and a `concurrent` one may run alongside. A job's completion and the device state are published together. Settled job records that a device keeps on disk, and reads back as its own history after a restart, carry a digest of the record: one that does not match it is still returned, because dropping evidence is worse, but it carries `unverified` saying so, so an edited result is never presented as what the instrument reported. A result too bulky for a log line or an event buffer is replaced there by a placeholder, which MUST name the call that returns the real one rather than describing it: the device holds a finished job's result in full, and a result too big for its own record on disk is written to a file beside that record with the same lifetime, so the placeholder resolves for as long as the record is kept and says plainly when the file is gone. Data too large even for that belongs in a file in the run folder (§3.5), and the record says so instead of pointing nowhere. Adapters MUST report the backend's terminal outcome (a cancelled or aborted backend job is not `done`) and MUST NOT report a cancel the backend has not honoured.
 
 ### 5.6 Safety
 
 - `safety/limits` returns the effective limits, interlocks and approval levels in one call, for hosts that want to show the envelope to a human.
-- `safety/estop` MUST stop all motion and energy output as fast as the hardware allows, cancel every running job, and put the device in `estop`. It MUST succeed regardless of lease, approval level or interlock state, and MUST NOT wait behind ordinary requests: the reference driver runs it outside the request lock, and the serial driver interrupts in-flight I/O before sending its stop commands. If the stop hook fails, the device stays in `estop` and the response says `stopped: false`. It is the one call an agent may always make.
+- `safety/estop` MUST stop all motion and energy output as fast as the hardware allows, cancel every running job, and put the device in `estop`. It MUST succeed regardless of lease, approval level or interlock state, and MUST NOT wait behind ordinary requests: the reference driver runs it outside the request lock, and the serial driver interrupts in-flight I/O before sending its stop commands. If the stop hook fails, the device stays in `estop` and the response says `stopped: false`. It is the one call an agent may always make. A host that offers a lab-wide stop (`mhp_estop` with `device: "*"`, `Lab.estop_all`) MUST reach every device it is driving, not only the ones its own client session opened: a run and a plan each work through a session of their own, and an in-process driver outlives the session that loaded it, so a stop that walks one connection list silently spares the instrument a script was driving. The reference client walks the lab it was called on, every lab descended from it, and every driver this process hosts for one of that lab's devices.
 - `safety/reset` returns the device to `idle` after `estop` or `fault`. It MUST fail with `DeviceBusy` while any job is still active, and MUST verify recovery first (the reference reads every signal). Only the lease holder, or anyone when the device is unleased, may reset.
 
 ### 5.7 Session leases
@@ -470,10 +479,12 @@ refused unless a person confirmed it (`approved: true`, the same trusted-host ru
 `approval: confirm`, so a model cannot assert its way through), and while a job is running it
 is refused outright the first time: the watchdog is armed **only while a lease is held**, so
 breaking the lease on a working instrument would remove the dead man's switch and leave the
-job running unattended. The refusal names what is running and what the watchdog would stop
-doing; re-issuing with `stop: true` winds the work down first and then releases.
+job running unattended. The refusal names what is running and what the watchdog would have
+done; re-issuing with `stop: true` winds the work down first and then releases. A device that declares
+`watchdog_action: release` does this handover itself (§6), so a dead holder does not have to be
+forced open by a person.
 
-`session/acquire {ttl}` gives the calling session exclusive write and invoke rights until `ttl` seconds pass without `session/renew`, or until `session/release`. Every client has its own session id, so independent clients never share a lease. The reference client renews automatically with a heartbeat while it holds a lease, and each run gets its own session whose leases end with the run. If a lease is lost, the next actuating call fails with `NotLeased`, and the client must not assume it still has control. Reads, `ping`, `describe`, `jobs/status`, `jobs/pause`, `jobs/cancel` and `safety/estop` are never blocked by a lease; `jobs/resume` and `safety/reset` are. On a device that declares `watchdog_s`, operating it requires holding the lease (`NotLeased` with `data.reason: "lease_required"`); the reference client acquires it on first use.
+`session/acquire {ttl}` gives the calling session exclusive write and invoke rights until `ttl` seconds pass without `session/renew`, or until `session/release`. Every client has its own session id, so independent clients never share a lease. That id is a name the caller asserts (`X-MHP-Client` over HTTP), not a secret the device issued, so it identifies a client only as far as the channel does: a caller the device already trusts could claim another session's id and operate a device leased to it. Closing that needs the lease to be a token `session/acquire` hands back and the holder presents, which is not in this draft; until then a device's authentication (§9.1) is what bounds who can make the claim. The reference client renews automatically with a heartbeat while it holds a lease, and each run gets its own session whose leases end with the run. If a lease is lost, the next actuating call fails with `NotLeased`, and the client must not assume it still has control. Reads, `ping`, `describe`, `jobs/status`, `jobs/pause`, `jobs/cancel` and `safety/estop` are never blocked by a lease; `jobs/resume` and `safety/reset` are. On a device that declares `watchdog_s`, operating it requires holding the lease (`NotLeased` with `data.reason: "lease_required"`); the reference client acquires it on first use.
 
 ### 5.8 Methods
 
@@ -509,7 +520,14 @@ client                                server
   │── session/release ──────────────────▶│
 ```
 
-**Watchdog.** If the descriptor declares `safety.watchdog_s`, the watchdog is armed whenever a session holds the lease. Any request from the holder renews it; the reference client sends `session/renew` at a third of the window. If the holder is silent for longer than the window, or its lease expires without release, the server MUST fail safe: enter `estop`, cancel active jobs, run the stop hook, and drop the lease. Recovery needs a verified `safety/reset`. The watchdog protects against the controlling process dying or losing its connection; it does not notice a model that is alive but idle. A driver running inside the host process dies with the host, so host power loss is covered only by a device-side or hardware watchdog, which the descriptor should describe in `safety.notes`.
+**Watchdog.** If the descriptor declares `safety.watchdog_s`, the watchdog is armed whenever a session holds the lease, and operating the device requires holding it (§5.7). Any request from the holder renews it; the reference client sends `session/renew` at a third of the window. If the holder is silent for longer than the window, or its lease expires without release, the server MUST act and MUST report it as `notifications/safety/watchdog`, naming what it did.
+
+What it does is the author's declaration, `safety.watchdog_action`:
+
+- **`estop`** (the default, and the only behaviour before this field existed): enter `estop`, cancel active jobs, run the stop hook, drop the lease. Recovery needs a verified `safety/reset`. This is the answer for an instrument that is only safe while something is minding it. A device MUST NOT declare it unless `safety.estop` is true, or the trip would claim a stop the device cannot perform.
+- **`release`**: drop the lease and leave the work running, so another controller can take the instrument over without the person-confirmed forced release of §5.7. This is the answer for an instrument whose work must not be interrupted — electrolysis, a laser acquisition, an oven program — where stopping is itself the damage. One switch that meant both "require a lease" and "slam the e-stop" left those authors declaring no watchdog at all, which is strictly worse: nothing watches the controller, and operating the instrument then needs no lease either.
+
+Either way the silence is detected and reported, and `watchdog_s: null` remains the one setting under which nothing notices at all. The watchdog protects against the controlling process dying or losing its connection; it does not notice a model that is alive but idle, and the reference client's heartbeat keeps the window fed for as long as that client's process lives, so it is a liveness check on the controller, not on the work. A driver running inside the host process dies with the host, so host power loss is covered only by a device-side or hardware watchdog, which the descriptor should describe in `safety.notes`.
 
 **Versioning.** `protocolVersion` is a date string, as in MCP. A server MUST answer `initialize` with the highest version it supports that is ≤ the client's; a client that receives an older version MUST either speak it or disconnect. The MCP bridge negotiates MCP versions separately: it answers with the client's version when it supports it, and otherwise with its newest supported version.
 
@@ -542,6 +560,8 @@ Only after all six pass does vendor code run. `dryRun: true` evaluates the same 
 
 The reference bridge does this through MCP elicitation, for direct tool calls and for every call a run script makes, and it ignores any `approved` value the model supplies. If the harness has no elicitation, the bridge has no trusted way to reach a person, so confirm-gated operations are unavailable and the refusal says so. The SDK and the CLI are host tooling: code or a person using them directly is the trusted party, and `--approved` is that person's own statement. Servers that can reach a person directly (a touchscreen on the instrument, a key switch) MAY implement `elicitation/confirm` as a server-initiated request.
 
+A device enforces that rule at the edge of its transport, because `approved: true` is a statement about a *person* and only some callers are in a position to make one. A device MUST honour the flag only from a caller its transport can place: the process that launched it (stdio, in-process), a request from the machine it runs on, or a request authenticated to it (§9.1). From any other caller — a stranger reaching an open port on the lab network — the flag MUST be dropped before the gates see it, and the request refused as unconfirmed with `data.ignoredApproved: true`, so the caller can tell "you did not ask" from "you are not in a position to answer". Within a trusted channel the host's word is still taken on trust: that is what trusted means, and it is why which channels count is a deployment decision and not a model's.
+
 Jobs can be **paused** (`jobs/pause`, `jobs/resume`) when the action declares `pausable: true`: the driver calls `checkpoint()` between steps, which blocks while paused and raises on cancel, so a person can step in without an emergency stop.
 
 ### 7.3 Fail closed
@@ -558,7 +578,11 @@ MHP is not a functional-safety system in the IEC 61508 sense. Hard-wired e-stops
 
 ### 7.6 Trust boundary and retries
 
-Package code (`driver.py`, `sim.py`), recipes and `mhp_run` scripts are code the host executes. The runtime can refuse malformed or out-of-limit requests only while the driver and its descriptor are outside the model's authority: a model that can edit a package, or run arbitrary scripts in an unsandboxed host, can change what is enforced. Deployments SHOULD separate package authoring (a code review) from operation, and SHOULD sandbox scripts.
+Package code (`driver.py`, `sim.py`), recipes and `mhp_run` scripts are code the host executes, and a device package *is* the rulebook: every limit, interlock and approval level the runtime enforces comes from it. So the gates above hold only while the package is outside the model's authority. A host that lets a model write a package and then puts it into service has let the model set its own limits, and the refusals it still issues mean nothing.
+
+A host that gives a model any way to write package files — the reference bridge's `mhp_lab op='new'` and `op='write'`, a filesystem tool, an unsandboxed script — MUST therefore record per device which package files were accepted, MUST refuse to operate a device whose files are not those, and MUST put any change in what a device enforces to a person on the same trusted channel as a confirm-gated write, naming the limit, interlock or approval level that would move, before anything enforces it. Writing a file is not the moment to gate; becoming enforced is, and a package can start being enforced because files changed under a host that never wrote them. §9.1 specifies the reference implementation: an accepted fingerprint and rulebook per fleet entry, `mhp_lab op='reload'` to put a change to the owner, and `mhp lab accept` for the owner to accept one themselves.
+
+What this does not reach: a host that executes model-supplied code cannot contain it. An unsandboxed `mhp_run` script can drive vendor libraries directly, and an agent can still introduce a *new* device package of its own rather than loosening an old one. The rule above means no configuration already accepted for a device gets looser without a person seeing it, not that an unsandboxed host is safe. Deployments SHOULD separate package authoring (a code review) from operation, and SHOULD sandbox scripts.
 
 MHP operations are not idempotent. A request can reach a device even when its response is lost, and servers do not deduplicate requests. Clients MUST NOT retry writes or invokes automatically; after a lost response they SHOULD read state or list jobs to reconcile.
 
@@ -570,13 +594,14 @@ Servers push notifications (JSON-RPC requests without `id`) for anything a super
 
 | Method | Params | When |
 |---|---|---|
-| `notifications/signals/update` | `{name, value, ts}` | a subscribed or driver-chosen signal changes |
+| `notifications/signals/update` | `{name, value, ts, id}` | a subscribed or driver-chosen signal changes; `id` is the reading id (§5.3) |
 | `notifications/settings/changed` | `{name, value, by}` | any client writes a setting |
 | `notifications/jobs/started` | `{job}` | job leaves the queue |
 | `notifications/jobs/progress` | `{job, ...extra}` | driver reports progress (extra keys are device-specific) |
 | `notifications/jobs/finished` | `{job}` | job reaches done / failed / cancelled |
 | `notifications/jobs/paused`, `jobs/resumed`, `jobs/cancelling` | `{job, by}` | pause, resume or cancel requested |
 | `notifications/safety/estop` | `{by, reason, stopped, stop_error}` | e-stop engaged by a client or the watchdog |
+| `notifications/safety/watchdog` | `{action, holder, silent_s, watchdog_s, reason, activeJobs, stopped}` | the lease holder went silent; `action` is what the device did about it |
 | `notifications/safety/fault` | `{reason}` | the device latched a fault with an unknown outcome |
 | `notifications/operator/instruction` | `{text, job?}` | an operator-run instrument asks a person to act |
 | `notifications/safety/reset` | `{by}` | device returned to idle |
@@ -594,32 +619,34 @@ reads what came in and decides the next run; nothing in this path polls the inst
 
 MHP defines two transports, mirroring MCP:
 
-- **stdio**: newline-delimited JSON-RPC on the driver process's stdin/stdout. For a driver running on the bench PC, launched by the host.
-- **HTTP**: `POST /rpc` for requests; `GET /events` as a Server-Sent Events stream of notifications; `GET /mhp.json` returns the descriptor with no handshake, so an agent (or a person with `curl`) can learn what a device is from its URL alone. Clients MUST send a unique session id in `X-MHP-Client`; leases are per session. The device HTTP transport has no authentication in this draft and belongs on a trusted network (§16).
+- **stdio**: newline-delimited JSON-RPC on the driver process's stdin/stdout. For a driver running on the bench PC, launched by the host. A transport MUST keep reading while a request is being handled: a stop that has not been read yet cannot be let past the driver's request lock (§6), so the reference server reads on one thread, hands ordinary requests to one worker that runs them in the order they arrive — one instrument, one queue — and answers the calls the driver handles outside that lock, `safety/estop` first among them, the moment they are read, each on a thread of its own.
+- **HTTP**: `POST /rpc` for requests; `GET /events` as a Server-Sent Events stream of notifications; `GET /mhp.json` returns the descriptor with no handshake, so an agent (or a person with `curl`) can learn what a device is from its URL alone. Clients MUST send a unique session id in `X-MHP-Client`; leases are per session. The device HTTP transport authenticates with a bearer token, which a reference server requires as soon as it is bound where another machine can reach it (§9.1); there is no transport encryption here, so it still belongs on a trusted segment or behind a TLS proxy (§16).
 
 **Network discovery.** Servers SHOULD advertise via mDNS/DNS-SD as `_mhp._tcp` with TXT records `id`, `class`, `path=/mhp.json`; the reference HTTP transport does so when the optional `zeroconf` package is installed. Clients discover devices two ways, and SHOULD use both: browse `_mhp._tcp`, and probe `GET /mhp.json` on candidate hosts across the conventional port range (18900 to 18939), which works on networks that block multicast. Labs MAY additionally run a directory (§3.2).
 
 ### 9.1 The fleet and `mhp_lab`
 
-A host keeps a **fleet**: the list of devices it knows, persisted as `~/.openmhp/fleet.json`, each entry an id, a target and the device's card. Device packages the host owns are hosted in-process from `~/.openmhp/devices/<id>/`, so a scientist's laptop needs no separate device servers for them. The bridge exposes the fleet through one tool, `mhp_lab`, with these operations:
+A host keeps a **fleet**: the list of devices it knows, persisted as `~/.openmhp/fleet.json`, each entry an id, a target, the device's card and — for a package the host runs in-process — the fingerprint and rulebook that were accepted for it. Device packages the host owns are hosted in-process from `~/.openmhp/devices/<id>/`, so a scientist's laptop needs no separate device servers for them. The bridge exposes the fleet through one tool, `mhp_lab`, with these operations:
 
 | op | Effect |
 |---|---|
 | `status` | how many devices the lab has and what to do next; the agent's starting point |
 | `scan` | mDNS browse plus HTTP probe of localhost and any `hosts` given; returns devices not yet in the fleet |
-| `add` | register a target (`http://host:port`, a package folder, or a package id under `~/.openmhp/devices`); fetches the card; the device is immediately searchable; an id already in the lab at a different target is refused |
+| `add` | register a target (`http://host:port`, a package folder, or a package id under `~/.openmhp/devices`); fetches the card; the device is immediately searchable; an id already in the lab at a different target is refused. A package whose rulebook differs from the one accepted for that id — still in the lab, or removed from it — is a reconfiguration, so a person is asked first; a refusal leaves the lab exactly as it was |
 | `onboard` | a guided interview run by the server: returns the next questions (`ask`, in plain words for the human) and the `shape` of the answer; on completion the server writes DEVICE.md, descriptor.yaml and driver.py, validates, and asks the agent to `add` |
 | `new` | create a package skeleton for an instrument that does not speak MHP yet (for agents that prefer to write files themselves) |
-| `write` | write files (DEVICE.md, descriptor.yaml, driver.py, references, scripts) into that package; paths may not escape it |
+| `write` | write files (DEVICE.md, descriptor.yaml, driver.py, references, scripts) into that package; paths may not escape it. A device already running from that folder goes on enforcing the configuration accepted for it: the result says so, and the log entry names every bound the new files would move |
 | `validate` | run the package validator |
 | `recipes` | search tested procedures (§3.4) |
 | `registry` | search known community packages; add one with `add target="github:owner/repo/path"` |
 | `safety_card` | a readable review of a device before first use: enforced limits, gated actions, e-stop, watchdog, validator findings, and live probes (every action dry-run, an out-of-range write on every bounded setting) |
 | `events` | what happened since a sequence number (§3.5) |
-| `remove`, `reload` | `remove` refuses a device with active jobs unless `force`; both drop the device's connection, directory entry and in-process driver. `reload` loads a package again after its files changed; a changed package is never silently reused |
+| `remove`, `reload` | `remove` refuses a device with active jobs unless `force`; both drop the device's connection, directory entry and in-process driver, and `remove` keeps the configuration that was accepted, so a looser package returning under the same id is still a change. `reload` is where changed files become the rulebook, so it shows a person every limit, interlock and approval level that would move and asks; a decline changes nothing and leaves the device running on what it had |
 | `location` | record where an installed instrument stands; the lab's fleet record, not the package, is the authority |
 | `release` | hand the bridge session's leases back |
 | `list`, `home` | membership and paths |
+
+**The accepted configuration.** Package files are the rulebook, so the fleet record — not the files — is the authority on which rulebook a device enforces, the way it already is for a device's location. `add` and a confirmed `reload` record the package's fingerprint and its rulebook (every limit, interlock, approval level, declared type and bound inside a nested parameter, plus a hash of each code file) in the fleet entry. The host pins those fingerprints: a package whose files no longer hash to what was accepted is not loaded at all, and the refusal says a person has to accept the new configuration. That holds however the files came to change — a host tool, a run script's `open()`, an editor, a `git pull` — and whether or not the driver was already in memory, so a restart cannot quietly adopt a rulebook nobody reviewed. `op='status'` lists the devices in that state, `op='reload'` puts the diff to the owner through elicitation, and the owner can accept it themselves with `mhp lab accept <id>`, which is the trusted channel when the harness has none. Packages a host was pointed at on its command line, and fleets written before the host recorded fingerprints, are pinned to the files as they stand at startup: that much was the operator's own choice, and changes after it are not.
 
 `add` accepts `sim=true` to register a package's **simulated twin** (`sim.py`, declared as `sim:` in the frontmatter) under `<id>-sim`, so protocols can be rehearsed with nothing plugged in. The bundled devices and the community packages all ship one. Onboarding (`onboard`) ends with a safety card the agent reads back to the owner; an agent that has the instrument's manual SHOULD submit everything the manual states in one `answers` call and ask the human only to confirm the limits.
 
@@ -629,13 +656,13 @@ The bridge also declares MCP `instructions` on `initialize`, so a harness with n
 
 This is how a scientist adds an instrument without leaving the conversation: *"find the instruments on my network"* → `scan` → *"add the thermocycler"* → `add`. For an instrument that has no MHP server, the `openmhp-onboard-device` skill interviews the owner, and the agent writes the package with `new`, `write` and `validate`, then `add`s it. The `npx openmhp-cli` launcher installs the runtime, the skills and the harness registration in one command.
 
-**Authentication.** The device HTTP transport has none in this draft: run it on a trusted network, or behind TLS with authentication. The MCP bridge's HTTP endpoint (`mhp-mcp --http`) exposes script execution and hardware control, so it requires a bearer token (`OPENMHP_HTTP_TOKEN`, or a generated `~/.openmhp/http_token`), refuses requests whose `Origin` is not explicitly allowed (`--allow-origin`), and on a loopback bind refuses `Host` headers other than localhost. It has no server-initiated requests, so confirm-gated operations are unavailable over it. The protocol reserves `params.auth` for a future in-band scheme.
+**Authentication.** The device HTTP transport takes a bearer token: `Authorization: Bearer <token>` on `POST /rpc` and `GET /events`, with `GET /mhp.json` left open as the device's nameplate so discovery and `mhp lab scan` keep working. A reference server requires none while it is bound to loopback, where the operating system is already the boundary, and generates one the moment it binds an address another machine can reach (`OPENMHP_DEVICE_TOKEN`, or `~/.openmhp/device_token` created with mode 0600), printing where to find it: a port that operates an instrument should not answer the whole network unasked. `mhp serve --no-auth` and `mhp node --no-auth` serve an exposed port openly on purpose — behind a proxy that authenticates, or on an isolated instrument VLAN — and then requests from off the machine are served but cannot assert `approved` (§7.2). A client presents an explicit token, else `OPENMHP_DEVICE_TOKEN`, else the local token file when the device is on the same machine; it never volunteers that secret to a host that did not issue it, and a 401 surfaces as `Forbidden` naming the variable to set. There is still no transport encryption here: run it on a trusted segment or behind a TLS proxy, and note that a caller holding the token is trusted entirely, including about which session it is (§5.7). The MCP bridge's HTTP endpoint (`mhp-mcp --http`) exposes script execution and hardware control, so it requires a bearer token (`OPENMHP_HTTP_TOKEN`, or a generated `~/.openmhp/http_token`), refuses requests whose `Origin` is not explicitly allowed (`--allow-origin`), and on a loopback bind refuses `Host` headers other than localhost. It has no server-initiated requests, so confirm-gated operations are unavailable over it. The protocol reserves `params.auth` for a future in-band scheme.
 
 ---
 
 ## 10. Three control surfaces
 
-The same six primitives are reachable three ways. They compose: an agent uses MCP to explore and decide, writes a code file for the parts that must run fast or long, and uses the CLI to check on it.
+The same six primitives are reachable three ways. They compose: an agent uses MCP to explore and decide, writes a code file for the parts that must run fast or long, and uses the CLI to check on it. Which surface was used changes the convenience, not the rules: the gates are in the server (§7), and so is the record (§3.5), so no surface is the quiet one.
 
 ### 10.1 MCP bridge
 
@@ -650,7 +677,7 @@ A single MCP server exposes a whole lab to any MCP host through ten generic tool
 | `mhp_invoke` | `actions/invoke` (+ optional wait) |
 | `mhp_job` | `jobs/status`, `jobs/pause`, `jobs/resume`, `jobs/cancel` |
 | `mhp_estop` | `safety/estop` on one device or every device this session touched |
-| `mhp_run` | runs a script against the `Lab` client; returns stdout only (§3.4) |
+| `mhp_run` | runs a script against a facade over the `Lab` client; returns stdout only; absent with `--no-scripts` (§3.4) |
 | `mhp_lab` | fleet management: status, scan, add, onboard, recipes, registry, safety card, events, remove, reload, release (§9.1) |
 | `mhp_data` | runs, their files, the run log, and what devices pushed (`op='updates'`, §8) |
 | `mhp_method` | the device's methods: find, list, get, save, run, diff, retire (§4.5, §5.8) |
@@ -664,9 +691,10 @@ mhp-mcp                                                  # the lab in ~/.openmhp
 mhp-mcp --directory http://directory:18900               # big lab: nothing loaded until searched
 mhp-mcp --directory http://directory:18900 --http 18800  # over HTTP for remote harnesses: bearer token required
 mhp-mcp thermo=http://bench:18921 arm=http://arm-pc:18921   # small lab: cards indexed at start
+mhp-mcp --no-scripts                                     # no mhp_run: nothing the model writes is executed here
 ```
 
-The bridge is the lab's MCP server. Any harness that speaks MCP over stdio or HTTP (Claude Code, Codex, OpenClaw, Hermes, Claude Science, Open Science, or a custom agent) connects to it and sees the same eleven tools.
+The bridge is the lab's MCP server. Any harness that speaks MCP over stdio or HTTP (Claude Code, Codex, OpenClaw, Hermes, Claude Science, Open Science, or a custom agent) connects to it and sees the same eleven tools — ten with `--no-scripts`, which is the deployment that executes no model-authored code (§3.4).
 
 ### 10.2 Command line
 
@@ -677,6 +705,8 @@ mhp http://bench:18921 write target_temperature 95
 mhp http://bench:18921 invoke run_protocol '{"steps":[...],"cycles":30}' --wait
 mhp http://bench:18921 invoke open_lid --approved      # the person at this terminal confirms
 mhp http://bench:18921 estop "smoke from lid"
+mhp lab accept thermocycler-01                         # the owner accepts an edited package as this lab's rulebook
+mhp log audit                                          # is the record on disk still what was written?
 ```
 
 The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool.
@@ -825,7 +855,7 @@ A package's `sim.py` twin is loaded by `load_driver(path, sim=True)`, which mark
 
 ## 16. Not yet specified
 
-In-band authentication, and authentication for the device HTTP transport; request idempotency tokens; multi-device transactions (`safety/shutdown` winds a cell down but is not a transaction, and does not roll anything back); descriptor signing; a hosted registry beyond the bundled index; sandboxed script execution; streaming bulk data (results are stored as files next to the run, §3.5); a machine-readable description of hardware watchdogs and device-side safe states. Each has a natural home in the protocol (a `data/` primitive, `params.auth`, a `transaction/` namespace) and will be specified with partner input.
+In-band authentication (`params.auth`; the device HTTP transport authenticates at the transport level today, §9.1); request idempotency tokens; multi-device transactions (`safety/shutdown` winds a cell down but is not a transaction, and does not roll anything back); descriptor signing, and signing the run log's chain head so that a rewrite by whoever holds the files is detectable too (§3.5); a hosted registry beyond the bundled index; sandboxed script execution; streaming bulk data (results are stored as files next to the run, §3.5); a machine-readable description of hardware watchdogs and device-side safe states; a wire primitive for reading an instrument's own record from off the machine that hosts it, which needs a rule about who may read who did what. Each has a natural home in the protocol (a `data/` primitive, `params.auth`, a `transaction/` namespace) and will be specified with partner input.
 
 ---
 
