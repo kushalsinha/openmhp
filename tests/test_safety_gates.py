@@ -919,6 +919,28 @@ def test_entry_points_fail_cleanly():
     assert endless["ok"] and "truncated" in endless["plan"]["verdict"]
 
 
+def test_the_cli_can_still_reach_a_device():
+    """SPEC 10.2 is a control surface, not a convenience: `mhp <target> read|write|invoke|estop`
+    is what a person at the bench and an agent in a Bash tool both use. A second,
+    function-level `from .client import connect` inside main() made the name local to the whole
+    function, so every client verb raised UnboundLocalError before it reached a device."""
+    from openmhp import cli
+    seen = []
+    register("local:probe.cli", drv(signals=[Signal("t", lambda: 21.5)],
+                                    settings=[Setting("sp", seen.append, limits={"min": 0, "max": 100})],
+                                    estop=lambda: seen.append("stop")))
+    printed, out = io.StringIO(), sys.stdout
+    sys.stdout = printed
+    try:
+        for verb in (["read", "t"], ["write", "sp", "40"], ["limits"], ["describe", "card"], ["estop", "by hand"]):
+            assert cli.main(["local:probe.cli", *verb]) == 0, verb
+        assert cli.main(["conformance", "pkg:openmhp/devices/arm-01"]) == 0    # the verb that shadowed it
+    finally:
+        sys.stdout = out
+    assert seen == [40, "stop"], seen
+    assert "21.5" in printed.getvalue(), printed.getvalue()[:300]
+
+
 def test_nested_parameter_bounds_come_from_the_descriptor_not_the_driver():
     """A dangerous value inside a structured parameter (a 200 C step in an otherwise valid
     program) must be refused by the declared shape alone. Before shapes were declarable, the

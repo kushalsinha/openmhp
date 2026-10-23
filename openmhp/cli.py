@@ -216,7 +216,6 @@ def main(argv=None):
         from .conformance import run as crun, report as creport
         if not a.verb:
             ap.error("mhp conformance <pkg:folder | http://host:port | local:mod:Class>")
-        from .client import connect
         dev = connect(a.verb, "device-under-test")
         result = crun(dev)
         if "--json" in (a.args or []):
