@@ -503,8 +503,8 @@ class Bridge:
         self._hooked.add(key)
         dev.subscribe(lambda msg, n=name: self._device_event(n, msg))
 
-    _LOGGED_EVENTS = ("jobs/finished", "safety/estop", "safety/reset", "safety/fault", "jobs/paused",
-                      "operator/instruction", "methods/saved")
+    _LOGGED_EVENTS = ("jobs/finished", "safety/estop", "safety/reset", "safety/fault", "safety/watchdog",
+                      "jobs/paused", "operator/instruction", "methods/saved")
 
     def _device_event(self, device: str, msg: dict):
         m = msg.get("method", "").replace("notifications/", "")
@@ -539,7 +539,7 @@ class Bridge:
             ev = self.log.write("device/" + m, device=device, **{k: v for k, v in params.items() if k != "job"},
                                 **({"job": params["job"]["id"], "state": params["job"]["state"], "method": params["job"].get("method"),
                                     "result": _cap(params["job"].get("result"))} if "job" in params else {}))
-            level = "error" if ("estop" in m or "fault" in m) else "info"
+            level = "error" if ("estop" in m or "fault" in m or "watchdog" in m) else "info"
             self.notify_harness(level, f"{device}: {m} " + json.dumps({k: v for k, v in ev.items() if k not in ("ts", "kind", "seq", "device")}, default=str)[:300])
 
     def updates(self, device: str, signal: str | None = None, since: float = 0.0, limit: int = 20) -> dict:

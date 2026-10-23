@@ -14,4 +14,5 @@ safety:
   estop_kind: operator
   interlocks: [balanced]
   watchdog_s: null
-  notes: Operator-run. Stopping is a request to the person at the instrument, who presses STOP; nothing stops automatically.
+  notes: Operator-run. Stopping is a request to the person at the instrument, who presses STOP; nothing stops
+    automatically, and there is no action a watchdog could take, so this package declares none.

@@ -607,10 +607,32 @@ class Driver:
         self.notify("signals/update", {"name": name, "value": value, "ts": time.time()})
 
     # ---- watchdog and leases ------------------------------------------- #
+    #
+    # Declaring a window does two separable things: it makes a lease mandatory for every
+    # actuating request, and it decides what happens when the holder goes silent. Bundling
+    # the second into the first is what pushed authors of long-running instruments to
+    # declare no window at all -- see watchdog_action.
+    WATCHDOG_ACTIONS = ("estop", "release")
+
     @property
     def watchdog_s(self) -> float | None:
         wd = (self.descriptor.get("safety") or {}).get("watchdog_s")
         return float(wd) if is_finite_number(wd) and wd > 0 else None
+
+    @property
+    def watchdog_action(self) -> str:
+        """What this device does when the lease holder goes silent.
+
+        ``estop`` (the default) stops it, which is right for an instrument that is only safe
+        while something is minding it. ``release`` drops the lease instead and leaves the work
+        running, so another controller can take the instrument over: the only honest answer
+        for an instrument whose job must not be interrupted -- electrolysis, a laser
+        acquisition, an oven program -- where stopping is itself the damage. Either way the
+        silence is reported as ``notifications/safety/watchdog``. Anything unrecognised fails
+        safe as ``estop``.
+        """
+        a = (self.descriptor.get("safety") or {}).get("watchdog_action") or "estop"
+        return a if a in self.WATCHDOG_ACTIONS else "estop"
 
     def _arm_watchdog(self) -> None:
         if self.watchdog_s and not self._closed:
@@ -623,7 +645,9 @@ class Driver:
         return None
 
     def _watchdog_check(self) -> None:
-        wd = self.watchdog_s
+        """One silence, one event. Both actions clear the lease, which disarms the check, so a
+        controller that never comes back is reported once rather than every quarter second."""
+        wd, action = self.watchdog_s, self.watchdog_action
         if not wd or self._closed:
             return
         with self._state_lock:
@@ -636,8 +660,16 @@ class Driver:
                 return
             reason = (f"watchdog: no request from lease holder {holder!r} for {silent:.2f}s (limit {wd}s)" if silent > wd
                       else f"watchdog: lease held by {holder!r} expired without release")
-            self._enter_estop_locked(source="watchdog")
-        threading.Thread(target=self._run_stop_hook, args=("watchdog", reason), daemon=True).start()
+            active = sorted(self._active)
+            if action == "estop":
+                self._enter_estop_locked(source="watchdog")
+            else:
+                self.lease = None                  # hand the instrument over; the work keeps running
+        self.notify("safety/watchdog", {"action": action, "holder": holder, "silent_s": round(silent, 2),
+                                        "watchdog_s": wd, "reason": reason, "activeJobs": active,
+                                        "stopped": action == "estop"})
+        if action == "estop":
+            threading.Thread(target=self._run_stop_hook, args=("watchdog", reason), daemon=True).start()
 
     def _touch(self, client: str) -> None:
         self._last_seen[client] = time.monotonic()
@@ -653,7 +685,8 @@ class Driver:
             if dry_run:
                 return {_NOTED_DRY_RUN_LEASE: True}
             raise NotLeased("this device declares a watchdog: acquire a lease (session/acquire) and keep it renewed "
-                            "before operating it", {"reason": "lease_required", "watchdog_s": self.watchdog_s})
+                            "before operating it", {"reason": "lease_required", "watchdog_s": self.watchdog_s,
+                                                    "watchdog_action": self.watchdog_action})
         return {}
 
     # ---- safety gates -------------------------------------------------- #
@@ -1199,6 +1232,7 @@ class Driver:
             "approval": {**{s["name"]: s.get("approval", "auto") for s in self.descriptor.get("settings", [])},
                          **{a["name"]: a.get("approval", "auto") for a in self.descriptor.get("actions", [])}},
             "watchdog_s": self.watchdog_s,
+            **({"watchdog_action": self.watchdog_action} if self.watchdog_s else {}),
         }
 
     def _enter_estop_locked(self, source: str = "client", clearable: bool = True,
@@ -1321,7 +1355,8 @@ class Driver:
                 raise NotLeased("device is leased to another client", {"holder": holder})
             self.lease, self.lease_expires = client, time.monotonic() + float(ttl)
             self._last_seen[client] = time.monotonic()
-        return {"holder": client, "ttl": float(ttl), "watchdog_s": self.watchdog_s}
+        return {"holder": client, "ttl": float(ttl), "watchdog_s": self.watchdog_s,
+                **({"watchdog_action": self.watchdog_action} if self.watchdog_s else {})}
 
     def rpc_session_renew(self, p, client):
         ttl = p.get("ttl", 60)
@@ -1341,7 +1376,7 @@ class Driver:
         through -- and while a job is running it is refused outright the first time, because
         the watchdog is armed only while a lease is held: breaking the lease on a working
         instrument would remove the dead man's switch and leave the job running unattended.
-        The refusal says what is running and what the watchdog would stop doing, so the
+        The refusal says what is running and what the watchdog would have done, so the
         person can decide. Re-issuing with `stop: true` winds the work down first, then
         releases.
         """
@@ -1367,10 +1402,13 @@ class Driver:
                 f"{holder!r} holds the lease and {len(active)} job(s) are still running: {active}. "
                 f"Releasing now would disarm the watchdog" +
                 (f" (it stops this device if the holder goes silent for {self.watchdog_s}s)"
+                 if self.watchdog_s and self.watchdog_action == "estop" else
+                 f" (after {self.watchdog_s}s of silence it would hand this instrument over, not stop it)"
                  if self.watchdog_s else "") +
                 ", leaving the work running with nothing watching it. Re-issue with stop: true "
                 "to wind the work down first, or e-stop the device if it should halt now.",
                 {"holder": holder, "activeJobs": active, "watchdog_s": self.watchdog_s,
+                 **({"watchdog_action": self.watchdog_action} if self.watchdog_s else {}),
                  "stopFirst": "session/release {force: true, stop: true, approved: true}"})
 
         stopped = None

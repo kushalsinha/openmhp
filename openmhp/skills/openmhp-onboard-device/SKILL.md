@@ -71,7 +71,10 @@ Ask in order. Do not invent answers.
 7. **What must be true first?** Lid closed, homed, nobody in the cell. → boolean signals + `interlocks`.
 8. **What always needs a human?** → `approval: confirm`; never by an agent → `approval: forbid`.
 9. **How does it stop?** The command that cuts motion or energy → `on_estop`. How long may the
-   agent go silent → `watchdog_s`.
+   agent go silent → `watchdog_s`, and what should happen then → `watchdog_action`: `estop` for an
+   instrument that is only safe while something is minding it, `release` for one whose work must
+   not be interrupted (it hands the instrument over and keeps running). Declaring a window is also
+   what makes a lease mandatory, so do not switch it off to avoid an unwanted stop.
 10. **What documents exist?** SOPs, manual pages, calibration tables → `references/`.
 11. **Does it run methods?** If an operation takes a named parameter set that changes per project
     or compound (an HPLC or GC method, a PCR program, a scan recipe), mark that action

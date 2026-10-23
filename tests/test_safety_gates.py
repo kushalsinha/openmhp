@@ -107,6 +107,69 @@ def test_watchdog_stops_a_silent_lease_holder():
     w.close(); w2.close()
 
 
+def test_a_watchdog_can_hand_an_instrument_over_instead_of_stopping_it():
+    """`safety.watchdog_s` decided two things at once: that a lease is mandatory, and that silence
+    e-stops the instrument. For a cell that electrolyses for hours the stop is itself the damage, so
+    authors switched the whole field off -- and lost the mandatory lease and any detection with it.
+    `watchdog_action: release` separates them: the silence is still caught and reported, the lease is
+    dropped so another controller can take over, and the work keeps running."""
+    def cell(safety):
+        heard, stopped = [], []
+        d = drv(signals=[Signal("current_mA", lambda: -150.0)],
+                actions=[Action("electrolyse", lambda job, params: time.sleep(2) or {"coulombs": 12})],
+                safety=safety, estop=lambda: stopped.append("opened"))
+        d.subscribers.append(lambda m: heard.append(m["params"]) if m["method"].endswith("safety/watchdog") else None)
+        return d, heard, stopped
+
+    d, heard, stopped = cell({"estop": True, "watchdog_s": 0.2, "watchdog_action": "release"})
+    expect(NotLeased.code, lambda: LocalDevice(d).call("actions/invoke", {"name": "electrolyse"}, _auto_lease=False))
+    d.rpc("session/acquire", {"ttl": 60}, "controller")        # a controller that then dies
+    jid = d.rpc("actions/invoke", {"name": "electrolyse"}, "controller")["job"]["id"]
+    time.sleep(0.7)
+    assert d.lease is None, "the dead holder kept the instrument"
+    assert d.state == "busy" and not d.jobs[jid].cancel_requested, "the electrolysis was interrupted"
+    assert stopped == [] and [(e["action"], e["stopped"], e["activeJobs"]) for e in heard] == [("release", False, [jid])]
+    LocalDevice(d).acquire(ttl=60)                             # and another controller can take over
+    d.close()
+
+    d, heard, stopped = cell({"estop": True, "watchdog_s": 0.2})               # the default is unchanged
+    d.rpc("session/acquire", {"ttl": 60}, "controller")
+    time.sleep(0.7)
+    assert d.state == "estop" and stopped == ["opened"] and heard[0]["action"] == "estop"
+    d.close()
+
+    d, _, stopped = cell({"estop": True, "watchdog_s": 0.2, "watchdog_action": "sit-tight"})
+    d.rpc("session/acquire", {"ttl": 60}, "controller")        # an action it does not know fails safe
+    time.sleep(0.7)
+    assert d.state == "estop" and stopped == ["opened"]
+    d.close()
+
+    # A descriptor may not claim a stop the device cannot perform, and may not spell the action wrong.
+    from openmhp.package import DevicePackage
+    from openmhp.validate import validate
+
+    def errors(safety):
+        pkg = DevicePackage(HOME / "nowhere", {"id": "wd-01", "class": "generic", "make": "m", "model": "x"},
+                            "", {"device": {"id": "wd-01"}, "signals": [], "settings": [], "actions": [],
+                                 "safety": safety})
+        return " | ".join(validate(pkg, location="bench 1")[0])
+
+    assert "watchdog_action" in errors({"estop": False, "watchdog_s": 60})
+    assert "must be 'estop' or 'release'" in errors({"estop": True, "watchdog_s": 60, "watchdog_action": "ignore"})
+    assert "watchdog" not in errors({"estop": False, "watchdog_s": 60, "watchdog_action": "release"})
+    assert "watchdog" not in errors({"estop": True, "watchdog_s": 60})
+
+    # The finding itself: no shipped package may leave its controller unwatched unless a person runs it.
+    from openmhp.package import load_package
+    for d in sorted(Path("supported-devices").iterdir()) + sorted(Path("openmhp/devices").iterdir()):
+        if not (d / "DEVICE.md").is_file():
+            continue
+        saf = load_package(d).descriptor.get("safety") or {}
+        operator = saf.get("estop_kind") == "operator"
+        assert saf.get("watchdog_s") or operator, f"{d.name} watches nothing and is not operator-run"
+        assert not (saf.get("watchdog_s") and operator), f"{d.name} is operator-run but declares a watchdog"
+
+
 def test_sessions_have_their_own_leases():
     v = []
     d = drv(settings=[Setting("x", v.append, limits={"min": 0, "max": 10})])

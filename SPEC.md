@@ -246,7 +246,8 @@ actions:                         # INVOKE -> job
 safety:
   estop: true                    # driver implements safety/estop
   interlocks: [lid_closed]
-  watchdog_s: 10                 # while a session holds the lease: fail safe if it goes silent this long (§6)
+  watchdog_s: 10                 # while a session holds the lease: act if it goes silent this long (§6)
+  watchdog_action: estop         # and what to do then: estop (default), or release the lease and keep running
   notes: E-stop cuts block and lid heaters; the block cools passively.
 
 locations:                       # optional, device-class specific extensions
@@ -472,8 +473,10 @@ refused unless a person confirmed it (`approved: true`, the same trusted-host ru
 `approval: confirm`, so a model cannot assert its way through), and while a job is running it
 is refused outright the first time: the watchdog is armed **only while a lease is held**, so
 breaking the lease on a working instrument would remove the dead man's switch and leave the
-job running unattended. The refusal names what is running and what the watchdog would stop
-doing; re-issuing with `stop: true` winds the work down first and then releases.
+job running unattended. The refusal names what is running and what the watchdog would have
+done; re-issuing with `stop: true` winds the work down first and then releases. A device that declares
+`watchdog_action: release` does this handover itself (§6), so a dead holder does not have to be
+forced open by a person.
 
 `session/acquire {ttl}` gives the calling session exclusive write and invoke rights until `ttl` seconds pass without `session/renew`, or until `session/release`. Every client has its own session id, so independent clients never share a lease. That id is a name the caller asserts (`X-MHP-Client` over HTTP), not a secret the device issued, so it identifies a client only as far as the channel does: a caller the device already trusts could claim another session's id and operate a device leased to it. Closing that needs the lease to be a token `session/acquire` hands back and the holder presents, which is not in this draft; until then a device's authentication (§9.1) is what bounds who can make the claim. The reference client renews automatically with a heartbeat while it holds a lease, and each run gets its own session whose leases end with the run. If a lease is lost, the next actuating call fails with `NotLeased`, and the client must not assume it still has control. Reads, `ping`, `describe`, `jobs/status`, `jobs/pause`, `jobs/cancel` and `safety/estop` are never blocked by a lease; `jobs/resume` and `safety/reset` are. On a device that declares `watchdog_s`, operating it requires holding the lease (`NotLeased` with `data.reason: "lease_required"`); the reference client acquires it on first use.
 
@@ -511,7 +514,14 @@ client                                server
   │── session/release ──────────────────▶│
 ```
 
-**Watchdog.** If the descriptor declares `safety.watchdog_s`, the watchdog is armed whenever a session holds the lease. Any request from the holder renews it; the reference client sends `session/renew` at a third of the window. If the holder is silent for longer than the window, or its lease expires without release, the server MUST fail safe: enter `estop`, cancel active jobs, run the stop hook, and drop the lease. Recovery needs a verified `safety/reset`. The watchdog protects against the controlling process dying or losing its connection; it does not notice a model that is alive but idle. A driver running inside the host process dies with the host, so host power loss is covered only by a device-side or hardware watchdog, which the descriptor should describe in `safety.notes`.
+**Watchdog.** If the descriptor declares `safety.watchdog_s`, the watchdog is armed whenever a session holds the lease, and operating the device requires holding it (§5.7). Any request from the holder renews it; the reference client sends `session/renew` at a third of the window. If the holder is silent for longer than the window, or its lease expires without release, the server MUST act and MUST report it as `notifications/safety/watchdog`, naming what it did.
+
+What it does is the author's declaration, `safety.watchdog_action`:
+
+- **`estop`** (the default, and the only behaviour before this field existed): enter `estop`, cancel active jobs, run the stop hook, drop the lease. Recovery needs a verified `safety/reset`. This is the answer for an instrument that is only safe while something is minding it. A device MUST NOT declare it unless `safety.estop` is true, or the trip would claim a stop the device cannot perform.
+- **`release`**: drop the lease and leave the work running, so another controller can take the instrument over without the person-confirmed forced release of §5.7. This is the answer for an instrument whose work must not be interrupted — electrolysis, a laser acquisition, an oven program — where stopping is itself the damage. One switch that meant both "require a lease" and "slam the e-stop" left those authors declaring no watchdog at all, which is strictly worse: nothing watches the controller, and operating the instrument then needs no lease either.
+
+Either way the silence is detected and reported, and `watchdog_s: null` remains the one setting under which nothing notices at all. The watchdog protects against the controlling process dying or losing its connection; it does not notice a model that is alive but idle, and the reference client's heartbeat keeps the window fed for as long as that client's process lives, so it is a liveness check on the controller, not on the work. A driver running inside the host process dies with the host, so host power loss is covered only by a device-side or hardware watchdog, which the descriptor should describe in `safety.notes`.
 
 **Versioning.** `protocolVersion` is a date string, as in MCP. A server MUST answer `initialize` with the highest version it supports that is ≤ the client's; a client that receives an older version MUST either speak it or disconnect. The MCP bridge negotiates MCP versions separately: it answers with the client's version when it supports it, and otherwise with its newest supported version.
 
@@ -585,6 +595,7 @@ Servers push notifications (JSON-RPC requests without `id`) for anything a super
 | `notifications/jobs/finished` | `{job}` | job reaches done / failed / cancelled |
 | `notifications/jobs/paused`, `jobs/resumed`, `jobs/cancelling` | `{job, by}` | pause, resume or cancel requested |
 | `notifications/safety/estop` | `{by, reason, stopped, stop_error}` | e-stop engaged by a client or the watchdog |
+| `notifications/safety/watchdog` | `{action, holder, silent_s, watchdog_s, reason, activeJobs, stopped}` | the lease holder went silent; `action` is what the device did about it |
 | `notifications/safety/fault` | `{reason}` | the device latched a fault with an unknown outcome |
 | `notifications/operator/instruction` | `{text, job?}` | an operator-run instrument asks a person to act |
 | `notifications/safety/reset` | `{by}` | device returned to idle |
