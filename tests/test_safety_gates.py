@@ -5,6 +5,7 @@ fail-closed state on an uncertain outcome, and the transports around all of it. 
     PYTHONPATH=. python tests/test_safety_gates.py
 """
 import asyncio
+import csv
 import io
 import json
 import os
@@ -1200,6 +1201,49 @@ def _shaped(**kw):
         def on_write(self, name, value): pass
         def on_invoke(self, job): return {"ok": True}
     return Shaped()
+
+
+def test_a_reading_can_be_cited():
+    """An action result is citable by its job id. A reading was citable by nothing: signals/read
+    returned {values, ts}, pushed updates carried no id either, and the sequence number the log
+    entry got was thrown away before the agent saw it. So "the block was at 72" had nothing
+    behind it."""
+    import re as _re
+
+    temp = {"v": 22.0}
+    d = drv(signals=[Signal("t", lambda: temp["v"])], settings=[Setting("sp", lambda v: None, limits={"min": 0, "max": 99})])
+    dev = LocalDevice(d)
+
+    first = dev.call("signals/read", {"names": ["t"]})
+    second = dev.call("signals/read", {"names": ["t"]})
+    assert _re.fullmatch(r"read_[0-9a-f]{8}", first["id"]), first
+    assert first["id"] != second["id"] and first["values"] == {"t": 22.0}
+
+    pushed = []
+    d.subscribers.append(lambda m: pushed.append(m) if m["method"].endswith("signals/update") else None)
+    temp["v"] = 72.0
+    d.emit_signal("t", temp["v"])
+    assert _re.fullmatch(r"read_[0-9a-f]{8}", pushed[0]["params"]["id"]), pushed
+
+    # the host records the id beside the values, polled or pushed
+    b = Bridge(home=HOME / "t10")
+    register("local:probe.t10", d)
+    b.lab.targets["tc"] = "local:probe.t10"
+    r = b.call_tool("mhp_read", {"device": "tc", "names": ["t"]})
+    line = next(e for e in reversed(b.log.since(0, 200)) if e["kind"] == "read")
+    assert r["id"] and line["reading"] == r["id"] and line["values"] == {"t": 72.0}, (r, line)
+    d.emit_signal("t", 73.0)
+    update = next(u for u in reversed(b.updates("tc")["updates"]) if u.get("signal") == "t")
+    assert update["reading"] == pushed[-1]["params"]["id"] and update["value"] == 73.0, update
+
+    # and a run writes it next to every row, so a number in a notebook entry resolves to a record
+    out = b.call_tool("mhp_run", {"recipe": "periodic-readings",
+                                  "params": {"device": "tc", "signals": ["t"], "every_s": 0.05, "hours": 0.0001}})
+    assert out["ok"], out
+    rows = list(csv.reader(io.StringIO(b.call_tool("mhp_data", {"op": "read", "run": out["run"]["id"],
+                                                                "path": "readings.csv"})["text"])))
+    assert rows[0] == ["t_s", "t", "reading"], rows[0]
+    assert rows[1:] and all(_re.fullmatch(r"read_[0-9a-f]{8}", row[2]) for row in rows[1:]), rows
 
 
 def test_a_declared_resolution_refuses_rather_than_silently_rounds():

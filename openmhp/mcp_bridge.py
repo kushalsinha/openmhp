@@ -104,6 +104,7 @@ TOOLS = [
          {"device": "thermocycler-01", "select": {"actions": ["run_protocol"], "settings": ["target_temperature"]}},
          {"device": "thermocycler-01", "resource": "references/protocols.md"},
          {"device": "arm-01", "resource": "scripts/plate_to_thermocycler.py"}]},
+    # readings are citable: the result carries `id`, and the run log records it with the values
     {"name": "mhp_read", "description": "Read one or more signals. Omit names to read all.",
      "inputSchema": {"type": "object", "properties": {"device": {"type": "string"},
                                                       "names": {"type": "array", "items": {"type": "string"}}}, "required": ["device"]},
@@ -524,7 +525,7 @@ class Bridge:
         # 1. every pushed event is kept per device, so an agent can ask "what came in since" without polling
         rec = {"ts": time.time(), "event": m, "device": device}
         if m == "signals/update":
-            rec.update(signal=params.get("name"), value=params.get("value"))
+            rec.update(signal=params.get("name"), value=params.get("value"), reading=params.get("id"))
         elif "job" in params:
             j = params["job"]
             rec.update(job=j.get("id"), action=j.get("action"), state=j.get("state"), progress=j.get("progress"),
@@ -581,7 +582,8 @@ class Bridge:
             if params.get("project") or (job and job.get("project")):
                 fields["project"] = (job or {}).get("project") or params.get("project")
         elif method == "signals/read":
-            fields.update(names=params.get("names"), values=(ev.get("result") or {}).get("values"))
+            fields.update(names=params.get("names"), values=(ev.get("result") or {}).get("values"),
+                          reading=(ev.get("result") or {}).get("id"))      # the id the agent can cite
         elif params:
             fields["params"] = params
         if ev.get("confirmed"):

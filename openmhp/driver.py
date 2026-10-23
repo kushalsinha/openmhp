@@ -100,6 +100,11 @@ class JobCancelled(Exception):
 TERMINAL = ("done", "failed", "cancelled")
 
 
+def reading_id() -> str:
+    """One reading, one id, in the same shape as a job id: what the agent cites."""
+    return "read_" + uuid.uuid4().hex[:8]
+
+
 def _digest(value) -> str:
     import hashlib
     import json
@@ -615,7 +620,7 @@ class Driver:
                 pass
 
     def emit_signal(self, name: str, value: Any) -> None:
-        self.notify("signals/update", {"name": name, "value": value, "ts": time.time()})
+        self.notify("signals/update", {"name": name, "value": value, "ts": time.time(), "id": reading_id()})
 
     # ---- watchdog and leases ------------------------------------------- #
     #
@@ -968,6 +973,9 @@ class Driver:
         return {"signals": self.descriptor.get("signals", [])}
 
     def rpc_signals_read(self, p, client):
+        """Every reading carries an id, so a number an agent writes down can be pointed back at
+        the record that produced it. An action result is citable by its job id; a reading was
+        citable by nothing at all, which left "the block was at 72" with nothing behind it."""
         names = p.get("names") or list(self._index["signals"])
         out = {}
         for n in names:
@@ -976,7 +984,7 @@ class Driver:
             self._sim_trip("read", pre=True)
             self._sim_trip("read")
             out[n] = self.on_read(n)
-        return {"values": out, "ts": time.time()}
+        return {"values": out, "ts": time.time(), "id": reading_id()}
 
     def rpc_signals_subscribe(self, p, client):
         return {"subscribed": p.get("names") or "all"}
