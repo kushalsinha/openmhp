@@ -256,6 +256,11 @@ The model's context helps it reason; it is not the safety boundary. The driver r
 the hardware and checks limits, interlocks, approvals, leases, and device state on every call,
 whether or not those rules are currently in the model's context.
 
+Because the package is the rulebook, changing one is not the agent's to do either. The lab records
+which package files were accepted for each device, refuses to operate a device whose files are not
+those, and puts any change to a limit, interlock, or approval level to the owner with the exact diff
+before it is enforced. `mhp lab accept <id>` is the owner's own way to accept one.
+
 ### Supported devices
 
 [`supported-devices`](supported-devices) holds ready-made packages for instruments that talk to
@@ -301,6 +306,13 @@ Or use Python directly:
 mhp node ~/instruments --http 18900
 mhp node ~/instruments --http 18900 --install-service
 ```
+
+A node serves other machines, so it generates a token the first time it starts
+(`~/.openmhp/device_token`) and requires `Authorization: Bearer <token>` on `/rpc` and `/events`.
+Copy it to the machine running the bridge (`export OPENMHP_DEVICE_TOKEN=...`); discovery stays
+open, so `mhp lab scan` still finds the devices. `--host 127.0.0.1` keeps a node to its own
+machine and needs no token; `--no-auth` serves the network without one, and callers from off the
+machine can then no longer confirm approval-gated operations.
 
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of

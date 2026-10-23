@@ -57,6 +57,13 @@ Anything with loops, several devices, or large intermediate data goes in a scrip
 duration, `dev.wait(dev.invoke(...))` to sequence, and print only the summary you need.
 Readings, traces and images stay out of your context.
 
+`lab["id"]` gives you the device API and only that: read, write, invoke, run_method, wait,
+status, pause/resume/cancel, acquire/release, estop, reset, describe, resources, the method
+calls. The driver object and untracked transport calls are not reachable from a script, and
+reaching for them is refused and written to the run log. A limit that refuses you in a tool call
+refuses you here too; report it rather than looking for a way around it. Some labs run no
+scripts at all, and then `mhp_run` is simply absent: drive the instruments step by step.
+
 ```python
 arm, tc = lab["arm-01"], lab["thermocycler-0411"]
 with arm, tc:
@@ -73,6 +80,10 @@ print(j["result"])
   then re-send with `approved: true`. Never set it on your own judgment.
 - **`approval: forbid`** is listed so you know the capability exists. Do not look for another
   path to it.
+- **The package is the rulebook, not a workaround.** `descriptor.yaml` is what the server enforces,
+  so editing a package to widen a limit is not a fix and will not work: the device keeps enforcing
+  the configuration its owner accepted, and `mhp_lab op='reload'` asks them, naming the bound that
+  would move. Report the refusal and the value you needed instead.
 - **Refusals.** `LimitViolation` (-32010): the value is outside physical limits; choose a value
   inside `data.min..max` or ask. `InterlockOpen` (-32011): read the named signal, tell the user
   what must change (lid, door, person in cell). `ApprovalRequired` (-32012): see above.
@@ -85,6 +96,8 @@ print(j["result"])
   `mhp_data op='updates' device=...` shows each pushed result; decide the next run from it.
 - **E-stop.** `mhp_estop` is always allowed and always succeeds. Use it the moment a reading,
   a notification, or the user suggests something is wrong. Then report, do not resume.
+  `device: "*"` stops everything the lab is driving, including instruments a running script
+  opened, and the result names each one; a stopped device needs a person to reset it.
 - **Leases.** Hold a lease (`with dev:` in scripts) whenever a sequence must not be
   interleaved by another agent. Release it when done.
 - **Report** what you read, not what you intended. "Block reached 95.0 °C at 14:02" beats

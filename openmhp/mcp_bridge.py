@@ -34,32 +34,40 @@ import secrets
 import uuid
 
 from . import __version__
-from .client import Lab, RemoteError, _inprocess, _remote, drop_inprocess
+from .client import (Lab, PackageChanged, RemoteError, _inprocess, _remote, drop_inprocess,
+                     package_fingerprint, package_folder, pin_package)
 from .directory import Directory
-from .driver import ApprovalRequired
+from .driver import ApprovalRequired, Forbidden
 from .fleet import safe_id
+from .package import declared_rulebook, rulebook_diff
 from .runs import PlanLab, RunLog, Runs
 
 SUPPORTED_MCP_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 RESULT_CAP = 4000        # bytes of a job result kept in logs and update buffers; the full result stays on the job
 
 
-def _cap(result):
-    """A job result small enough for a log line: bulky arrays (a chromatogram trace) are replaced by their size."""
+def _cap(result, job: str | None = None):
+    """A job result small enough for a log line: a bulky value (a chromatogram trace) is replaced by
+    its size and by the call that returns the real one. The placeholder has to name something that
+    works, so it names the job: the device holds that result in full while it is running, and reads
+    it back from the file beside its record after a restart, for as long as the record is kept."""
     if result is None:
         return None
+    where = f"mhp_job op='status' id='{job}'" if job else "jobs/status on the job that produced it"
+
+    def omitted(v):
+        s = json.dumps(v, default=str)
+        n = len(v) if hasattr(v, "__len__") else "?"
+        return f"<{type(v).__name__} of {n} items, {len(s)} bytes; not in this record -- fetch it with {where}>"
+
     try:
         if len(json.dumps(result, default=str)) <= RESULT_CAP:
             return result
     except (TypeError, ValueError):
         return str(result)[:RESULT_CAP]
     if isinstance(result, dict):
-        out = {}
-        for k, v in result.items():
-            s = json.dumps(v, default=str)
-            out[k] = v if len(s) <= 800 else f"<{type(v).__name__} of {len(v) if hasattr(v, '__len__') else '?'} items, {len(s)} bytes; read the job result>"
-        return out
-    return str(result)[:RESULT_CAP]
+        return {k: (v if len(json.dumps(v, default=str)) <= 800 else omitted(v)) for k, v in result.items()}
+    return omitted(result)          # a bare 50,000-point trace: its repr truncated is not data
 _OBSERVED_KINDS = {"settings/write": "write", "actions/invoke": "invoke", "signals/read": "read", "jobs/pause": "job/pause",
                    "jobs/resume": "job/resume", "jobs/cancel": "job/cancel", "safety/estop": "estop", "safety/reset": "reset",
                    "session/acquire": "lease/acquire", "session/release": "lease/release"}
@@ -96,6 +104,7 @@ TOOLS = [
          {"device": "thermocycler-01", "select": {"actions": ["run_protocol"], "settings": ["target_temperature"]}},
          {"device": "thermocycler-01", "resource": "references/protocols.md"},
          {"device": "arm-01", "resource": "scripts/plate_to_thermocycler.py"}]},
+    # readings are citable: the result carries `id`, and the run log records it with the values
     {"name": "mhp_read", "description": "Read one or more signals. Omit names to read all.",
      "inputSchema": {"type": "object", "properties": {"device": {"type": "string"},
                                                       "names": {"type": "array", "items": {"type": "string"}}}, "required": ["device"]},
@@ -146,7 +155,11 @@ TOOLS = [
                      "no hardware moves, and you get the ordered plan with the steps a human must confirm and the steps that would be "
                      "refused. Show the plan to the user before the real run of anything that heats or moves. "
                      "background=true starts a long run and returns immediately; follow it with mhp_data. "
-                     "Every call the script makes passes the same gates as a direct tool call."),
+                     "Every call the script makes passes the same gates as a direct tool call: `lab` offers the device API "
+                     "(read, write, invoke, run_method, wait, status, acquire/release, methods) and nothing that goes around "
+                     "it, so a script cannot raise a limit, approve its own step or act unrecorded. Reaching for the driver "
+                     "object or an untracked call fails and is logged; report the refusal instead. Some hosts run no scripts "
+                     "at all, and then this tool is absent."),
      "inputSchema": {"type": "object", "properties": {
          "script": {"type": "string"}, "recipe": {"type": "string", "description": "name from mhp_lab op='recipes'"},
          "params": {"type": "object", "description": "recipe PARAMS overrides"}, "name": {"type": "string", "description": "label for the run"},
@@ -172,7 +185,11 @@ TOOLS = [
                      "with mhp_run. op='safety_card' reviews a device before first use. op='events' returns what happened since a "
                      "sequence number (job finished, e-stop, refusals). op='location' records where an instrument stands (id, location); ask the human for it after adding a shared package, because a package cannot know. "
                      "op='list'/'remove'/'reload'/'home' manage membership (reload after a package's files change; release hands this session's leases back); op='new'/'write'/"
-                     "'validate' are for agents that write package files themselves."),
+                     "'validate' are for agents that write package files themselves. A device package IS the configuration "
+                     "the runtime enforces, so it is not yours to change: op='write' writes files, but the device goes on "
+                     "enforcing what a person accepted until op='reload' shows them exactly what would move (limits, approval "
+                     "levels, interlocks) and they accept it. Report that refusal; never route around a limit by rewriting a "
+                     "package."),
      "inputSchema": {"type": "object", "properties": {
          "op": {"type": "string", "enum": ["status", "scan", "add", "onboard", "recipes", "registry", "safety_card", "events",
                                            "location", "remove", "reload", "release", "list", "new", "write", "validate", "home"]},
@@ -202,16 +219,21 @@ TOOLS = [
      "description": ("Runs and their files. op='runs' lists runs (newest first, with state). op='list' lists files a run saved to its "
                      "run_dir (readings.csv, images, logs, events.jsonl: what its devices pushed while it ran). op='read' returns a text "
                      "file (capped) from a run: run='latest' or an id, path='stdout.txt' for the script output, 'readings.csv' for data. "
-                     "op='log' returns the lab's run log entries. op='updates' returns what a device PUSHED recently without being asked: "
+                     "op='log' returns the lab's run log entries -- what THIS host did -- each with the digest of the one "
+                     "before it; the answer says whether anything is missing (complete) and whether what it served still "
+                     "matches what was written (verified). op='audit' checks the whole record on disk end to end and names "
+                     "the first record that does not follow. op='record' device=<id> returns the INSTRUMENT's own record of "
+                     "what was done to it and what it refused, whoever asked -- a write from the CLI or a script is in there "
+                     "and not in the run log. op='updates' returns what a device PUSHED recently without being asked: "
                      "signal updates (a GC's last_result after every injection), job progress and completions; device=<id>, "
                      "optional signal=<name>, since=<ts>. Use it in an adaptive loop to see each new result before deciding the next run."),
      "inputSchema": {"type": "object", "properties": {
-         "op": {"type": "string", "enum": ["runs", "list", "read", "log", "updates"]},
+         "op": {"type": "string", "enum": ["runs", "list", "read", "log", "audit", "record", "updates"]},
          "device": {"type": "string", "description": "updates: device id"}, "signal": {"type": "string", "description": "updates: only this signal"},
          "run": {"type": "string", "description": "run id or 'latest'"}, "path": {"type": "string"},
          "since": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["op"]},
      "input_examples": [{"op": "runs"}, {"op": "list", "run": "latest"}, {"op": "read", "run": "latest", "path": "stdout.txt"},
-                        {"op": "read", "run": "20260909-1402-a1b2", "path": "readings.csv"}, {"op": "log", "since": 0, "limit": 50},
+                        {"op": "read", "run": "20260909-1402-a1b2", "path": "readings.csv"}, {"op": "log", "since": 0, "limit": 50}, {"op": "audit"}, {"op": "record", "device": "tc-01"},
                         {"op": "updates", "device": "gc-01", "signal": "last_result", "limit": 5}]},
     {"name": "mhp_method",
      "description": ("Methods: the instrument's own named, versioned parameter sets (an HPLC or GC method, a PCR program), kept on "
@@ -267,7 +289,8 @@ INSTRUCTIONS = (
     "on the network; op='add' registers one (also github: community packages, sim=true for a simulated twin). "
     "op='onboard' interviews the human (relay each question in plain words, return answers in the given shape; submit "
     "everything a manual tells you in one call) and then the server writes and validates the device package itself and "
-    "gives you a safety card to read back; finish with op='add'.\n"
+    "gives you a safety card to read back; finish with op='add'. A device package is the rulebook the server enforces, so "
+    "changing one is the owner's decision: op='reload' puts it to them with the exact diff.\n"
     "- Instruments that run methods (GC, HPLC, MS, PXRD, a thermocycler's programs) keep them on the device, per project and "
     "compound. Before invoking any action marked methods: true, ask the device: mhp_method op='find' with the compound and "
     "the project. One match: run it. Several: ask the person which (an autonomous loop with a declared project takes the "
@@ -304,9 +327,18 @@ PROMPTS = {
 class Bridge:
     """The MCP host side. Trust model: the bridge (host) is trusted; the model is not. The model cannot approve
     confirm-gated operations: the bridge asks a person and binds the answer to the exact request, for direct tool
-    calls and for run scripts alike."""
+    calls and for run scripts alike.
 
-    def __init__(self, targets: dict[str, str] | None = None, directory=None, fleet=None, home: Path | None = None):
+    The same rule covers the rulebook itself. A device package is what the runtime enforces, so an agent that
+    could rewrite one and put it into service would be setting its own limits. The fleet record says which
+    package files were accepted for each device, those files are pinned, and loosening them -- by any route --
+    is a change a person is shown and asked about before anything enforces it.
+    """
+
+    def __init__(self, targets: dict[str, str] | None = None, directory=None, fleet=None, home: Path | None = None,
+                 scripts: bool | None = None):
+        off = os.environ.get("OPENMHP_NO_SCRIPTS", "").strip().lower() not in ("", "0", "false", "no")
+        self.scripts = (not off) if scripts is None else bool(scripts)   # --no-scripts: no code from the model runs here
         self.fleet = fleet
         self._onboarding = None
         self._hooked: set[int] = set()
@@ -328,6 +360,7 @@ class Bridge:
         self.lab = Lab(targets, directory, session=f"bridge-{uuid.uuid4().hex[:8]}", approver=self._approve,
                        observer=self._observe, on_connect=self._on_connect)
         self.runs = Runs(self.lab, self.log, self.home, observer=self._observe)
+        self._pin_packages()
 
     # ---- tools ------------------------------------------------------------
     def call_tool(self, name: str, a: dict):
@@ -343,6 +376,12 @@ class Bridge:
             self.notify_harness("error", f"E-STOP {a['device']}: {a.get('reason', '')}")
             return r
         if name == "mhp_run":
+            if not self.scripts:
+                raise _remote(Forbidden.code,
+                              "this bridge runs no scripts (--no-scripts), so mhp_run and recipes are unavailable. Drive the "
+                              "instruments step by step with mhp_write, mhp_invoke and mhp_job, or ask the user to run the "
+                              "script themselves with `mhp` or the SDK, where they are the trusted party.",
+                              {"scripts": False})
             return self.run_tool(a)
         if name == "mhp_lab":
             return self.lab_op(a)
@@ -373,7 +412,8 @@ class Bridge:
             job = r["job"]
             if a.get("wait"):
                 job = dev.wait(job)
-                self.log.write("job", device=a["device"], action=a["name"], state=job["state"], result=job.get("result"))
+                self.log.write("job", device=a["device"], action=a["name"], state=job["state"],
+                               result=_cap(job.get("result"), job.get("id")))
             return job
         if name == "mhp_job":
             op = a.get("op") or ("cancel" if a.get("cancel") else "status")
@@ -381,8 +421,91 @@ class Bridge:
             return fn(a["id"])
         raise ValueError(f"unknown tool {name}")
 
+    def tools(self) -> list:
+        """The tool surface this bridge offers. A bridge that runs no scripts does not offer mhp_run, rather than
+        offering it and refusing every call: an absent tool is a capability the model never plans around."""
+        return TOOLS if self.scripts else [t for t in TOOLS if t["name"] != "mhp_run"]
+
     def _device(self, name: str):
-        return self.lab[name]
+        try:
+            return self.lab[name]
+        except PackageChanged:
+            self._repin()                       # the owner may have accepted the new configuration in another process
+            return self.lab[name]
+
+    # ---- the accepted configuration ---------------------------------------
+    def _pin_packages(self) -> None:
+        """Pin every package this lab hosts in-process to the configuration on record for it.
+
+        A target with nothing on record -- a fleet written before this host kept fingerprints, or a device named
+        on the command line -- is pinned to the files as they are now: that much is the operator's own choice at
+        startup. From then on a change to those files is a change a person has to accept.
+        """
+        pins = self.fleet.pins() if self.fleet is not None else {}
+        for target in set(self.lab.targets.values()) | set(pins):
+            folder = package_folder(target)
+            if folder is None:                  # http/stdio: whatever it enforces, it is not these files
+                continue
+            fp = pins.get(target)
+            if fp is None:
+                try:
+                    fp = package_fingerprint(folder)
+                except OSError:
+                    continue
+            pin_package(target, fp)
+
+    def _repin(self) -> None:
+        """Read the fleet again and pin again, so `mhp lab accept` run in another terminal takes effect here."""
+        if self.fleet is not None:
+            try:
+                self.fleet.reload()
+            except (OSError, ValueError):       # a fleet file mid-write: the pins already held are still the right ones
+                pass
+        self._pin_packages()
+
+    @staticmethod
+    def _declared(folder) -> dict | None:
+        """The rulebook a package's files declare, or None when they cannot be read as a package. Reading the
+        files (not loading the driver) keeps a device that is running from this folder on its one connection to
+        the hardware, and runs no package code before anyone has accepted it."""
+        if folder is None:
+            return None
+        try:
+            return declared_rulebook(folder)
+        except Exception:                       # noqa: BLE001  a half-written package: there is nothing to compare
+            return None
+
+    @staticmethod
+    def _hosted_from(fleet, folder) -> str | None:
+        """The device in the lab, if any, operating from this package folder. Compared by path, because a folder
+        name and the id in the package's frontmatter need not agree."""
+        want = Path(folder).resolve()
+        for did, entry in fleet.devices.items():
+            f = package_folder(entry["target"])
+            if f and Path(f).resolve() == want:
+                return did
+        return None
+
+    def _confirm_configuration(self, what: str, changes: list[str], instead: str) -> None:
+        """Put a change in what the lab enforces to a person, on the same channel and the same terms as a
+        confirm-gated write: the model cannot answer for them, and with no trusted channel nothing changes.
+        A limit, an interlock or an approval level is only ever loosened by someone who watched it happen."""
+        shown = changes[:30] + ([f"... and {len(changes) - 30} more"] if len(changes) > 30 else [])
+        detail = "\n".join(shown)
+        if not self.can_elicit():
+            self.log.write("confirm/unavailable", op="configuration", what=what, changes=changes)
+            raise _remote(ApprovalRequired.code,
+                          f"{what}: this changes what the lab enforces, and this harness has no trusted confirmation "
+                          f"channel (MCP elicitation), so nothing changed. Ask the user to accept it themselves with "
+                          f"`{instead}`. What would change:\n{detail}",
+                          {"approval": "confirm", "channel": "unavailable", "changes": changes})
+        answer = self.elicit(f"{what}.\n\nWhat this changes in what the lab enforces:\n{detail}\n\n"
+                             "Accept this configuration?")
+        self.log.write("confirm", op="configuration", what=what, answer=answer, changes=changes)
+        if answer != "accept":
+            raise _remote(ApprovalRequired.code,
+                          f"{what}: not accepted ({answer}); the lab keeps the configuration it had.",
+                          {"approval": "confirm", "answer": answer, "changes": changes})
 
     def _on_connect(self, name: str, dev) -> None:
         """Every connection (in-process, HTTP via its SSE stream, stdio) relays what the device pushes. One
@@ -393,8 +516,8 @@ class Bridge:
         self._hooked.add(key)
         dev.subscribe(lambda msg, n=name: self._device_event(n, msg))
 
-    _LOGGED_EVENTS = ("jobs/finished", "safety/estop", "safety/reset", "safety/fault", "jobs/paused",
-                      "operator/instruction", "methods/saved")
+    _LOGGED_EVENTS = ("jobs/finished", "safety/estop", "safety/reset", "safety/fault", "safety/watchdog",
+                      "jobs/paused", "operator/instruction", "methods/saved")
 
     def _device_event(self, device: str, msg: dict):
         m = msg.get("method", "").replace("notifications/", "")
@@ -402,12 +525,12 @@ class Bridge:
         # 1. every pushed event is kept per device, so an agent can ask "what came in since" without polling
         rec = {"ts": time.time(), "event": m, "device": device}
         if m == "signals/update":
-            rec.update(signal=params.get("name"), value=params.get("value"))
+            rec.update(signal=params.get("name"), value=params.get("value"), reading=params.get("id"))
         elif "job" in params:
             j = params["job"]
             rec.update(job=j.get("id"), action=j.get("action"), state=j.get("state"), progress=j.get("progress"),
                        **({"method": j["method"]} if j.get("method") else {}), **({"project": j["project"]} if j.get("project") else {}),
-                       **({"result": _cap(j.get("result"))} if m == "jobs/finished" else {}),
+                       **({"result": _cap(j.get("result"), j.get("id"))} if m == "jobs/finished" else {}),
                        **{k: v for k, v in params.items() if k != "job"})
         else:
             rec.update(params)
@@ -420,7 +543,7 @@ class Bridge:
             run = self.runs.runs.get(rid)
             if device in devs and run is not None and run.state == "running":
                 try:
-                    with open(run.dir / "events.jsonl", "a") as f:
+                    with open(run.dir / "events.jsonl", "a", encoding="utf-8") as f:
                         f.write(json.dumps({**rec, "run": rid}, default=str) + "\n")
                 except OSError:
                     pass
@@ -428,8 +551,9 @@ class Bridge:
         if m in self._LOGGED_EVENTS:
             ev = self.log.write("device/" + m, device=device, **{k: v for k, v in params.items() if k != "job"},
                                 **({"job": params["job"]["id"], "state": params["job"]["state"], "method": params["job"].get("method"),
-                                    "result": _cap(params["job"].get("result"))} if "job" in params else {}))
-            level = "error" if ("estop" in m or "fault" in m) else "info"
+                                    "result": _cap(params["job"].get("result"), params["job"].get("id"))}
+                                   if "job" in params else {}))
+            level = "error" if ("estop" in m or "fault" in m or "watchdog" in m) else "info"
             self.notify_harness(level, f"{device}: {m} " + json.dumps({k: v for k, v in ev.items() if k not in ("ts", "kind", "seq", "device")}, default=str)[:300])
 
     def updates(self, device: str, signal: str | None = None, since: float = 0.0, limit: int = 20) -> dict:
@@ -458,7 +582,8 @@ class Bridge:
             if params.get("project") or (job and job.get("project")):
                 fields["project"] = (job or {}).get("project") or params.get("project")
         elif method == "signals/read":
-            fields.update(names=params.get("names"), values=(ev.get("result") or {}).get("values"))
+            fields.update(names=params.get("names"), values=(ev.get("result") or {}).get("values"),
+                          reading=(ev.get("result") or {}).get("id"))      # the id the agent can cite
         elif params:
             fields["params"] = params
         if ev.get("confirmed"):
@@ -562,11 +687,20 @@ class Bridge:
             return {"runs": self.runs.list()}
         if op == "list":
             d = self.runs.resolve(a.get("run", "latest"))
-            return {"run": d.name, "files": sorted(str(p.relative_to(d)) for p in d.rglob("*") if p.is_file())}
+            return {"run": d.name, "files": sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file())}
         if op == "read":
             return self.runs.read(a.get("run", "latest"), a.get("path", "stdout.txt"))
         if op == "log":
             return self.log.window(int(a.get("since", 0)), int(a.get("limit", 100)))
+        if op == "audit":
+            return self.log.audit()
+        if op == "record":
+            from .runs import RunLog
+            own = RunLog(self.home, f"records/{safe_id(a['device'])}")
+            w = own.window(int(a.get("since", 0)), int(a.get("limit", 100)))
+            return {**w, "device": a["device"], **({} if w["events"] else
+                    {"note": "no record on this machine; an instrument keeps its own where it is hosted, "
+                             "so for a device served over HTTP the record is on that bench computer"})}
         if op == "updates":
             self._device(a["device"])                      # connecting is what starts the relay
             return self.updates(a["device"], a.get("signal"), float(a.get("since", 0) or 0), int(a.get("limit", 20)))
@@ -604,7 +738,7 @@ class Bridge:
                                  run_project=a.get("run_project"), compound=a.get("compound"), wait=a.get("wait", True) is not False)
             if job["state"] in ("done", "failed", "cancelled"):
                 self.log.write("job", device=dev.name, action=job["action"], state=job["state"], method=job.get("method"),
-                               project=job.get("project"), result=_cap(job.get("result")))
+                               project=job.get("project"), result=_cap(job.get("result"), job.get("id")))
             return {"job": job}
         raise ValueError(f"unknown method op {op}")
 
@@ -615,14 +749,20 @@ class Bridge:
         fleet = self.fleet
         if fleet is None:
             fleet = self.fleet = Fleet(self.home / "fleet.json")
+            self._pin_packages()
         op = a["op"]
         if op == "status":
             n = len(fleet.devices)
             running = [r for r in self.runs.list() if r["state"] == "running"]
-            unlocated = fleet.unlocated()
+            unlocated, diverged = fleet.unlocated(), fleet.diverged()
             return {"devices": n, "runs_in_progress": len(running), "fleet": str(fleet.path), "elicitation": self.can_elicit(),
+                    **({} if self.scripts else {"scripts": False}),
                     **({"without_a_location": unlocated,
                         "ask": "Ask the human where these instruments stand, then mhp_lab op='location'."} if unlocated else {}),
+                    **({"configuration_changed": sorted(diverged),
+                        "review": "Their package files are no longer the ones a person accepted, so they are not operated at "
+                                  "all until one is accepted. mhp_lab op='reload' shows the human what changed and asks."}
+                       if diverged else {}),
                     "next": ("The lab is empty. Ask the user whether their instruments already have an OpenMHP address (then op='scan' "
                              "or op='add'), whether a community package exists (op='registry'), or whether to onboard one by interview "
                              "(op='onboard'). Offer op='scan' first; it is free. To try without hardware: op='add' target=<bundled package> sim=true "
@@ -643,6 +783,9 @@ class Bridge:
                 r = self._onboarding.finish(a["id"])
             else:
                 r = self._onboarding.step(a.get("id"), ans)
+            if r.get("package"):                             # the server wrote package files: on the record, like every other write
+                self.log.write("lab/onboard", device=r.get("id"), package=r["package"], files=r.get("files"),
+                               ok=r.get("validation", {}).get("ok"))
             if r.get("validation", {}).get("ok"):
                 r["safety_card"] = self._safety_card_for_package(fleet.packages_dir() / r["id"])
                 r["next"] = ("Read the safety card and the operating procedure back to the human. If they agree, mhp_lab op='add' target='%s'." % r["id"])
@@ -657,12 +800,28 @@ class Bridge:
             target = a["target"]
             if not target.startswith(("http", "pkg:", "sim:", "local:", "stdio:", "github:")) and "/" not in target and not Path(target).exists():
                 target = str(fleet.packages_dir() / safe_id(target))  # a package id under ~/.openmhp/devices
-            card = fleet.add(target, sim=bool(a.get("sim")), location=a.get("location"))
+            card = fleet.add(target, sim=bool(a.get("sim")), location=a.get("location"), accept=False)
             entry = fleet.devices[card["id"]]
+            folder = package_folder(entry["target"])
+            prior = fleet.accepted_rulebook(card["id"])      # in the lab, or removed from it: this id has a rulebook on record
+            declared = self._declared(folder)
+            changes = rulebook_diff(prior, declared) if (prior is not None and declared is not None) else []
+            if changes:
+                try:
+                    self._confirm_configuration(f"{card['id']}: add the package at {folder}, which enforces something other than "
+                                                "the configuration this lab accepted for that device",
+                                                changes, f"mhp lab add {a['target']}")
+                except RemoteError:
+                    fleet.remove(card["id"], retire=False)   # leave the lab exactly as it was before the add
+                    self._forget_device(card["id"], entry["target"])
+                    raise
+            fleet.accept(card["id"])
+            self._pin_packages()
             self.lab.targets[card["id"]] = entry["target"]
             if isinstance(self.lab.directory, Directory):
                 self.lab.directory.add(card, entry["target"])
-            self.log.write("lab/add", device=card["id"], target=entry["target"], sim=bool(a.get("sim")))
+            self.log.write("lab/add", device=card["id"], target=entry["target"], sim=bool(a.get("sim")),
+                           fingerprint=entry.get("fingerprint"), changes=changes or None)
             note = "now discoverable through mhp_find" + ("; this is a SIMULATED twin" if a.get("sim") else "")
             if not card.get("location"):
                 note += ("; it has no location yet. Ask the human where the instrument stands and record it with "
@@ -675,21 +834,31 @@ class Bridge:
             active = self._active_jobs(did)
             if active and not a.get("force"):
                 return {"error": f"{did} has active jobs {active}; let them finish or cancel them first (or pass force=true)"}
+            if op == "reload":
+                if entry is None:
+                    return {"error": f"{did} is not in the lab"}
+                folder = package_folder(target)
+                declared = self._declared(folder)            # None for a target whose rulebook is not local files
+                changes = rulebook_diff(entry.get("rulebook") or {}, declared) if declared is not None else []
+                if changes:                                  # asked before anything is unloaded: a no leaves the device running
+                    self._confirm_configuration(f"{did}: reload the package at {folder}", changes,
+                                                f"mhp lab accept {did}")
             self._forget_device(did, target)
             if op == "remove":
                 ok = fleet.remove(did) if entry else False
                 self.log.write("lab/remove", device=did)
                 return {"removed": did if (ok or target) else None}
-            if entry is None:
-                return {"error": f"{did} is not in the lab"}
-            fleet.remove(did)
-            card = fleet.add(target, sim=bool(entry.get("sim")))
-            new = fleet.devices[card["id"]]
+            was = entry.get("fingerprint")
+            fleet.remove(did, retire=False)                  # replaced in place, not retired
+            card = fleet.add(target, sim=bool(entry.get("sim")), location=entry["card"].get("location") or None, accept=False)
+            new = fleet.accept(card["id"])
+            self._pin_packages()
             self.lab.targets[card["id"]] = new["target"]
             if isinstance(self.lab.directory, Directory):
                 self.lab.directory.add(card, new["target"])
-            self.log.write("lab/reload", device=card["id"], target=new["target"])
-            return {"reloaded": card}
+            self.log.write("lab/reload", device=card["id"], target=new["target"], changes=changes or None,
+                           was=was, now=new.get("fingerprint"))
+            return {"reloaded": card, "accepted": changes or "nothing the device enforces changed"}
         if op == "release":
             self.lab.release_all()
             return {"released": sorted(self.lab.devices)}
@@ -701,7 +870,10 @@ class Bridge:
         if op == "recipes":
             from . import recipes as R
             return {"recipes": R.search(a.get("query", ""), self._recipes(), limit=int(a.get("limit", 8))),
-                    "how": "mhp_run recipe=<name> params={...} plan=true first; then without plan. Your own recipes go in ~/.openmhp/recipes/."}
+                    "how": ("mhp_run recipe=<name> params={...} plan=true first; then without plan. Your own recipes go in "
+                            "~/.openmhp/recipes/." if self.scripts else
+                            "this bridge runs no scripts (--no-scripts); these are listed to read, not to run. Their steps "
+                            "are ordinary mhp_write/mhp_invoke calls you can make one at a time.")}
         if op == "registry":
             from .registry import search as rsearch
             return {"packages": rsearch(a.get("query", "")), "how": "mhp_lab op='add' target='github:...' (sim=true for a rehearsal twin)"}
@@ -729,14 +901,15 @@ class Bridge:
                 return {"exists": str(folder), "note": "package already exists; use op='write' to change files"}
             folder.mkdir(parents=True, exist_ok=True)
             tpl = Path(__file__).parent / "skills" / "openmhp-onboard-device" / "assets"
-            dev_md = (tpl / "DEVICE.template.md").read_text().replace("change-me-01", did).replace("Change-me-01", did)
+            dev_md = (tpl / "DEVICE.template.md").read_text(encoding="utf-8").replace("change-me-01", did).replace("Change-me-01", did)
             dev_md = dev_md.replace("class: generic", f"class: {a.get('class', 'generic')}")
             if a.get("description"):
                 dev_md = dev_md.replace("description: What it is, in one clause. When an agent should pick it, in one clause. What it is not for.",
                                         f"description: {a['description']}")
-            (folder / "DEVICE.md").write_text(dev_md)
-            (folder / "descriptor.yaml").write_text((tpl / "descriptor_template.yaml").read_text())
-            (folder / "driver.py").write_text((tpl / "driver_template.py").read_text())
+            (folder / "DEVICE.md").write_text(dev_md, encoding="utf-8")
+            (folder / "descriptor.yaml").write_text((tpl / "descriptor_template.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+            (folder / "driver.py").write_text((tpl / "driver_template.py").read_text(encoding="utf-8"), encoding="utf-8")
+            self.log.write("lab/new", device=did, package=str(folder))
             return {"created": str(folder), "files": ["DEVICE.md", "descriptor.yaml", "driver.py"],
                     "next": "op='write' the real DEVICE.md, descriptor.yaml and driver.py, op='validate', and op='add' with target=<id>"}
         if op == "write":
@@ -748,9 +921,20 @@ class Bridge:
                 if folder.resolve() not in p.resolve().parents:
                     raise ValueError(f"{rel} escapes the package")
                 p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(text)
+                p.write_text(text, encoding="utf-8")
                 written.append(rel)
-            return {"package": str(folder), "written": written, "next": "op='validate' then op='add'"}
+            live = self._hosted_from(fleet, folder)
+            declared = self._declared(folder)
+            changes = (rulebook_diff(fleet.devices[live].get("rulebook") or {}, declared)
+                       if live and declared is not None else [])
+            self.log.write("lab/write", package=str(folder), files=written, device=live, changes=changes or None)
+            out = {"package": str(folder), "written": written, "next": "op='validate' then op='add'"}
+            if live:                                         # these files are not what the device is enforcing, and saying so beats a surprise
+                out.update(in_operation=live, changes=changes,
+                           note=f"{live} is in this lab and goes on enforcing the configuration a person accepted for it; "
+                                "writing files does not change that, and it will not load these until someone accepts them.",
+                           next="op='validate', then op='reload' to show the human what changed and ask")
+            return out
         if op == "validate":
             where = fleet.devices.get(a["id"], {}).get("card", {}).get("location")
             return validate_path(str(fleet.packages_dir() / safe_id(a["id"])), location=where)
@@ -791,6 +975,7 @@ class Bridge:
             if entry is not None:
                 self._hooked.discard(id(entry[0]))
             drop_inprocess(target)
+            pin_package(target, None)
 
     # ---- MCP protocol ------------------------------------------------------------
     def handle(self, msg: dict):
@@ -814,7 +999,7 @@ class Bridge:
         if m == "logging/setLevel":
             return self._ok(mid, {})
         if m == "tools/list":
-            return self._ok(mid, {"tools": TOOLS})
+            return self._ok(mid, {"tools": self.tools()})
         if m == "resources/list":            # only devices this session has opened; the directory is the catalogue
             res = [{"uri": "mhp://runs/latest/stdout.txt", "name": "latest run output", "mimeType": "text/plain"},
                    {"uri": "mhp://log/today", "name": "today's run log", "mimeType": "application/x-ndjson"}]
@@ -920,7 +1105,8 @@ def make_mcp_http_server(bridge: Bridge, host: str = "127.0.0.1", port: int = 18
     Requests carrying an Origin header are refused unless that origin is explicitly allowed, and on a loopback
     bind the Host header must be localhost (DNS-rebinding protection). There are no server-initiated requests
     on this transport, so confirm-gated operations are unavailable over it."""
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from http.server import BaseHTTPRequestHandler
+    from .transport import ExclusiveHTTPServer
     if not token:
         raise ValueError("the MCP HTTP endpoint requires an access token")
     loopback = host in ("127.0.0.1", "localhost", "::1")
@@ -970,7 +1156,7 @@ def make_mcp_http_server(bridge: Bridge, host: str = "127.0.0.1", port: int = 18
             denied = self._denied()
             return self._reply(denied[0], {"error": denied[1]}) if denied else self._reply(405, {"error": "use POST /mcp"})
 
-    srv = ThreadingHTTPServer((host, port), H)
+    srv = ExclusiveHTTPServer((host, port), H)
     real = srv.server_address[1]
     allowed_hosts.update({f"127.0.0.1:{real}", f"localhost:{real}", f"[::1]:{real}"})
     return srv
@@ -990,11 +1176,11 @@ def http_token(home: Path) -> str:
         return env
     path = home / "http_token"
     if path.is_file():
-        return path.read_text().strip()
+        return path.read_text(encoding="utf-8").strip()
     home.mkdir(parents=True, exist_ok=True)
     tok = secrets.token_urlsafe(32)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(tok)
     return tok
 
@@ -1002,6 +1188,10 @@ def http_token(home: Path) -> str:
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     directory, http_port, fleet, origins = None, None, None, []
+    scripts = None
+    if "--no-scripts" in argv:
+        argv = [x for x in argv if x != "--no-scripts"]
+        scripts = False
     if "--fleet" in argv:
         from .fleet import Fleet
         i = argv.index("--fleet")
@@ -1023,13 +1213,17 @@ def main(argv=None):
         argv = argv[:i] + argv[i + 2:]
     proto = sys.stdout
     if http_port is None:
+        from .transport import utf8_stdio
+        utf8_stdio(sys.stdin, proto)     # MCP over stdio is UTF-8 whatever the locale
         sys.stdout = sys.stderr          # the protocol stream belongs to StdioLoop alone
     targets = dict(arg.split("=", 1) for arg in argv)
     if not targets and directory is None and fleet is None:
         from .fleet import Fleet
         fleet = Fleet()                  # ~/.openmhp/fleet.json, possibly empty: mhp_lab fills it
         print(f"MHP bridge: lab from {fleet.path} ({len(fleet.devices)} devices)", file=sys.stderr)
-    bridge = Bridge(targets, directory, fleet)
+    bridge = Bridge(targets, directory, fleet, scripts=scripts)
+    if not bridge.scripts:
+        print("MHP bridge: running no scripts; mhp_run is not offered and recipes are read-only", file=sys.stderr)
     if http_port is not None:
         token = http_token(bridge.home)
         print(f"MHP bridge: send 'Authorization: Bearer <token>'; the token is in {bridge.home / 'http_token'} "

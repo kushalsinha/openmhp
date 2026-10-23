@@ -5,6 +5,7 @@ fail-closed state on an uncertain outcome, and the transports around all of it. 
     PYTHONPATH=. python tests/test_safety_gates.py
 """
 import asyncio
+import csv
 import io
 import json
 import os
@@ -24,9 +25,9 @@ HOME = Path(os.environ["OPENMHP_HOME"])
 from openmhp import client as C                                                 # noqa: E402
 from openmhp.adapters import Action, BoundDriver, Setting, Signal               # noqa: E402
 from openmhp.client import Lab, LocalDevice, RemoteError                        # noqa: E402
-from openmhp.driver import (ApprovalRequired, DeviceBusy, DeviceFault, InterlockOpen,  # noqa: E402
+from openmhp.driver import (ApprovalRequired, DeviceBusy, DeviceFault, Forbidden, InterlockOpen,  # noqa: E402
                             InvalidValue, LimitViolation, NotLeased, NotSupported)
-from openmhp.mcp_bridge import Bridge, StdioLoop, make_mcp_http_server          # noqa: E402
+from openmhp.mcp_bridge import TOOLS, Bridge, StdioLoop, make_mcp_http_server   # noqa: E402
 from openmhp.runs import PlanLab, RunLog                                         # noqa: E402
 
 
@@ -105,6 +106,69 @@ def test_watchdog_stops_a_silent_lease_holder():
     c.release()
     expect(NotLeased.code, lambda: LocalDevice(w2).call("settings/write", {"name": "x", "value": 1}, _auto_lease=False))
     w.close(); w2.close()
+
+
+def test_a_watchdog_can_hand_an_instrument_over_instead_of_stopping_it():
+    """`safety.watchdog_s` decided two things at once: that a lease is mandatory, and that silence
+    e-stops the instrument. For a cell that electrolyses for hours the stop is itself the damage, so
+    authors switched the whole field off -- and lost the mandatory lease and any detection with it.
+    `watchdog_action: release` separates them: the silence is still caught and reported, the lease is
+    dropped so another controller can take over, and the work keeps running."""
+    def cell(safety):
+        heard, stopped = [], []
+        d = drv(signals=[Signal("current_mA", lambda: -150.0)],
+                actions=[Action("electrolyse", lambda job, params: time.sleep(2) or {"coulombs": 12})],
+                safety=safety, estop=lambda: stopped.append("opened"))
+        d.subscribers.append(lambda m: heard.append(m["params"]) if m["method"].endswith("safety/watchdog") else None)
+        return d, heard, stopped
+
+    d, heard, stopped = cell({"estop": True, "watchdog_s": 0.2, "watchdog_action": "release"})
+    expect(NotLeased.code, lambda: LocalDevice(d).call("actions/invoke", {"name": "electrolyse"}, _auto_lease=False))
+    d.rpc("session/acquire", {"ttl": 60}, "controller")        # a controller that then dies
+    jid = d.rpc("actions/invoke", {"name": "electrolyse"}, "controller")["job"]["id"]
+    time.sleep(0.7)
+    assert d.lease is None, "the dead holder kept the instrument"
+    assert d.state == "busy" and not d.jobs[jid].cancel_requested, "the electrolysis was interrupted"
+    assert stopped == [] and [(e["action"], e["stopped"], e["activeJobs"]) for e in heard] == [("release", False, [jid])]
+    LocalDevice(d).acquire(ttl=60)                             # and another controller can take over
+    d.close()
+
+    d, heard, stopped = cell({"estop": True, "watchdog_s": 0.2})               # the default is unchanged
+    d.rpc("session/acquire", {"ttl": 60}, "controller")
+    time.sleep(0.7)
+    assert d.state == "estop" and stopped == ["opened"] and heard[0]["action"] == "estop"
+    d.close()
+
+    d, _, stopped = cell({"estop": True, "watchdog_s": 0.2, "watchdog_action": "sit-tight"})
+    d.rpc("session/acquire", {"ttl": 60}, "controller")        # an action it does not know fails safe
+    time.sleep(0.7)
+    assert d.state == "estop" and stopped == ["opened"]
+    d.close()
+
+    # A descriptor may not claim a stop the device cannot perform, and may not spell the action wrong.
+    from openmhp.package import DevicePackage
+    from openmhp.validate import validate
+
+    def errors(safety):
+        pkg = DevicePackage(HOME / "nowhere", {"id": "wd-01", "class": "generic", "make": "m", "model": "x"},
+                            "", {"device": {"id": "wd-01"}, "signals": [], "settings": [], "actions": [],
+                                 "safety": safety})
+        return " | ".join(validate(pkg, location="bench 1")[0])
+
+    assert "watchdog_action" in errors({"estop": False, "watchdog_s": 60})
+    assert "must be 'estop' or 'release'" in errors({"estop": True, "watchdog_s": 60, "watchdog_action": "ignore"})
+    assert "watchdog" not in errors({"estop": False, "watchdog_s": 60, "watchdog_action": "release"})
+    assert "watchdog" not in errors({"estop": True, "watchdog_s": 60})
+
+    # The finding itself: no shipped package may leave its controller unwatched unless a person runs it.
+    from openmhp.package import load_package
+    for d in sorted(Path("supported-devices").iterdir()) + sorted(Path("openmhp/devices").iterdir()):
+        if not (d / "DEVICE.md").is_file():
+            continue
+        saf = load_package(d).descriptor.get("safety") or {}
+        operator = saf.get("estop_kind") == "operator"
+        assert saf.get("watchdog_s") or operator, f"{d.name} watches nothing and is not operator-run"
+        assert not (saf.get("watchdog_s") and operator), f"{d.name} is operator-run but declares a watchdog"
 
 
 def test_sessions_have_their_own_leases():
@@ -208,6 +272,40 @@ def test_estop_does_not_wait_and_fleet_stop_reaches_every_device():
     assert sorted(attempts) == [1, 2, 3] and time.monotonic() - t0 < 2
     assert r["a"]["ok"] is False and r["b"]["ok"] is True and r["c"]["ok"] is False
 
+    # every device includes the ones a script opened: a run works through its own Lab, with its own
+    # session and its own leases, so a stop that walks one connection list spares the instrument the
+    # script is driving -- which is the one case it exists for.
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    protocol = "lab['%s'].invoke('run_protocol', steps=[{'temp': 95, 'hold_s': 30}], cycles=20)"
+    b = Bridge(home=HOME / "t6stop")
+    for name in ("bench", "script-side"):
+        C._inprocess[f"local:{name}.t6stop"] = (SimThermocycler(), "")
+        b.lab.targets[name] = f"local:{name}.t6stop"
+    b.call_tool("mhp_read", {"device": "bench", "signals": ["block_temperature"]})     # the bridge opens one
+    b.call_tool("mhp_run", {"background": True, "script": protocol % "script-side" + "\nimport time\ntime.sleep(20)"})
+    for _ in range(250):
+        if b.lab.open_devices().get("script-side") is not None:
+            break
+        time.sleep(0.02)
+    else:
+        raise AssertionError("the run never opened its device")
+    assert "script-side" not in b.lab.devices                      # and never appears in the bridge's own list
+    r = b.call_tool("mhp_estop", {"device": "*", "reason": "smoke from the lid"})
+    assert r["bench"]["ok"] and r["script-side"]["ok"], r
+    assert [C._inprocess[f"local:{n}.t6stop"][0].state for n in ("bench", "script-side")] == ["estop", "estop"]
+
+    # the run can be over while the protocol it started is not: an in-process driver outlives the lab
+    C._inprocess["local:orphan.t6stop"] = (SimThermocycler(), "")
+    b2 = Bridge(home=HOME / "t6stop2")
+    b2.lab.targets["orphan"] = "local:orphan.t6stop"
+    b2.call_tool("mhp_run", {"script": protocol % "orphan"})
+    orphan = C._inprocess["local:orphan.t6stop"][0]
+    assert orphan.state == "busy" and not b2.lab.devices           # nobody holds it open any more
+    assert b2.call_tool("mhp_estop", {"device": "*"})["orphan"]["ok"]
+    assert orphan.state == "estop"
+    for target in ("local:bench.t6stop", "local:script-side.t6stop", "local:orphan.t6stop"):
+        C.drop_inprocess(target)                                   # leave no stopped twin behind
+
 
 def test_busy_is_derived_from_all_active_jobs():
     release = threading.Event()
@@ -223,6 +321,68 @@ def test_busy_is_derived_from_all_active_jobs():
     c.write("light", True)
     release.set()
     assert c.wait(j)["state"] == "done" and d.state == "idle"
+
+
+def test_a_stop_is_read_and_answered_while_a_slow_request_is_in_flight():
+    """`safety/estop` MUST NOT wait behind ordinary requests. Over HTTP each request arrives on its
+    own thread, but stdio read one line, handled it, then read the next, so a stop sent while a
+    three-second read was in flight was not even read until the read had finished. It is answered
+    now while the read is still blocked, and ordinary requests still run in the order they arrive:
+    one instrument, one queue."""
+    import queue as q
+
+    from openmhp.transport import serve_stdio
+    entered, release = threading.Event(), threading.Event()
+
+    def slow():
+        entered.set()
+        release.wait(5)
+        return 20.0
+
+    d = drv(signals=[Signal("t", slow)], settings=[Setting("x", lambda v: None, limits={"min": 0, "max": 9})],
+            estop=lambda: None)
+    answers, events, inbox = [], [], q.Queue()
+
+    class Pipe:                                        # stdin as a pipe: lines arrive when pushed
+        def __iter__(self):
+            return iter(self.q.get, None)
+        q = inbox
+
+    class Sink:                                        # stdout, one complete message per write
+        def write(self, text):
+            if text.strip():
+                m = json.loads(text)
+                (answers if m.get("id") is not None else events).append(m)
+
+        def flush(self):
+            pass
+
+    threading.Thread(target=lambda: serve_stdio(d, stdin=Pipe(), stdout=Sink()), daemon=True).start()
+
+    def push(mid, method, params=None):
+        inbox.put(json.dumps({"jsonrpc": "2.0", "id": mid, "method": method, "params": params or {}}) + "\n")
+
+    def wait_for(mid, within=3.0):
+        deadline = time.monotonic() + within
+        while time.monotonic() < deadline:
+            if any(a.get("id") == mid for a in list(answers)):
+                return time.monotonic()
+            time.sleep(0.01)
+        raise AssertionError(f"no answer to {mid} within {within}s; got {[a.get('id') for a in answers]}")
+
+    push(1, "signals/read", {"names": ["t"]})
+    assert entered.wait(2), "the slow read never reached the device"
+    t0 = time.monotonic()
+    push(2, "safety/estop", {"reason": "smoke"})
+    push(3, "settings/write", {"name": "x", "value": 1})
+    push(4, "settings/write", {"name": "x", "value": 2})
+    assert wait_for(2) - t0 < 1.0, "the stop queued behind the read"
+    assert [a["id"] for a in answers] == [2] and d.state == "estop"      # answered, and the read still blocked
+    assert any(e.get("method") == "notifications/safety/estop" for e in events), events
+    release.set()
+    wait_for(4)
+    assert [a["id"] for a in answers] == [2, 1, 3, 4]                    # the stop jumped; the rest kept order
+    inbox.put(None)
 
 
 def test_uncertain_write_latches_fault_and_reaches_a_safe_state():
@@ -291,6 +451,40 @@ def test_runs_never_touch_the_protocol_stream():
     o1 = b.runs.read(r1["run"]["id"], "stdout.txt")["text"]
     o2 = b.runs.read(r2["run"]["id"], "stdout.txt")["text"]
     assert "run one" in o1 and "run two" not in o1 and "run two" in o2 and "jsonrpc" not in o1 + o2
+
+
+def test_a_script_is_handed_the_gated_surface_and_nothing_else():
+    """A run script is code the host executes, so it sits inside the trust boundary while the model that wrote
+    it does not. The lab it gets offers the audited device API only: the in-process driver, the untracked
+    transport call and a Lab with hooks of its own are not reachable, every attempt is refused in terms that
+    name the right call, and the attempt itself lands in the run log."""
+    b = Bridge(home=HOME / "t31")
+    moved = []
+    register("local:probe.t31", drv(settings=[Setting("temp", moved.append, limits={"min": 4, "max": 105})],
+                                   actions=[Action("go", lambda j, p: moved.append("go"), approval="confirm")]))
+    b.lab.targets["thermo"] = "local:probe.t31"
+    for script, reached in (("lab['thermo'].driver.on_write('temp', 900)", "driver"),
+                            ("lab['thermo']._raw_call('settings/write', {'name': 'temp', 'value': 900})", "_raw_call"),
+                            ("lab.child(approver=None)['thermo'].call('actions/invoke', "
+                             "{'name': 'go', 'approved': True})", "child")):
+        r = b.call_tool("mhp_run", {"script": script})
+        assert not r["ok"] and reached in r["error"], (reached, r)
+    assert moved == []                                      # 900 degC never reached the hook, 'go' never ran
+    assert [e["attribute"] for e in b.log.recent if e["kind"] == "script/blocked"] == ["driver", "_raw_call", "child"]
+
+    assert b.call_tool("mhp_run", {"script": "lab['thermo'].write('temp', 50)"})["ok"]      # the gated path still works
+    r = b.call_tool("mhp_run", {"script": "with lab['thermo'] as d:\n    d.write('temp', 900)"})
+    assert not r["ok"] and "above max 105" in json.dumps(r["error"])
+    assert moved == [50]
+    audited = [(e["kind"], e.get("name"), e.get("value")) for e in b.log.recent if e["kind"] in ("write", "refused")]
+    assert ("write", "temp", 50) in audited and ("refused", "temp", 900) in audited
+    assert all(e.get("run") for e in b.log.recent if e["kind"] in ("write", "refused"))     # audited to the run
+
+    off = Bridge(home=HOME / "t31b", scripts=False)         # a host that executes no model-authored code at all
+    assert [t["name"] for t in off.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]] \
+        == [t["name"] for t in TOOLS if t["name"] != "mhp_run"]
+    e = expect(Forbidden.code, lambda: off.call_tool("mhp_run", {"script": "print(1)"}))
+    assert "no scripts" in e.message and "mhp_write" in e.message
 
 
 def test_adapter_outcomes_match_the_backend():
@@ -411,6 +605,129 @@ def test_mcp_http_needs_a_token_and_a_trusted_origin():
     assert init["protocolVersion"] == "2025-06-18"
 
 
+def test_a_device_takes_approved_only_from_a_channel_it_can_place():
+    """`approved: true` is the host's statement that a person confirmed this exact request (7.2), so a
+    device may take it only from a caller its transport can place: the machine it runs on, or one
+    holding its token. A stranger reaching an open port is neither, and the flag is dropped before the
+    gates ever see it. An address another machine can reach is not served without a token unless the
+    operator asks for that."""
+    import socket
+
+    from openmhp.transport import device_token, dispatch, is_loopback, serve_http
+    opened = []
+
+    def device():
+        return drv(actions=[Action("open_lid", lambda j, p: opened.append(1), approval="confirm")], estop=lambda: None)
+
+    def free_port():                      # a free port, not a fixed one: CI runners are shared
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            return sock.getsockname()[1]
+
+    def post(port, params, token=None):
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/rpc", headers=headers,
+                                     data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "actions/invoke",
+                                                      "params": params}).encode())
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+
+    local, locked = free_port(), free_port()
+    for port, token in ((local, None), (locked, "secret-device-token")):
+        threading.Thread(target=serve_http, args=(device(),),
+                         kwargs={"host": "127.0.0.1", "port": port, "token": token}, daemon=True).start()
+    for port in (local, locked):
+        for _ in range(200):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=2).read()
+                break
+            except OSError:
+                time.sleep(0.02)
+        else:
+            raise AssertionError(f"the device on {port} never answered")
+
+    assert "error" in post(local, {"name": "open_lid"})                        # loopback, unconfirmed: refused
+    assert "result" in post(local, {"name": "open_lid", "approved": True})     # the person at this terminal
+    assert len(opened) == 1
+
+    for guess in (None, "guessed-token"):                                      # behind a token, the flag is
+        try:                                                                   # worth no more than the token
+            post(locked, {"name": "open_lid", "approved": True}, token=guess)
+            raise AssertionError("an unauthenticated request was served")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401 and b"Bearer" in e.read()
+    assert "result" in post(locked, {"name": "open_lid", "approved": True}, token="secret-device-token")
+    assert len(opened) == 2
+    nameplate = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{locked}/mhp.json", timeout=5).read())
+    assert nameplate["device"]["id"]                   # discovery stays open, so `mhp lab scan` still works
+
+    r = dispatch(device(), {"jsonrpc": "2.0", "id": 1, "method": "actions/invoke",
+                            "params": {"name": "open_lid", "approved": True}}, "10.0.0.9", trusted=False)
+    assert r["error"]["code"] == ApprovalRequired.code and r["error"]["data"]["ignoredApproved"] is True
+    assert "cannot assert it" in r["error"]["message"] and len(opened) == 2
+
+    dev = C.connect(f"http://127.0.0.1:{locked}", token="secret-device-token")      # the SDK carries the token
+    assert dev.call("actions/invoke", {"name": "open_lid", "approved": True}) is not None
+    e = expect(Forbidden.code, lambda: C.connect(f"http://127.0.0.1:{locked}", token="").call(
+        "actions/invoke", {"name": "open_lid"}))
+    assert "OPENMHP_DEVICE_TOKEN" in e.message                                      # and says what is missing
+
+    assert [is_loopback(a) for a in ("127.0.0.1", "::1", "localhost", "0.0.0.0", "10.0.0.9")] \
+        == [True, True, True, False, False]
+    assert device_token() is None                      # a client never invents a secret of its own
+
+
+def test_a_port_in_use_is_refused_not_shared():
+    """HTTPServer sets SO_REUSEADDR, which on Windows let a second server bind a port another one was listening
+    on. Clients could then reach either server, so an agent could command a different device than the one it
+    addressed. A second device server or MCP endpoint on a busy port must fail on every OS."""
+    import socket
+    from openmhp import discovery
+    from openmhp.package import load_driver
+    from openmhp.transport import serve_http
+    b = Bridge(home=HOME / "t-port")
+    first = make_mcp_http_server(b, port=0, token="t")
+    try:
+        make_mcp_http_server(b, port=first.server_address[1], token="t")
+        raise AssertionError("a second MCP endpoint bound a port in use")
+    except OSError:
+        pass
+    finally:
+        first.server_close()
+
+    real_advertise, discovery.advertise = discovery.advertise, lambda *a, **k: False     # no LAN announcements
+    try:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        threading.Thread(target=serve_http, args=(load_driver("openmhp/devices/arm-01"), "127.0.0.1", port),
+                         daemon=True).start()
+        deadline = time.time() + 10
+        while True:
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=1).close()
+                break
+            except OSError:
+                if time.time() > deadline:
+                    raise
+                time.sleep(0.05)
+        refused = []
+
+        def second():
+            try:
+                serve_http(load_driver("openmhp/devices/arm-01"), "127.0.0.1", port)
+            except OSError as e:
+                refused.append(e)
+        t = threading.Thread(target=second, daemon=True)
+        t.start()
+        t.join(10)
+        assert refused and not t.is_alive(), "a second device server bound a port in use"
+    finally:
+        discovery.advertise = real_advertise
+
+
 def test_cell_handoffs_are_checked():
     from openmhp.devices.sim_arm import SimArm
     from openmhp.devices.sim_thermocycler import SimThermocycler
@@ -479,6 +796,23 @@ def test_run_log_survives_restarts_and_runs_are_audited():
     assert next(m for m in b2.runs.list() if m["id"] == dead)["state"] == "interrupted"
 
 
+def test_pid_probe_never_signals_the_process():
+    """A restarting bridge asks whether the process behind each unfinished run is still alive. os.kill(pid, 0)
+    only probes on POSIX; on Windows signal 0 is CTRL_C_EVENT and the call raised, so a bridge killed during a
+    run could not start again."""
+    import subprocess
+    from openmhp.runs import _pid_alive
+    quiet = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], **quiet)
+    try:
+        assert _pid_alive(child.pid) is True
+    finally:
+        child.kill()
+        child.wait()
+    assert _pid_alive(child.pid) is False                    # gone, and no exception
+    assert _pid_alive(None) is False
+
+
 def test_nested_executor_cannot_report_false_unreachable():
     from openmhp.directory import Directory
     di = Directory(ping_timeout=0.05)
@@ -508,7 +842,13 @@ def test_remove_and_reload_invalidate_routing_and_drivers():
         b.lab[did]; raise AssertionError("a changed package was silently reused")
     except Exception as e:
         assert "changed on disk" in str(e)
+    e = expect(ApprovalRequired.code, lambda: b.call_tool("mhp_lab", {"op": "reload", "id": did}))
+    assert "mhp lab accept" in e.message                     # no elicitation: the owner has their own channel
+    asked = []
+    b.client_caps = {"elicitation": {}}
+    b.send_request = lambda m, p: asked.append(p["message"]) or {"action": "accept", "content": {"confirm": True}}
     assert "reloaded" in b.call_tool("mhp_lab", {"op": "reload", "id": did})
+    assert '"max": 300} -> {"min": 20, "max": 250}' in asked[0]
     expect(LimitViolation.code, lambda: b.call_tool("mhp_write", {"device": did, "name": "target_temperature", "value": 260}))
     b.call_tool("mhp_lab", {"op": "remove", "id": did})
     try:
@@ -522,6 +862,64 @@ def test_remove_and_reload_invalidate_routing_and_drivers():
         b.call_tool("mhp_lab", {"op": "add", "target": str(copy)}); raise AssertionError("duplicate id accepted")
     except ValueError as e:
         assert "already in the lab" in str(e)
+
+
+def test_an_agent_cannot_raise_the_limit_it_is_refused_by():
+    """A device package IS what the runtime enforces, so an agent that could write one and put it into service
+    would be setting its own limits. The configuration a person accepted is pinned, every route to changing it
+    goes through them with the bound that would move, and the log says which one did."""
+    from openmhp.fleet import Fleet
+    home = HOME / "t30"
+    (home / "devices").mkdir(parents=True)
+    pkg = home / "devices" / "thermocycler-01"               # a package id under ~/.openmhp/devices, as op='write' addresses it
+    shutil.copytree("openmhp/devices/thermocycler-01", pkg)
+    desc = pkg / "descriptor.yaml"
+    asked, answer = [], {"action": "decline"}
+    b = Bridge(fleet=Fleet(home / "fleet.json"))
+    b.client_caps = {"elicitation": {}}
+    b.send_request = lambda m, p: asked.append(p["message"]) or answer
+    did = b.call_tool("mhp_lab", {"op": "add", "target": str(pkg), "location": "bench 1"})["added"]["id"]
+    hot = {"device": did, "name": "target_temperature", "value": 300}
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))
+
+    raised = desc.read_text(encoding="utf-8").replace("limits: {min: 4, max: 105}", "limits: {min: 4, max: 400}")
+    r = b.call_tool("mhp_lab", {"op": "write", "id": "thermocycler-01", "files": {"descriptor.yaml": raised}})
+    assert r["in_operation"] == did                          # writing files is allowed, and says what it does not do
+    assert any("settings.target_temperature.limits" in c and "105} -> " in c for c in r["changes"])
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))     # the device enforces what was accepted
+
+    e = expect(ApprovalRequired.code, lambda: b.call_tool("mhp_lab", {"op": "reload", "id": did}))
+    assert "not accepted" in e.message and "105} -> " in asked[-1]         # the person saw the bound, and said no
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))
+
+    b.client_caps = {}                                                     # no trusted channel: nothing moves at all
+    e = expect(ApprovalRequired.code, lambda: b.call_tool("mhp_lab", {"op": "reload", "id": did}))
+    assert "mhp lab accept thermocycler-01" in e.message
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))
+
+    answer, b.client_caps = {"action": "accept", "content": {"confirm": True}}, {"elicitation": {}}
+    b.call_tool("mhp_lab", {"op": "reload", "id": did})                    # the owner accepts it, once, seeing the diff
+    assert b.call_tool("mhp_write", hot)["ok"]
+    assert b.call_tool("mhp_lab", {"op": "list"})["devices"][0]["location"] == "bench 1"   # the fleet record survives a reload
+
+    desc.write_text(desc.read_text(encoding="utf-8").replace("max: 400", "max: 900"), encoding="utf-8")
+    b2 = Bridge(fleet=Fleet(home / "fleet.json"))             # a restart used to load whatever was on disk by then
+    try:
+        b2.lab[did]
+        raise AssertionError("a configuration nobody accepted was enforced")
+    except Exception as e:                                    # noqa: BLE001
+        assert "accepted it" in str(e)
+    assert b2.call_tool("mhp_lab", {"op": "status"})["configuration_changed"] == [did]
+
+    b2.call_tool("mhp_lab", {"op": "remove", "id": did})      # removing a device does not forget what it was accepted with
+    e = expect(ApprovalRequired.code, lambda: b2.call_tool("mhp_lab", {"op": "add", "target": str(pkg)}))
+    assert "900" in e.message
+    assert b2.call_tool("mhp_lab", {"op": "list"})["devices"] == []        # a refused add leaves the lab as it was
+
+    kinds = [ev["kind"] for ev in b.log.recent]
+    assert "lab/write" in kinds and "lab/reload" in kinds
+    assert [ev["answer"] for ev in b.log.recent if ev["kind"] == "confirm"] == ["decline", "accept"]
+    assert all(ev.get("changes") for ev in b.log.recent if ev["kind"] in ("lab/write", "lab/reload", "confirm"))
 
 
 def test_factory_packages_keep_their_capabilities():
@@ -588,6 +986,102 @@ def test_entry_points_fail_cleanly():
     assert endless["ok"] and "truncated" in endless["plan"]["verdict"]
 
 
+def test_the_cli_can_still_reach_a_device():
+    """SPEC 10.2 is a control surface, not a convenience: `mhp <target> read|write|invoke|estop`
+    is what a person at the bench and an agent in a Bash tool both use. A second,
+    function-level `from .client import connect` inside main() made the name local to the whole
+    function, so every client verb raised UnboundLocalError before it reached a device."""
+    from openmhp import cli
+    seen = []
+    register("local:probe.cli", drv(signals=[Signal("t", lambda: 21.5)],
+                                    settings=[Setting("sp", seen.append, limits={"min": 0, "max": 100})],
+                                    estop=lambda: seen.append("stop")))
+    printed, out = io.StringIO(), sys.stdout
+    sys.stdout = printed
+    try:
+        for verb in (["read", "t"], ["write", "sp", "40"], ["limits"], ["describe", "card"], ["estop", "by hand"]):
+            assert cli.main(["local:probe.cli", *verb]) == 0, verb
+        assert cli.main(["conformance", "pkg:openmhp/devices/arm-01"]) == 0    # the verb that shadowed it
+    finally:
+        sys.stdout = out
+    assert seen == [40, "stop"], seen
+    assert "21.5" in printed.getvalue(), printed.getvalue()[:300]
+
+
+ECHO_DEVICE = """\
+import json, sys
+for line in sys.stdin.buffer:                 # a stdio device that answers every request with its own params
+    msg = json.loads(line)
+    out = {"jsonrpc": "2.0", "id": msg["id"], "result": {"echo": msg.get("params")}}
+    sys.stdout.buffer.write((json.dumps(out, ensure_ascii=False) + "\\n").encode("utf-8"))
+    sys.stdout.buffer.flush()
+"""
+
+
+def test_stdio_commands_keep_windows_paths():
+    """`stdio:` commands follow the OS's own rules: shlex on POSIX, CreateProcess on Windows. POSIX shlex turned
+    C:\\...\\python.exe into C:...python.exe, so no stdio device could start from a Windows path."""
+    from openmhp.client import StdioDevice
+    folder = HOME / "stdio device"                       # a space in the path, and backslashes on Windows
+    folder.mkdir(exist_ok=True)
+    (folder / "echo.py").write_text(ECHO_DEVICE, encoding="utf-8")
+    dev = StdioDevice(f'{sys.executable} "{folder / "echo.py"}"')
+    try:
+        assert dev.call("ping", {"n": 1})["echo"] == {"n": 1}
+    finally:
+        dev.proc.stdin.close()
+        dev.proc.wait(10)
+
+
+def test_stdio_transports_carry_utf8():
+    """MHP and MCP over stdio are UTF-8 on every OS. A pipe otherwise uses the locale's encoding, which on Windows
+    is the ANSI code page: the client read a device's 'α' as 'Î±', and the device server and the MCP bridge did
+    the same to what their clients sent."""
+    import subprocess
+    from openmhp.client import StdioDevice
+    text = "1 µL at 40 °C, α-pinene"
+    echo = HOME / "stdio device" / "echo.py"
+    echo.parent.mkdir(exist_ok=True)
+    echo.write_text(ECHO_DEVICE, encoding="utf-8")
+    dev = StdioDevice(f'{sys.executable} "{echo}"')
+    try:
+        assert dev.call("ping", {"note": text})["echo"] == {"note": text}       # the device answers in raw UTF-8
+    finally:
+        dev.proc.stdin.close()
+        dev.proc.wait(10)
+
+    def ask(args, request):
+        """Send one request as raw UTF-8 to a stdio server and return its answer."""
+        env = {**os.environ, "OPENMHP_HOME": str(HOME / "t-utf8")}
+        p = subprocess.Popen([sys.executable, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, env=env)
+        killer = threading.Timer(60, p.kill)
+        killer.start()
+        try:
+            p.stdin.write((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
+            p.stdin.flush()
+            for line in p.stdout:
+                msg = json.loads(line)
+                if msg.get("id") == request["id"]:
+                    return msg
+            raise AssertionError(f"{args}: no answer")
+        finally:
+            killer.cancel()
+            p.stdin.close()                                   # end of input: both servers exit
+            try:
+                p.wait(20)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+
+    unknown = ask(["-m", "openmhp.cli", "serve", "openmhp/devices/arm-01"],
+                  {"jsonrpc": "2.0", "id": 1, "method": "signals/read", "params": {"names": [text]}})
+    assert text in unknown["error"]["message"], unknown              # the device server echoes the name it got
+    ran = ask(["-m", "openmhp.mcp_bridge"], {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                              "params": {"name": "mhp_run", "arguments": {"script": f"print({text!r})"}}})
+    assert text in json.loads(ran["result"]["content"][0]["text"])["stdout"], ran
+
+
 def test_nested_parameter_bounds_come_from_the_descriptor_not_the_driver():
     """A dangerous value inside a structured parameter (a 200 C step in an otherwise valid
     program) must be refused by the declared shape alone. Before shapes were declarable, the
@@ -624,6 +1118,81 @@ def test_nested_parameter_bounds_come_from_the_descriptor_not_the_driver():
     expect(InvalidValue.code,   lambda: d.invoke("run", dry_run=True, steps=[{"temp": "hot"}]))
 
 
+def test_a_result_too_big_for_the_log_can_still_be_fetched():
+    """A bulky result is replaced in the log by a placeholder, and the placeholder said "read the
+    job result" while the job record on disk said "see the run that produced it" -- which is not a
+    place: a direct invoke has no run, and nothing kept the data. The placeholder now names the
+    call that returns it, and the result lives in a file beside the record with the same lifetime,
+    so it survives a restart and is deleted with it."""
+    from openmhp.mcp_bridge import _cap
+
+    trace = [[i * 0.01, i * 1.5] for i in range(6000)]              # a chromatogram, ~110 KB
+    def gc(did="gc-9", **kw):
+        return BoundDriver(device={"id": did, "class": "gc"}, safety={"estop": False, "watchdog_s": None},
+                           actions=[Action("inject", lambda job, params: {"peaks": 3, "trace": trace}),
+                                    Action("small", lambda job, params: {"peaks": 3})], **kw)
+
+    def settled(did, jid):
+        """jobs/status reports done as soon as the state changes; the record lands just after."""
+        f = HOME / "jobs" / did / f"{jid}.json"
+        for _ in range(200):
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+                if rec.get("state") in ("done", "failed", "cancelled"):
+                    return rec
+            except (OSError, ValueError):
+                pass
+            time.sleep(0.02)
+        raise AssertionError(f"no settled record for {jid}")
+
+    d = gc()
+    dev = LocalDevice(d)
+    job = dev.wait(dev.invoke("inject"))
+    assert len(job["result"]["trace"]) == 6000                      # the device returns it whole
+
+    logged = _cap(job["result"], job["id"])
+    assert f"mhp_job op='status' id='{job['id']}'" in logged["trace"], logged
+    assert logged["peaks"] == 3
+    assert f"id='{job['id']}'" in _cap(trace, job["id"]), "a bare list used to become a truncated repr"
+
+    rec = settled("gc-9", job["id"])
+    assert rec["result"]["saved"] == f"results/{job['id']}.json" and rec["result"]["bytes"] > 100_000, rec
+    again = LocalDevice(gc()).call("jobs/status", {"id": job["id"]})["job"]     # a fresh process
+    assert len(again["result"]["trace"]) == 6000, "the placeholder did not resolve after a restart"
+
+    gone = HOME / "jobs" / "gc-9" / rec["result"]["saved"]          # and when the file is not there
+    gone.unlink()
+    said = LocalDevice(gc()).call("jobs/status", {"id": job["id"]})["job"]["result"]
+    assert said["saved"] is None and "is gone" in said["note"], said
+
+    big = gc("gc-big")                                              # too big even for a file beside it
+    big.RESULT_FILE_CAP = 1000
+    j2 = LocalDevice(big).wait(LocalDevice(big).invoke("inject"))
+    r2 = settled("gc-big", j2["id"])["result"]
+    assert r2["saved"] is None and "run folder" in r2["note"] and r2["bytes"] > 100_000, r2
+    assert not (HOME / "jobs" / "gc-big" / "results").exists()      # no pointer, so no orphan either
+
+    small = gc("gc-small")                                          # a small result stays inline
+    js = LocalDevice(small).wait(LocalDevice(small).invoke("small"))
+    assert settled("gc-small", js["id"])["result"] == {"peaks": 3}
+
+    ev = gc("gc-evict")                                             # and one lifetime, not two
+    ev.JOB_HISTORY = 2
+    c = LocalDevice(ev)
+    ids = [settled("gc-evict", c.wait(c.invoke("inject"))["id"])["id"] for _ in range(4)]
+    folder = HOME / "jobs" / "gc-evict"
+    assert len(list(folder.glob("job_*.json"))) == 2
+    assert sorted(p.stem for p in (folder / "results").iterdir()) == sorted(ids[-2:]), ids
+
+    # the inconsistency: mhp_invoke with wait=true logged the result uncut
+    b = Bridge(home=HOME / "t9b")
+    register("local:probe.gc9", gc("gc-bridge"))
+    b.lab.targets["gc"] = "local:probe.gc9"
+    b.call_tool("mhp_invoke", {"device": "gc", "name": "inject", "wait": True})
+    line = next(e for e in reversed(b.log.since(0, 200)) if e["kind"] == "job")
+    assert "mhp_job op='status'" in line["result"]["trace"], line
+
+
 def test_a_prose_parameter_shape_still_loads_and_is_simply_unchecked():
     """The legacy form stays valid so existing packages keep working; it just buys nothing."""
     from openmhp.driver import Driver
@@ -643,6 +1212,89 @@ def test_a_prose_parameter_shape_still_loads_and_is_simply_unchecked():
     d = LocalDevice(Prose())
     # 200 C passes, because prose is documentation and not a contract
     assert d.invoke("run", dry_run=True, steps=[{"temp": 200}])["state"] == "dryRun"
+
+
+def test_an_instrument_records_what_was_done_to_it_whoever_asked():
+    """Only the MCP bridge kept a run log, and the client's audit hook does nothing without an
+    observer, which only the bridge passes. So the same write left a full record through one
+    control surface and no record at all through the other two, or through a plain HTTP
+    request. The instrument now keeps its own, beside its job records."""
+    import socket
+
+    from openmhp.transport import serve_http
+
+    def oven(did, **kw):
+        return BoundDriver(device={"id": did, "class": "hotplate"},
+                           signals=[Signal("temperature", lambda: 22.0)],
+                           settings=[Setting("target", lambda v: None, limits={"min": 4, "max": 105})],
+                           estop=lambda: None, **kw)
+
+    def record(did):
+        return RunLog(HOME, f"records/{did}").window(0, limit=50)["events"]
+
+    # 1. the SDK, with no observer of any kind
+    sdk = LocalDevice(oven("sdk-01"))
+    sdk.read("temperature")                                    # reads stay out: they are the caller's
+    sdk.write("target", 80)
+    expect(LimitViolation.code, lambda: sdk.write("target", 300))
+    sdk.estop("smoke")
+    rows = record("sdk-01")
+    assert [r["kind"] for r in rows] == ["write", "refused", "estop"], rows
+    assert rows[0]["value"] == 80 and rows[0]["by"] == sdk.session and rows[0]["device"] == "sdk-01"
+    assert rows[1]["op"] == "write" and rows[1]["code"] == LimitViolation.code
+    assert rows[2]["reason"] == "smoke"
+    assert not any(r["kind"] == "read" for r in rows)
+
+    # 2. a plain HTTP request, no SDK at all
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    threading.Thread(target=lambda: serve_http(oven("http-01"), port=port), daemon=True).start()
+    for _ in range(50):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=1).read()
+            break
+        except OSError:
+            time.sleep(0.1)
+
+    def post(method, params):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/rpc", method="POST",
+                                     data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
+                                                      "params": params}).encode(),
+                                     headers={"Content-Type": "application/json", "X-MHP-Client": "curl"})
+        return json.loads(urllib.request.urlopen(req, timeout=5).read())
+
+    post("signals/read", {"names": ["temperature"]})
+    post("settings/write", {"name": "target", "value": 60})
+    assert "error" in post("settings/write", {"name": "target", "value": 500})
+    rows = record("http-01")
+    assert [(r["kind"], r["by"]) for r in rows] == [("write", "curl"), ("refused", "curl")], rows
+    assert rows[0]["value"] == 60
+
+    # 3. a watchdog trip and a latched fault: safety with no request behind it
+    wd = oven("wd-01", safety={"estop": True, "watchdog_s": 0.1})
+    wd.rpc("session/acquire", {"ttl": 60}, "controller")
+    time.sleep(0.6)
+    kinds = [(r["kind"], r.get("by")) for r in record("wd-01")]
+    assert ("lease", "controller") in kinds and ("estop", "watchdog") in kinds, kinds
+    wd.close()
+
+    broken = BoundDriver(device={"id": "fault-01", "class": "generic"}, estop=lambda: None,
+                         settings=[Setting("x", fails(OSError("bus error")), limits={"min": 0, "max": 9})])
+    expect(DeviceFault.code, lambda: LocalDevice(broken).write("x", 1))
+    rows = record("fault-01")
+    assert [r["kind"] for r in rows] == ["fault", "refused"], rows      # the fault is latched first
+    assert "bus error" in rows[0]["reason"]
+
+    # 4. and the host can read an instrument's record without going near the files
+    b = Bridge(home=HOME)
+    b.lab.targets["oven"] = "local:probe.rec"
+    register("local:probe.rec", oven("bridge-01"))
+    b.call_tool("mhp_write", {"device": "oven", "name": "target", "value": 55})
+    own = b.call_tool("mhp_data", {"op": "record", "device": "bridge-01"})
+    assert [r["kind"] for r in own["events"]] == ["write"] and own["device"] == "bridge-01"
+    assert b.call_tool("mhp_data", {"op": "record", "device": "nobody"})["note"].startswith("no record")
 
 
 def test_every_error_carries_a_device_anchored_timestamp():
@@ -689,6 +1341,49 @@ def _shaped(**kw):
         def on_write(self, name, value): pass
         def on_invoke(self, job): return {"ok": True}
     return Shaped()
+
+
+def test_a_reading_can_be_cited():
+    """An action result is citable by its job id. A reading was citable by nothing: signals/read
+    returned {values, ts}, pushed updates carried no id either, and the sequence number the log
+    entry got was thrown away before the agent saw it. So "the block was at 72" had nothing
+    behind it."""
+    import re as _re
+
+    temp = {"v": 22.0}
+    d = drv(signals=[Signal("t", lambda: temp["v"])], settings=[Setting("sp", lambda v: None, limits={"min": 0, "max": 99})])
+    dev = LocalDevice(d)
+
+    first = dev.call("signals/read", {"names": ["t"]})
+    second = dev.call("signals/read", {"names": ["t"]})
+    assert _re.fullmatch(r"read_[0-9a-f]{8}", first["id"]), first
+    assert first["id"] != second["id"] and first["values"] == {"t": 22.0}
+
+    pushed = []
+    d.subscribers.append(lambda m: pushed.append(m) if m["method"].endswith("signals/update") else None)
+    temp["v"] = 72.0
+    d.emit_signal("t", temp["v"])
+    assert _re.fullmatch(r"read_[0-9a-f]{8}", pushed[0]["params"]["id"]), pushed
+
+    # the host records the id beside the values, polled or pushed
+    b = Bridge(home=HOME / "t10")
+    register("local:probe.t10", d)
+    b.lab.targets["tc"] = "local:probe.t10"
+    r = b.call_tool("mhp_read", {"device": "tc", "names": ["t"]})
+    line = next(e for e in reversed(b.log.since(0, 200)) if e["kind"] == "read")
+    assert r["id"] and line["reading"] == r["id"] and line["values"] == {"t": 72.0}, (r, line)
+    d.emit_signal("t", 73.0)
+    update = next(u for u in reversed(b.updates("tc")["updates"]) if u.get("signal") == "t")
+    assert update["reading"] == pushed[-1]["params"]["id"] and update["value"] == 73.0, update
+
+    # and a run writes it next to every row, so a number in a notebook entry resolves to a record
+    out = b.call_tool("mhp_run", {"recipe": "periodic-readings",
+                                  "params": {"device": "tc", "signals": ["t"], "every_s": 0.05, "hours": 0.0001}})
+    assert out["ok"], out
+    rows = list(csv.reader(io.StringIO(b.call_tool("mhp_data", {"op": "read", "run": out["run"]["id"],
+                                                                "path": "readings.csv"})["text"])))
+    assert rows[0] == ["t_s", "t", "reading"], rows[0]
+    assert rows[1:] and all(_re.fullmatch(r"read_[0-9a-f]{8}", row[2]) for row in rows[1:]), rows
 
 
 def test_a_declared_resolution_refuses_rather_than_silently_rounds():
@@ -881,6 +1576,77 @@ def test_a_finished_job_survives_a_restart():
     again = LocalDevice(SimThermocycler())         # a fresh process sees the same history
     rec = again.call("jobs/status", {"id": job["id"]})["job"]
     assert rec["state"] == "done" and rec["result"] == job["result"], rec
+
+
+def test_the_record_cannot_be_edited_without_showing_it():
+    """SPEC 3.5 calls the run log append-only and says the answer reports `complete: false` when
+    history is missing, but nothing checked either: a changed reading and a deleted refusal still
+    came back `complete: true`. Every record now carries the digest of the one before it, so a
+    rewrite, a deletion and a reorder each break the chain where they happened."""
+    home = HOME / "t7log"
+    log = RunLog(home)
+    log.write("read", device="tc-01", values={"block_temperature": 22.0})
+    log.write("write", device="tc-01", name="target_temperature", value=95, ok=True)
+    log.write("refused", op="write", device="tc-01", code=LimitViolation.code, message="300 is above max 105")
+    again = RunLog(home)                                   # the chain continues across a restart
+    again.write("job", device="tc-01", action="run_protocol", state="done")
+    clean = again.audit()
+    assert clean["ok"] and clean["records"] == 4 and clean["chained"] == 4, clean
+    w = again.window(0, limit=10)                          # a cursor older than memory: read back
+    assert w["complete"] and w["verified"]["ok"] and w["verified"]["of"] == "disk", w
+    assert log.window(0, limit=10)["verified"] == {"ok": True, "records": 3, "chained": 3,
+                                                   "broken": [], "of": "memory"}
+
+    f = sorted((home / "log").glob("*.jsonl"))[-1]         # now edit the record the audit's way
+    kept = []
+    for line in f.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        e = json.loads(line)
+        if e["kind"] == "refused":
+            continue                                       # delete the refusal
+        if e["kind"] == "read":
+            e["values"]["block_temperature"] = 72.0        # change the reading
+        kept.append(json.dumps(e, default=str))
+    io.open(f, "w", encoding="utf-8", newline="\n").write("\n".join(kept) + "\n")
+
+    after = RunLog(home)
+    after.recent.clear()                                   # a reader with nothing in memory
+    w = after.window(0, limit=10)
+    assert [e["seq"] for e in w["events"]] == [1, 2, 4], w["events"]
+    assert w["complete"] is False, "a deleted record is missing history"
+    assert w["verified"]["ok"] is False and w["verified"]["of"] == "disk"
+    kinds = {(b["seq"], b["kind"]) for b in w["verified"]["broken"]}
+    assert (1, "rewritten") in kinds, kinds                # the changed reading
+    assert (4, "missing") in kinds and (4, "chain") in kinds, kinds        # the deleted refusal
+    a = after.audit()
+    assert a["ok"] is False and a["records"] == 3 and a["files"] == [f.name]
+    assert "tamper-evident" in a["note"]
+
+    broke = HOME / "t7err"                                 # a record that never reached disk
+    (broke / "log").parent.mkdir(parents=True, exist_ok=True)
+    (broke / "log").write_text("not a directory", encoding="utf-8")
+    stderr, sys.stderr = sys.stderr, io.StringIO()         # the warning is the point, not the noise
+    try:
+        nowhere = RunLog(broke)
+        nowhere.write("read", device="tc-01", values={"x": 1})
+    finally:
+        warned, sys.stderr = sys.stderr.getvalue(), stderr
+    assert "history on disk is incomplete" in warned, warned
+    assert nowhere.write_errors == 1 and nowhere.window(0)["complete"] is False
+
+    # A job record is read back as the device's own history, so it carries its own digest too.
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    first = LocalDevice(SimThermocycler())
+    job = first.wait(first.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
+    rec_file = HOME / "jobs" / "thermocycler-01" / f"{job['id']}.json"
+    rec = json.loads(rec_file.read_text(encoding="utf-8"))
+    assert rec["digest"] and rec["result"] == job["result"]
+    rec["result"] = {"cycles_completed": 99}
+    rec_file.write_text(json.dumps(rec), encoding="utf-8")
+    restored = LocalDevice(SimThermocycler()).call("jobs/status", {"id": job["id"]})["job"]
+    assert restored["result"] == {"cycles_completed": 99}   # still returned: dropping evidence is worse
+    assert "does not match its own digest" in restored["unverified"], restored
 
 
 def test_conformance_scores_a_device_behaviourally():

@@ -72,13 +72,17 @@ def safety_card(dev: Device, package_path: str | None = None, location: str | No
         checks.append("action gate dry runs")
 
     estop, estop_kind = safety.get("estop", False), safety.get("estop_kind")
-    wd = safety.get("watchdog_s")
+    wd, wd_action = safety.get("watchdog_s"), safety.get("watchdog_action") or "estop"
     in_process = hasattr(dev, "driver")
     if not estop:
         findings.append({"level": "warn", "text": "no automatic emergency stop" +
                          (": stopping is a request to the operator" if estop_kind == "operator" else "; the agent cannot stop this device")})
     if not wd:
-        findings.append({"level": "warn", "text": "no watchdog; the device will not stop if its controller goes silent"})
+        findings.append({"level": "warn", "text": "no watchdog; nothing notices if the controller goes silent, "
+                                                  "and operating this device needs no lease"})
+    elif wd_action != "estop":
+        findings.append({"level": "warn", "text": f"watchdog action is '{wd_action}': after {wd}s of silence the "
+                                                  "instrument is handed over and keeps running; it does not stop"})
 
     where = str(location or "").strip() or str(d.get("location") or "").strip()
     lines = [f"SAFETY CARD: {d.get('id')} ({d.get('make', '')} {d.get('model', '')}"
@@ -102,7 +106,9 @@ def safety_card(dev: Device, package_path: str | None = None, location: str | No
     else:
         lines.append("Emergency stop: " + ("operator-performed, not automatic" if estop_kind == "operator" else "NONE"))
     if wd:
-        lines.append(f"Watchdog: {wd} s while a client holds a lease; enforced by the driver runtime, not exercised by this card" +
+        lines.append(f"Watchdog: {wd} s while a client holds a lease, then "
+                     + ("e-stop" if wd_action == "estop" else "release the lease and keep running")
+                     + "; enforced by the driver runtime, not exercised by this card" +
                      ("; this driver runs inside the host process, so host power loss is not covered" if in_process else ""))
     else:
         lines.append("Watchdog: none")

@@ -36,5 +36,7 @@ actions:
 safety:
   estop: false
   interlocks: [connected]
-  watchdog_s: null
-  notes: No stop action; a selector valve holds its position. Make the line safe by venting the OB1.
+  watchdog_s: 300
+  watchdog_action: release
+  notes: No stop action; a selector valve holds its position, so five minutes of silence from the controller releases
+    the lease and reports it. Make the line safe by venting the OB1.

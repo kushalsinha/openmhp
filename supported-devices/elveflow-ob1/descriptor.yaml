@@ -78,5 +78,7 @@ actions:
 safety:
   estop: true
   interlocks: [connected]
-  watchdog_s: null
-  notes: E-stop stops flow control and sets every channel to 0 mbar. No watchdog, because flow must keep running through long electrolysis jobs.
+  watchdog_s: 300
+  watchdog_action: release
+  notes: E-stop stops flow control and sets every channel to 0 mbar. Flow must keep running through long electrolysis
+    jobs, so five minutes of silence from the controller releases the lease and reports it; the flow keeps running.

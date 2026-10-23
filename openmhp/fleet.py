@@ -15,8 +15,9 @@ import os
 import time
 from pathlib import Path
 
-from .client import connect
+from .client import connect, package_fingerprint, package_folder
 from .directory import Directory
+from .package import declared_rulebook
 
 HOME = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp"))
 
@@ -32,28 +33,41 @@ def safe_id(value) -> str:
 
 
 class Fleet:
+    RETAIN_RETIRED = 64            # configurations kept after a device leaves the lab, so a looser one coming back is seen
+
     def __init__(self, path: str | Path | None = None):
         self.path = Path(path) if path else HOME / "fleet.json"
         self.devices: dict[str, dict] = {}
-        if self.path.is_file():
-            self.devices = json.loads(self.path.read_text()).get("devices", {})
+        self.retired: dict[str, dict] = {}
+        self.reload()
 
     # ---- persistence -----------------------------------------------------
+    def reload(self) -> "Fleet":
+        """Re-read the file. A person may have accepted a configuration in another process (`mhp lab accept`)."""
+        data = json.loads(self.path.read_text(encoding="utf-8")) if self.path.is_file() else {}
+        self.devices, self.retired = data.get("devices", {}), data.get("retired", {})
+        return self
+
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({"devices": self.devices}, indent=1))
+        self.path.write_text(json.dumps({"devices": self.devices, **({"retired": self.retired} if self.retired else {})},
+                                        indent=1), encoding="utf-8")
 
     @property
     def targets(self) -> dict[str, str]:
         return {i: d["target"] for i, d in self.devices.items()}
 
     # ---- membership ------------------------------------------------------
-    def add(self, target: str, sim: bool = False, location: str | None = None) -> dict:
+    def add(self, target: str, sim: bool = False, location: str | None = None, accept: bool = True) -> dict:
         """Add by http URL, pkg:<folder>, a bare folder path, local:<mod>:<Class>, or github:owner/repo[/path].
         sim=True adds the package's simulated twin (sim.py) instead of its driver. Fetches the card.
 
         `location` says where the instrument stands; a shared package cannot know that, so it is recorded
-        here rather than in the package. A simulated twin stands nowhere and is labelled as such."""
+        here rather than in the package. A simulated twin stands nowhere and is labelled as such.
+
+        `accept` records the package on disk as the configuration this lab enforces for the device. The CLI and the
+        SDK accept by default: the person running them is the trusted party. A host acting for a model passes
+        accept=False, decides whether a person has to see the configuration first, and calls ``accept()`` after."""
         t = self._normalize(target)
         if t.startswith("github:"):
             t = "pkg:" + str(self.fetch_github(t[len("github:"):]))
@@ -72,8 +86,57 @@ class Fleet:
             raise ValueError(f"a device with id {card['id']!r} is already in the lab at {existing['target']}; "
                              "remove it first, or reload it if its package changed")
         self.devices[card["id"]] = {"target": t, "added": time.time(), "card": card, "sim": sim}
+        if accept:
+            self.accept(card["id"])
         self.save()
         return card
+
+    # ---- the accepted configuration --------------------------------------
+    def accept(self, device_id: str, fingerprint: str | None = None) -> dict:
+        """Record the package files on disk as the configuration this lab enforces for a device.
+
+        This is the fleet record acting as the authority, the way it already does for a device's location: the
+        package says what it would like to enforce, the fleet says what was accepted, and a host that pins
+        packages (the MCP bridge) refuses to load anything else.
+        """
+        entry = self.devices.get(device_id)
+        if entry is None:
+            raise KeyError(f"no device {device_id!r} in this lab")
+        folder = package_folder(entry["target"])
+        if folder is None:                                  # http/stdio: the configuration is enforced elsewhere
+            return entry
+        entry["fingerprint"] = fingerprint or package_fingerprint(folder)
+        entry["accepted"] = time.time()
+        try:
+            entry["rulebook"] = declared_rulebook(folder)
+        except (OSError, ValueError) as e:                  # an incomplete package: nothing to compare against later
+            entry["rulebook"], entry["rulebook_error"] = {}, f"{type(e).__name__}: {e}"
+        self.save()
+        return entry
+
+    def accepted_rulebook(self, device_id: str) -> dict | None:
+        """The configuration a person last accepted for this id, whether it is in the lab now or was removed from it."""
+        for src in (self.devices, self.retired):
+            entry = src.get(device_id)
+            if entry and entry.get("rulebook"):
+                return entry["rulebook"]
+        return None
+
+    def pins(self) -> dict[str, str]:
+        """target -> accepted fingerprint, for a host that refuses to load anything else."""
+        return {d["target"]: d["fingerprint"] for d in self.devices.values() if d.get("fingerprint")}
+
+    def diverged(self) -> dict[str, dict]:
+        """Devices whose package files no longer hash to the configuration that was accepted for them."""
+        out = {}
+        for i, d in self.devices.items():
+            folder, accepted = package_folder(d["target"]), d.get("fingerprint")
+            if not folder or not accepted or not Path(folder).is_dir():
+                continue
+            now = package_fingerprint(folder)
+            if now != accepted:
+                out[i] = {"folder": folder, "accepted": accepted, "on_disk": now}
+        return out
 
     def fetch_github(self, spec: str) -> Path:
         """github:owner/repo[/sub/path][@ref] -> local folder under ~/.openmhp/packages (shallow clone, refreshed on re-add)."""
@@ -94,7 +157,7 @@ class Fleet:
             if len(cands) == 1:
                 folder = cands[0]
             else:
-                raise FileNotFoundError(f"{spec}: no DEVICE.md at that path; packages found: {[str(c.relative_to(dest)) for c in cands]}")
+                raise FileNotFoundError(f"{spec}: no DEVICE.md at that path; packages found: {[c.relative_to(dest).as_posix() for c in cands]}")
         return folder
 
     def set_location(self, device_id: str, location: str) -> dict:
@@ -113,11 +176,19 @@ class Fleet:
         """Installed devices that do not say where they are."""
         return [i for i, d in self.devices.items() if not str(d["card"].get("location") or "").strip()]
 
-    def remove(self, device_id: str) -> bool:
-        ok = self.devices.pop(device_id, None) is not None
-        if ok:
-            self.save()
-        return ok
+    def remove(self, device_id: str, retire: bool = True) -> bool:
+        """Drop a device. Its accepted configuration is kept (`retired`), so a package coming back under the same id
+        with looser limits is a change a person is asked about, not a fresh device nobody has ever seen."""
+        entry = self.devices.pop(device_id, None)
+        if entry is None:
+            return False
+        if retire and entry.get("rulebook"):
+            self.retired[device_id] = {"target": entry["target"], "retired": time.time(),
+                                       **{k: entry[k] for k in ("fingerprint", "rulebook") if k in entry}}
+            for stale in sorted(self.retired, key=lambda i: self.retired[i].get("retired", 0))[:-self.RETAIN_RETIRED]:
+                del self.retired[stale]
+        self.save()
+        return True
 
     def list(self) -> list[dict]:
         return [{"id": i, "target": d["target"], **{k: d["card"].get(k) for k in ("class", "location", "description")}}

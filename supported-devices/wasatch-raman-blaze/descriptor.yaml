@@ -63,5 +63,7 @@ actions:
 safety:
   estop: true
   interlocks: [connected]
-  watchdog_s: null
-  notes: E-stop turns the laser off. No watchdog; the laser stays on through unattended runs once a person has enabled it.
+  watchdog_s: 300
+  watchdog_action: release
+  notes: E-stop turns the laser off. The laser stays on through unattended runs once a person has enabled it, so five
+    minutes of silence from the controller releases the lease and reports it; stopping the laser stays a decision.

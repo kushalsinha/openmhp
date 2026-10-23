@@ -10,8 +10,11 @@ Script output goes to the run only: scripts get a `print` bound to the run's
 output file. Nothing redirects the process's stdout, which the MCP transport owns.
 
 The *run log* is an append-only JSONL file per day under ~/.openmhp/log/, with a
-sequence number that continues across restarts. Every call a direct tool or a
-run script makes through the lab's clients is recorded, with the run id.
+sequence number that continues across restarts and each record chained to the one
+before it, so an edit after the fact is detectable. Every call a direct tool or a
+run script makes through the lab's clients is recorded, with the run id. The same
+class keeps each instrument's own record under ~/.openmhp/records/<device>/, which
+the driver writes whoever asked and over whatever transport (SPEC 3.5).
 
 *Plan mode* executes a script against a PlanLab: reads are real, every write and
 invoke is a dry run through the driver's gates, other mutating requests are
@@ -24,6 +27,7 @@ from __future__ import annotations
 
 import builtins
 import collections
+import hashlib
 import json
 import os
 import re
@@ -33,6 +37,7 @@ import time
 import traceback
 import types
 import uuid
+import weakref
 from pathlib import Path
 
 from .client import Device, Lab, RemoteError
@@ -47,56 +52,172 @@ RUN_ID = re.compile(r"^\d{8}-\d{6}-[0-9a-f]{4}$")
 
 # ------------------------------------------------------------------ run log ---- #
 class RunLog:
-    def __init__(self, home: Path | None = None):
-        self.dir = (home or HOME) / "log"
+    """Append-only JSONL, one file per day, with every record chained to the one before it.
+
+    Each record carries ``prev``, the digest of the record before it, and ``hash``, its own.
+    Both are recomputable from the line itself, so a changed value, a deleted line and a
+    reordered pair each break the chain where they happened, and ``audit()`` says where.
+
+    This is tamper-*evidence*, not tamper-proofing: whoever can write the file can rewrite the
+    chain along with it, and signing the head is listed in SPEC 16 as unspecified. What it ends
+    is a record that answered ``complete: true`` after a reading had been changed and a refusal
+    deleted -- the state in which an edit left no trace at all. A record that failed to reach
+    disk leaves the same break as a deleted one, which is the truth: the file is missing a line.
+    """
+
+    GENESIS = "0" * 32                               # what the first record of all follows
+
+    def __init__(self, home: Path | None = None, subdir: str = "log"):
+        self.dir = (home or HOME) / subdir
         self._lock = threading.Lock()
         self.recent: list[dict] = []                 # ring buffer for fast `since`
         self.write_errors = 0
-        self.seq = self._last_seq_on_disk()
+        self.seq, self.head = self._tail_on_disk()
 
     def _files(self) -> list[Path]:
         return sorted(self.dir.glob("*.jsonl")) if self.dir.is_dir() else []
 
-    def _last_seq_on_disk(self) -> int:
+    @classmethod
+    def digest(cls, ev: dict) -> str:
+        """A record's own digest: every field of it except the digest, and except `persisted`,
+        which is this process's note to itself and never reaches the file."""
+        body = {k: v for k, v in ev.items() if k not in ("hash", "persisted")}
+        return hashlib.sha256(json.dumps(body, sort_keys=True, default=str,
+                                         separators=(",", ":")).encode("utf-8")).hexdigest()[:32]
+
+    def _tail_on_disk(self) -> tuple[int, str]:
+        """The sequence number and digest the next record has to follow."""
         for f in reversed(self._files()):
             try:
-                lines = [l for l in f.read_text(errors="replace").splitlines() if l.strip()]
+                lines = [l for l in f.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
             except OSError:
                 continue
             for line in reversed(lines):
                 try:
-                    return int(json.loads(line)["seq"])
+                    e = json.loads(line)
+                    return int(e["seq"]), str(e.get("hash") or self.GENESIS)
                 except (ValueError, KeyError, TypeError):
                     continue
-        return 0
+        return 0, self.GENESIS
 
     def write(self, kind: str, **fields) -> dict:
         ev = {"ts": time.time(), "kind": kind, **fields}
         with self._lock:
             self.seq += 1
-            ev["seq"] = self.seq
+            ev["seq"], ev["prev"] = self.seq, self.head
+            ev["hash"] = self.head = self.digest(ev)
             self.recent.append(ev)
             del self.recent[:-500]
             try:
                 self.dir.mkdir(parents=True, exist_ok=True)
-                with open(self.dir / (time.strftime("%Y-%m-%d") + ".jsonl"), "a") as f:
+                with open(self.dir / (time.strftime("%Y-%m-%d") + ".jsonl"), "a", encoding="utf-8") as f:
                     f.write(json.dumps(ev, default=str) + "\n")
             except OSError as e:
                 self.write_errors += 1
                 ev["persisted"] = False
-                print(f"[openmhp] run log write failed ({e}); history on disk is incomplete", file=sys.stderr)
+                print(f"[openmhp] run log write failed ({e}); history on disk is incomplete, and the chain "
+                      f"breaks at seq {ev['seq']}", file=sys.stderr)
         return ev
 
+    # ---- reading it back, and checking it ---------------------------------- #
+    @classmethod
+    def _step(cls, st: dict, e: dict) -> None:
+        """Check one record against the one before it. `st` carries the walk."""
+        seq = e.get("seq")
+        if "hash" not in e:
+            st["unchained"] += 1
+            st["prev"] = None                        # nothing for the next record to follow
+        else:
+            st["chained"] += 1
+            if e["hash"] != cls.digest(e):
+                st["broken"].append({"seq": seq, "kind": "rewritten",
+                                     "problem": "contents do not match this record's own digest"})
+            elif st["prev"] is not None and e.get("prev") != st["prev"]:
+                st["broken"].append({"seq": seq, "kind": "chain",
+                                     "problem": "does not follow the record before it; one was removed, "
+                                                "reordered or rewritten"})
+            st["prev"] = e["hash"]
+        if st["last_seq"] is not None and seq != st["last_seq"] + 1:
+            st["broken"].append({"seq": seq, "kind": "missing",
+                                 "problem": f"the sequence jumps from {st['last_seq']} to {seq}"})
+        if isinstance(seq, int):
+            st["last_seq"] = seq
+
+    @staticmethod
+    def _walk(prev: str | None = None) -> dict:
+        return {"prev": prev, "last_seq": None, "broken": [], "chained": 0, "unchained": 0}
+
+    @staticmethod
+    def _missing(verdict: dict) -> bool:
+        return any(b.get("kind") in ("missing", "unreadable") for b in verdict["broken"])
+
+    @staticmethod
+    def _verdict(st: dict, records: int) -> dict:
+        return {"ok": not st["broken"], "records": records, "chained": st["chained"],
+                **({"unchained": st["unchained"]} if st["unchained"] else {}),
+                "broken": st["broken"][:10],
+                **({"more": len(st["broken"]) - 10} if len(st["broken"]) > 10 else {})}
+
+    @classmethod
+    def verify(cls, events: list[dict], *, prev: str | None = None) -> dict:
+        """Check records against their own digests and against each other. `prev` is the digest
+        the first one must follow, when the caller knows it; a window that starts mid-chain
+        does not, so the first link is taken on trust and every later one is checked."""
+        st = cls._walk(prev)
+        for e in events:
+            cls._step(st, e)
+        return cls._verdict(st, len(events))
+
+    def audit(self) -> dict:
+        """Walk every record on disk and check the chain from the first line to the last.
+
+        This is the question `complete` was never able to answer: not "did I serve you
+        everything I have" but "is what is on disk still what was written".
+        """
+        st, records, files = self._walk(self.GENESIS), 0, []
+        for f in self._files():
+            files.append(f.name)
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    for n, line in enumerate(fh, 1):
+                        if not line.strip():
+                            continue
+                        try:
+                            e = json.loads(line)
+                        except json.JSONDecodeError:
+                            st["broken"].append({"file": f.name, "line": n, "kind": "unreadable",
+                                                 "problem": "not a JSON record"})
+                            st["prev"] = None
+                            continue
+                        records += 1
+                        self._step(st, e)
+            except OSError as e:
+                st["broken"].append({"file": f.name, "kind": "unreadable", "problem": f"unreadable ({e})"})
+                st["prev"] = None
+        return {**self._verdict(st, records), "files": files, "head": self.head,
+                "writeErrors": self.write_errors,
+                "note": "tamper-evident, not tamper-proof: whoever can write these files can "
+                        "rewrite the chain with them"}
+
     def window(self, seq: int, limit: int = 100) -> dict:
-        """Events with seq > `seq`. Falls back to disk when the cursor is older than memory."""
+        """Events with seq > `seq`. Falls back to disk when the cursor is older than memory.
+
+        `complete` says whether this is everything after the cursor; `verified` says whether
+        the records still match their own digests and each other. Served from memory, verified
+        says nothing about the files -- `audit()` is what reads those.
+        """
         with self._lock:
             oldest = self.recent[0]["seq"] if self.recent else self.seq + 1
             if seq + 1 >= oldest:
-                return {"events": [e for e in self.recent if e["seq"] > seq][:limit], "seq": self.seq, "complete": True}
+                events = [e for e in self.recent if e["seq"] > seq][:limit]
+                v = self.verify(events)
+                return {"events": events, "seq": self.seq,
+                        "complete": self.write_errors == 0 and not self._missing(v),
+                        "verified": {**v, "of": "memory"}}
         events, first_seen = [], None
         for f in self._files():
             try:
-                for line in f.read_text(errors="replace").splitlines():
+                for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
                     try:
                         e = json.loads(line)
                     except json.JSONDecodeError:
@@ -106,11 +227,18 @@ class RunLog:
                     if e.get("seq", 0) > seq:
                         events.append(e)
                         if len(events) >= limit:
-                            return {"events": events, "seq": self.seq, "complete": first_seen is not None and first_seen <= seq + 1}
+                            v = self.verify(events)
+                            return {"events": events, "seq": self.seq,
+                                    "complete": (first_seen is not None and first_seen <= seq + 1
+                                                 and not self._missing(v)),
+                                    "verified": {**v, "of": "disk"}}
             except OSError:
                 continue
+        v = self.verify(events)
         return {"events": events, "seq": self.seq,
-                "complete": self.write_errors == 0 and (first_seen is None or first_seen <= seq + 1)}
+                "complete": (self.write_errors == 0 and (first_seen is None or first_seen <= seq + 1)
+                             and not self._missing(v)),
+                "verified": {**v, "of": "disk"}}
 
     def since(self, seq: int, limit: int = 100) -> list[dict]:
         return self.window(seq, limit)["events"]
@@ -160,7 +288,7 @@ class Run:
         self.name, self.script = name, script
         self.dir = home / "runs" / self.id
         self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / "script.py").write_text(script)
+        (self.dir / "script.py").write_text(script, encoding="utf-8")
         self.state, self.started, self.finished = "running", time.time(), None
         self.error: str | None = None
         self.out = RunOutput(self.dir / "stdout.txt")
@@ -175,10 +303,10 @@ class Run:
                 "error": self.error, "dir": str(self.dir), "pid": os.getpid()}
 
     def save(self):
-        (self.dir / "meta.json").write_text(json.dumps(self.meta(), indent=1))
+        (self.dir / "meta.json").write_text(json.dumps(self.meta(), indent=1), encoding="utf-8")
 
     def files(self) -> list[str]:
-        return sorted(str(p.relative_to(self.dir)) for p in self.dir.rglob("*") if p.is_file())
+        return sorted(p.relative_to(self.dir).as_posix() for p in self.dir.rglob("*") if p.is_file())
 
 
 class PlanTruncated(BaseException):
@@ -204,6 +332,106 @@ def _virtual_time_module(plan: "PlanLab") -> types.ModuleType:
     return vt
 
 
+# ------------------------------------------------------------------ what a script may reach ---- #
+#
+# A run script is code the host executes (SPEC 7.6), and the host is the trusted side of the protocol, so a
+# script written by a model sits inside the trust boundary while its author does not. The device objects the
+# SDK hands a *person* carry handles that go past the gates on purpose -- the in-process driver, the untracked
+# transport call, a Lab with an approver of its own -- and a script picks them up with one attribute lookup.
+# These facades hand a script the audited protocol surface instead. That is an API boundary, not a sandbox:
+# it removes the handles rather than the capability, so what it buys is that the gated path is the only one a
+# script is given, and that reaching for the others is refused in terms that name the right call and written
+# to the run log. Containing code that goes looking anyway needs a process boundary: host the devices out of
+# process (`mhp node`, http targets, so this process holds no driver at all) or run the bridge
+# with --no-scripts.
+DEVICE_API = ("read", "read_all", "write", "invoke", "run_method", "wait", "wait_until", "status", "pause",
+              "resume", "cancel", "estop", "reset", "acquire", "release", "describe", "resources", "resource",
+              "limits", "methods", "method", "method_find", "method_diff", "method_save", "method_retire",
+              "call", "subscribe")
+LAB_API = ("find", "estop_all", "shutdown_all", "describe_all", "planning")
+
+_INSTEAD = {
+    "driver": "the in-process driver object. on_write and on_invoke are vendor hooks, called only after the "
+              "gates have passed, so reaching them skips limits, interlocks, device state, the lease and the "
+              "audit record. Use dev.write(name, value) and dev.invoke(name, **params).",
+    "_raw_call": "the untracked transport call: it skips the host's approval handling and the audit record. "
+                 "Use dev.call(method, params).",
+    "_send": "the transport itself. Use dev.call(method, params).",
+    "child": "a Lab with hooks of its own; a Lab without an approver passes `approved: true` through "
+             "unchecked, and one without an observer records nothing. Use the lab you were given.",
+    "approver": "the host's confirmation channel. A script cannot answer for a person; ask through the "
+                "device (approval=confirm is put to them by the host).",
+    "observer": "the audit hook. What a run does is recorded whether the script likes it or not.",
+}
+
+_BEHIND: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()      # facade -> (wrapped object, blocked hook)
+
+
+class _ScriptFacade:
+    """Delegates the calls in ``_API`` and refuses everything else.
+
+    The wrapped object is held outside the facade, so the facade carries no attribute that leads back to it
+    and every name the API does not list reaches ``__getattr__``.
+    """
+
+    _API: tuple[str, ...] = ()
+
+    def __init__(self, wrapped, blocked):
+        _BEHIND[self] = (wrapped, blocked)
+
+    def __getattr__(self, attr):
+        if attr.startswith("__") and attr.endswith("__"):           # Python's own lookups, not the script's
+            raise AttributeError(attr)
+        wrapped, blocked = _BEHIND[self]
+        if attr in self._API:
+            return getattr(wrapped, attr)
+        blocked(attr)
+        raise AttributeError(f"a run script cannot reach '{attr}': " +
+                             _INSTEAD.get(attr, f"a script works through the device API ({', '.join(self._API)})."))
+
+
+class ScriptDevice(_ScriptFacade):
+    """The device a script sees: the primitives, jobs, methods and leases, and no way around their gates."""
+
+    _API = DEVICE_API
+
+    @property
+    def name(self) -> str:
+        return _BEHIND[self][0].name
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+
+    def __repr__(self):
+        return f"<device {self.name}>"
+
+
+class ScriptLab(_ScriptFacade):
+    """The lab a script sees. ``lab['id']`` returns a ScriptDevice, in a run and in a plan alike."""
+
+    _API = LAB_API
+
+    def __init__(self, lab, blocked):
+        super().__init__(lab, blocked)
+        self._devices: dict[str, ScriptDevice] = {}                 # facades only; one per name, as the Lab caches
+
+    def __getitem__(self, name: str) -> ScriptDevice:
+        if name not in self._devices:
+            lab, blocked = _BEHIND[self]
+            self._devices[name] = ScriptDevice(lab[name], blocked)
+        return self._devices[name]
+
+    def __contains__(self, name: str) -> bool:
+        return name in _BEHIND[self][0]
+
+    def __repr__(self):
+        return "<lab>"
+
+
 class Runs:
     def __init__(self, lab: Lab, log: RunLog, home: Path | None = None, observer=None):
         self.lab, self.log, self.home = lab, log, home or HOME
@@ -220,13 +448,13 @@ class Runs:
             if not m.is_file():
                 continue
             try:
-                meta = json.loads(m.read_text())
+                meta = json.loads(m.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
             if meta.get("state") == "running" and not _pid_alive(meta.get("pid")):
                 meta.update(state="interrupted", error="the process running this script ended before it finished")
                 try:
-                    m.write_text(json.dumps(meta, indent=1))
+                    m.write_text(json.dumps(meta, indent=1), encoding="utf-8")
                 except OSError:
                     pass
 
@@ -235,7 +463,8 @@ class Runs:
         run = Run(name, script, self.home)
         self.runs[run.id] = run
         run.save()
-        self.log.write("run/start", run=run.id, name=name, background=background, plan=plan is not None)
+        self.log.write("run/start", run=run.id, name=name, background=background, plan=plan is not None,
+                       script_sha=hashlib.sha256(script.encode("utf-8")).hexdigest()[:12])
         own_lab = None
         if plan is not None:
             run_lab = plan
@@ -249,8 +478,11 @@ class Runs:
             k.setdefault("file", run.out)
             builtins.print(*a, **k)
 
-        env = {"lab": run_lab, "run_dir": str(run.dir), "run_id": run.id, "__name__": "__mhp_run__",
-               "__mhp_params__": dict(params or {}), "print": run_print}
+        def blocked(attr, rid=run.id):
+            self.log.write("script/blocked", run=rid, attribute=attr)
+
+        env = {"lab": ScriptLab(run_lab, blocked), "run_dir": str(run.dir), "run_id": run.id,
+               "__name__": "__mhp_run__", "__mhp_params__": dict(params or {}), "print": run_print}
         if plan is not None:
             vt = _virtual_time_module(plan)
             real_import = builtins.__import__
@@ -310,7 +542,7 @@ class Runs:
             for d in sorted(base.iterdir()):
                 if d.name not in live and (d / "meta.json").is_file():
                     try:
-                        live[d.name] = json.loads((d / "meta.json").read_text())
+                        live[d.name] = json.loads((d / "meta.json").read_text(encoding="utf-8"))
                     except json.JSONDecodeError:
                         pass
         return sorted(live.values(), key=lambda m: m["started"], reverse=True)[:50]
@@ -337,7 +569,7 @@ class Runs:
         if not p.is_file():
             raise FileNotFoundError(rel)
         if p.suffix.lower() in (".txt", ".md", ".csv", ".json", ".py", ".yaml", ".yml", ".log", ".jsonl"):
-            with open(p, errors="replace") as f:
+            with open(p, encoding="utf-8", errors="replace") as f:
                 text = f.read(cap + 1)
             return {"run": d.name, "path": rel, "text": text[:cap], "truncated": len(text) > cap}
         return {"run": d.name, "path": rel, "bytes": p.stat().st_size, "text": None, "note": "binary; copy from " + str(p)}
@@ -348,6 +580,8 @@ def _pid_alive(pid) -> bool:
         return False
     if pid == os.getpid():
         return False                                # a run from this process not in self.runs did not survive
+    if os.name == "nt":                             # signal 0 is CTRL_C_EVENT on Windows, not a probe
+        return _windows_pid_alive(pid)
     try:
         os.kill(pid, 0)
         return True
@@ -355,6 +589,26 @@ def _pid_alive(pid) -> bool:
         return False
     except PermissionError:
         return True
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+    if not 0 < pid <= 0xFFFFFFFF:                   # a DWORD; ctypes would silently truncate anything larger
+        return False
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    h = k32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return ctypes.get_last_error() == 5         # ERROR_ACCESS_DENIED: it exists; any other failure: it is gone
+    try:
+        code = wintypes.DWORD()
+        return bool(k32.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259     # STILL_ACTIVE
+    finally:
+        k32.CloseHandle(h)
 
 
 # --------------------------------------------------------------------- plan ---- #

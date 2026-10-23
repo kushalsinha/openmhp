@@ -109,7 +109,8 @@ def run(dev) -> dict:
     safety = d.get("safety", {}) or {}
     add("Safe", "declares an emergency stop", safety.get("estop") is True or safety.get("estop_kind"),
         str(safety.get("estop") or safety.get("estop_kind")))
-    add("Safe", "declares a watchdog window", bool(safety.get("watchdog_s")), str(safety.get("watchdog_s")))
+    add("Safe", "declares a watchdog window", bool(safety.get("watchdog_s")),
+        f"{safety['watchdog_s']}s, then {safety.get('watchdog_action') or 'estop'}" if safety.get("watchdog_s") else "none")
     ok, detail = _probe(dev.acquire, 30)
     add("Safe", "session/acquire grants a lease", ok, detail)
     if ok:

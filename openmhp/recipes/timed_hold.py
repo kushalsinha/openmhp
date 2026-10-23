@@ -8,8 +8,8 @@ PARAMS = {"device": None, "setting": "target_temperature", "signal": "block_temp
 import time, csv, os
 dev = lab[PARAMS["device"]] if PARAMS["device"] else lab[lab.find("temperature hold", state="idle")[0]["id"]]
 path = os.path.join(run_dir, "readings.csv")
-with dev, open(path, "w", newline="") as f:
-    w = csv.writer(f); w.writerow(["t_s", PARAMS["signal"]])
+with dev, open(path, "w", newline="", encoding="utf-8") as f:
+    w = csv.writer(f); w.writerow(["t_s", PARAMS["signal"], "reading"])
     t0 = time.time()
     try:
         dev.write(PARAMS["setting"], PARAMS["setpoint"])
@@ -17,7 +17,8 @@ with dev, open(path, "w", newline="") as f:
                        timeout=PARAMS["reach_timeout_s"], poll=1, label=f"within {PARAMS['tolerance']} of {PARAMS['setpoint']}")
         reached = time.time()
         while time.time() - reached < PARAMS["hold_minutes"] * 60:
-            w.writerow([round(time.time() - t0, 1), dev.read(PARAMS["signal"])]); f.flush()
+            r = dev.call("signals/read", {"names": [PARAMS["signal"]]})     # the id makes each row citable
+            w.writerow([round(time.time() - t0, 1), r["values"][PARAMS["signal"]], r.get("id")]); f.flush()
             time.sleep(PARAMS["log_every_s"])
     finally:
         # restore the safe setpoint on success and on failure; report if that is impossible

@@ -100,5 +100,7 @@ actions:
 safety:
   estop: true
   interlocks: [connected]
-  watchdog_s: null
-  notes: E-stop stops the channel, which opens the cell circuit. No watchdog; electrolysis runs for up to hours unattended.
+  watchdog_s: 300
+  watchdog_action: release
+  notes: E-stop stops the channel, which opens the cell circuit. Electrolysis runs for up to hours unattended, so
+    five minutes of silence from the controller releases the lease and reports it; the cell keeps running.

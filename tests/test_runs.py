@@ -168,6 +168,27 @@ def test_safety_card_registry_and_sim_twin():
     assert len(TOOLS) == 11
 
 
+def test_names_use_forward_slashes_on_every_os():
+    """Resource and run file names are protocol data, not local paths: DEVICE.md, the validator and agents write
+    them with '/'. Built with str(), Windows reported references\\protocols.md, so the validator and the safety
+    card called files missing that were there."""
+    from openmhp.package import load_package
+    from openmhp.validate import validate_path
+    pkg = "openmhp/devices/thermocycler-01"
+    resources = load_package(pkg).resources
+    assert "references/protocols.md" in resources and "scripts/pcr.py" in resources
+    assert not [r for r in resources if "\\" in r]
+    v = validate_path(pkg)
+    assert v["ok"], v["errors"]
+    b = fresh_bridge()
+    res = b.call_tool("mhp_run", {"script": "import os\nos.makedirs(os.path.join(run_dir, 'plots'))\n"
+                                            "open(os.path.join(run_dir, 'plots', 'trace.csv'), 'w').close()"})
+    assert res["ok"] and res["files"] == ["plots/trace.csv"], res
+    rid = res["run"]["id"]
+    assert "plots/trace.csv" in b.call_tool("mhp_data", {"op": "list", "run": rid})["files"]
+    assert b.call_tool("mhp_data", {"op": "read", "run": rid, "path": "plots/trace.csv"})["text"] == ""
+
+
 def test_mcp_surface():
     b = fresh_bridge()
     init = b.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {"elicitation": {}}}})["result"]

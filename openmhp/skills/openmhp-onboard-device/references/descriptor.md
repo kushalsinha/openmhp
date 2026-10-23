@@ -14,7 +14,7 @@ Served by `device/describe`. Authored in YAML or JSON. Every object may carry `n
 | `actions[]` | `name`, `duration` (short, long), `approval`, `interlocks`, `params` (name → description), `limits` (param → [min,max]), `examples` (list of param objects), `concurrent` |
 | `approval` | `auto` (agent may act), `confirm` (needs `approved: true` after a human said yes), `forbid` (never agent-operated; still listed so the agent knows why) |
 | `interlocks` | names of boolean signals that must read true at call time |
-| `safety` | `estop` (bool), `interlocks` (all interlock signals), `watchdog_s`, `notes` |
+| `safety` | `estop` (bool), `interlocks` (all interlock signals), `watchdog_s`, `watchdog_action` (`estop` default, or `release`), `notes` |
 | other top-level keys | allowed and preserved, e.g. `locations` for a robot arm |
 
 Gate order enforced by every driver on write/invoke: state → approval → interlocks → limits → lease → busy.
