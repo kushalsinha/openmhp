@@ -998,6 +998,89 @@ def test_a_prose_parameter_shape_still_loads_and_is_simply_unchecked():
     assert d.invoke("run", dry_run=True, steps=[{"temp": 200}])["state"] == "dryRun"
 
 
+def test_an_instrument_records_what_was_done_to_it_whoever_asked():
+    """Only the MCP bridge kept a run log, and the client's audit hook does nothing without an
+    observer, which only the bridge passes. So the same write left a full record through one
+    control surface and no record at all through the other two, or through a plain HTTP
+    request. The instrument now keeps its own, beside its job records."""
+    import socket
+
+    from openmhp.transport import serve_http
+
+    def oven(did, **kw):
+        return BoundDriver(device={"id": did, "class": "hotplate"},
+                           signals=[Signal("temperature", lambda: 22.0)],
+                           settings=[Setting("target", lambda v: None, limits={"min": 4, "max": 105})],
+                           estop=lambda: None, **kw)
+
+    def record(did):
+        return RunLog(HOME, f"records/{did}").window(0, limit=50)["events"]
+
+    # 1. the SDK, with no observer of any kind
+    sdk = LocalDevice(oven("sdk-01"))
+    sdk.read("temperature")                                    # reads stay out: they are the caller's
+    sdk.write("target", 80)
+    expect(LimitViolation.code, lambda: sdk.write("target", 300))
+    sdk.estop("smoke")
+    rows = record("sdk-01")
+    assert [r["kind"] for r in rows] == ["write", "refused", "estop"], rows
+    assert rows[0]["value"] == 80 and rows[0]["by"] == sdk.session and rows[0]["device"] == "sdk-01"
+    assert rows[1]["op"] == "write" and rows[1]["code"] == LimitViolation.code
+    assert rows[2]["reason"] == "smoke"
+    assert not any(r["kind"] == "read" for r in rows)
+
+    # 2. a plain HTTP request, no SDK at all
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    threading.Thread(target=lambda: serve_http(oven("http-01"), port=port), daemon=True).start()
+    for _ in range(50):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=1).read()
+            break
+        except OSError:
+            time.sleep(0.1)
+
+    def post(method, params):
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/rpc", method="POST",
+                                     data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
+                                                      "params": params}).encode(),
+                                     headers={"Content-Type": "application/json", "X-MHP-Client": "curl"})
+        return json.loads(urllib.request.urlopen(req, timeout=5).read())
+
+    post("signals/read", {"names": ["temperature"]})
+    post("settings/write", {"name": "target", "value": 60})
+    assert "error" in post("settings/write", {"name": "target", "value": 500})
+    rows = record("http-01")
+    assert [(r["kind"], r["by"]) for r in rows] == [("write", "curl"), ("refused", "curl")], rows
+    assert rows[0]["value"] == 60
+
+    # 3. a watchdog trip and a latched fault: safety with no request behind it
+    wd = oven("wd-01", safety={"estop": True, "watchdog_s": 0.1})
+    wd.rpc("session/acquire", {"ttl": 60}, "controller")
+    time.sleep(0.6)
+    kinds = [(r["kind"], r.get("by")) for r in record("wd-01")]
+    assert ("lease", "controller") in kinds and ("estop", "watchdog") in kinds, kinds
+    wd.close()
+
+    broken = BoundDriver(device={"id": "fault-01", "class": "generic"}, estop=lambda: None,
+                         settings=[Setting("x", fails(OSError("bus error")), limits={"min": 0, "max": 9})])
+    expect(DeviceFault.code, lambda: LocalDevice(broken).write("x", 1))
+    rows = record("fault-01")
+    assert [r["kind"] for r in rows] == ["fault", "refused"], rows      # the fault is latched first
+    assert "bus error" in rows[0]["reason"]
+
+    # 4. and the host can read an instrument's record without going near the files
+    b = Bridge(home=HOME)
+    b.lab.targets["oven"] = "local:probe.rec"
+    register("local:probe.rec", oven("bridge-01"))
+    b.call_tool("mhp_write", {"device": "oven", "name": "target", "value": 55})
+    own = b.call_tool("mhp_data", {"op": "record", "device": "bridge-01"})
+    assert [r["kind"] for r in own["events"]] == ["write"] and own["device"] == "bridge-01"
+    assert b.call_tool("mhp_data", {"op": "record", "device": "nobody"})["note"].startswith("no record")
+
+
 def test_every_error_carries_a_device_anchored_timestamp():
     """A client must be able to align a refusal with its own receipt time."""
     import time

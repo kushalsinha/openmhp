@@ -12,7 +12,9 @@ output file. Nothing redirects the process's stdout, which the MCP transport own
 The *run log* is an append-only JSONL file per day under ~/.openmhp/log/, with a
 sequence number that continues across restarts and each record chained to the one
 before it, so an edit after the fact is detectable. Every call a direct tool or a
-run script makes through the lab's clients is recorded, with the run id.
+run script makes through the lab's clients is recorded, with the run id. The same
+class keeps each instrument's own record under ~/.openmhp/records/<device>/, which
+the driver writes whoever asked and over whatever transport (SPEC 3.5).
 
 *Plan mode* executes a script against a PlanLab: reads are real, every write and
 invoke is a dry run through the driver's gates, other mutating requests are
@@ -65,8 +67,8 @@ class RunLog:
 
     GENESIS = "0" * 32                               # what the first record of all follows
 
-    def __init__(self, home: Path | None = None):
-        self.dir = (home or HOME) / "log"
+    def __init__(self, home: Path | None = None, subdir: str = "log"):
+        self.dir = (home or HOME) / subdir
         self._lock = threading.Lock()
         self.recent: list[dict] = []                 # ring buffer for fast `since`
         self.write_errors = 0

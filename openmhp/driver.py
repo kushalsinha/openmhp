@@ -337,6 +337,14 @@ class _WatchdogScheduler:
 
 _WATCHDOGS = _WatchdogScheduler()
 
+# What the instrument writes to its own record, and what it calls each one. Mutations and
+# safety only: reads belong to the caller's record, not the instrument's.
+RECORDED = {"settings/write": "write", "actions/invoke": "invoke", "safety/estop": "estop",
+            "safety/reset": "reset", "safety/shutdown": "shutdown", "session/acquire": "lease",
+            "session/release": "release", "jobs/cancel": "cancel", "jobs/pause": "pause",
+            "jobs/resume": "resume", "methods/save": "method/save", "methods/delete": "method/retire",
+            "sim/fault": "sim/fault"}
+
 # Methods that never wait behind device I/O: stopping, status and lease bookkeeping.
 _UNLOCKED = {"safety/estop", "ping", "jobs/status", "jobs/list", "jobs/cancel", "jobs/pause",
              "session/acquire", "session/renew", "session/release", "device/describe", "safety/limits",
@@ -373,6 +381,7 @@ class Driver:
         self._last_seen: dict[str, float] = {}
         self._closed = False
         self._methods = None
+        self._own_record = None                      # the instrument's own record, opened on first write
         if self.package_dir and self.package is None:
             from .package import load_package
             self.attach_package(load_package(self.package_dir))
@@ -827,6 +836,16 @@ class Driver:
             with self._state_lock:
                 self.fault_reason = f"{reason}; safe-state hook failed: {type(e).__name__}: {e}"
 
+    def _record_event(self, kind: str, **fields) -> None:
+        """A safety event no request asked for: a watchdog trip, a hardware latch, a fault."""
+        log = self._record_log()
+        if log is None:
+            return
+        try:
+            log.write(kind, device=(self.descriptor.get("device") or {}).get("id"), **fields)
+        except Exception:                          # noqa: BLE001
+            pass
+
     def _latch_fault(self, reason: str) -> None:
         with self._state_lock:
             if self.state == "estop":
@@ -837,6 +856,7 @@ class Driver:
         except Exception as e:                     # noqa: BLE001
             reason = f"{reason}; safe-state hook failed: {type(e).__name__}: {e}"
             self.fault_reason = reason
+        self._record_event("fault", reason=reason)
         self.notify("safety/fault", {"reason": reason})
 
     def _recompute_state_locked(self) -> None:
@@ -851,10 +871,22 @@ class Driver:
         if handler is None:
             raise MethodNotFound(f"unknown method {method}")
         self._touch(client)
-        if method in _UNLOCKED:
-            return handler(params, client)
-        with self._lock:
-            return handler(params, client)
+        try:
+            if method in _UNLOCKED:
+                result = handler(params, client)
+            else:
+                with self._lock:
+                    result = handler(params, client)
+        except Exception as e:                     # noqa: BLE001  recorded, then re-raised unchanged
+            if method in RECORDED:
+                self._record(method, params, client, error=(
+                    {"code": e.code, "message": e.message, **({"data": e.data} if e.data is not None else {})}
+                    if isinstance(e, MHPError) else
+                    {"code": -32603, "message": f"{type(e).__name__}: {e}"}))
+            raise
+        if method in RECORDED:
+            self._record(method, params, client, result=result)
+        return result
 
     # lifecycle
     def rpc_initialize(self, p, client):
@@ -1077,12 +1109,67 @@ class Driver:
     # on disk is not presented as what the instrument reported.
     JOB_HISTORY = 50                               # most recent records kept per device
 
-    def _job_dir(self) -> Path | None:
+    def _device_dir(self, kind: str) -> Path | None:
         did = (self.descriptor.get("device") or {}).get("id")
         if not did or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(did)):
             return None                            # no stable id: nothing safe to name a folder
         home = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp"))
-        return home / "jobs" / str(did)
+        return home / kind / str(did)
+
+    def _job_dir(self) -> Path | None:
+        return self._device_dir("jobs")
+
+    # ---- the instrument's own record ------------------------------------- #
+    #
+    # The run log belongs to the host, and only the MCP bridge keeps one: the same write from
+    # the CLI, from an SDK script or from a plain HTTP request left no trace anywhere, because
+    # the client's audit hook does nothing unless the caller passed an observer and only the
+    # bridge does. A record that exists only when the caller chooses to keep it is not a
+    # record, so the instrument keeps its own, beside its job records, of everything that was
+    # done to it and every refusal -- whoever asked, over whatever transport.
+    #
+    # Reads are not in it. They are high-volume (a wait_until loop polls once a second) and
+    # they are the caller's business; what was *done* to the instrument is the instrument's.
+    # The host's log keeps both, from its own side, and the two are separate views on purpose.
+
+    def _record_log(self):
+        """This device's record, opened on first use. None when the device has no stable id."""
+        if self._own_record is None:
+            d = self._device_dir("records")
+            if d is None:
+                return None
+            from .runs import RunLog                # deferred: runs imports the client, which imports this
+            self._own_record = RunLog(d.parent, d.name)
+        return self._own_record
+
+    def _record(self, method: str, params: dict, client: str, *, result=None, error=None) -> None:
+        log = self._record_log()
+        if log is None:
+            return
+        kind = RECORDED[method]
+        ev = {"device": (self.descriptor.get("device") or {}).get("id"), "by": client}
+        for key, into in (("name", "name"), ("value", "value"), ("id", "job"), ("reason", "reason")):
+            if params.get(key) is not None:
+                ev[into] = params[key]
+        if method == "actions/invoke":
+            ev["params"] = params.get("params") or None
+            for k in ("method", "project", "compound"):        # provenance for a saved method
+                if params.get(k):
+                    ev[k] = params[k]
+            job = (result or {}).get("job") if isinstance(result, dict) else None
+            if job:
+                ev["job"] = job.get("id")
+        if params.get("dryRun") is True:
+            ev["dry_run"] = True
+        if params.get("approved") is True:
+            ev["approved"] = True                  # the flag this device honoured, and from whom
+        try:
+            if error is not None:
+                log.write("refused", op=kind, code=error["code"], message=error["message"], **ev)
+            else:
+                log.write(kind, ok=True, **ev)
+        except Exception:                          # noqa: BLE001
+            pass                                   # never let bookkeeping break an instrument
 
     def _persist_job(self, job: Job) -> None:
         d = self._job_dir()
@@ -1268,10 +1355,13 @@ class Driver:
         software cannot clear it, so an agent is told plainly what a person has to do."""
         with self._state_lock:
             self._enter_estop_locked(source="hardware", clearable=False, clearance=clearance)
+        self._record_event("estop", by="hardware", reason=reason, clearable=False, clearance=clearance)
         self.notify("safety/estop", {"by": "hardware", "reason": reason, "stopped": True,
                                      "clearable": False, "clearance": clearance})
 
     def _run_stop_hook(self, by: str, reason: str | None) -> dict:
+        if by == "watchdog":                       # no request behind it, so rpc() never sees it
+            self._record_event("estop", by=by, reason=reason)
         stop_error = None
         try:
             self.on_estop()

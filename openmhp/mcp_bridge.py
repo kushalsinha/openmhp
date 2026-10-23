@@ -212,19 +212,21 @@ TOOLS = [
      "description": ("Runs and their files. op='runs' lists runs (newest first, with state). op='list' lists files a run saved to its "
                      "run_dir (readings.csv, images, logs, events.jsonl: what its devices pushed while it ran). op='read' returns a text "
                      "file (capped) from a run: run='latest' or an id, path='stdout.txt' for the script output, 'readings.csv' for data. "
-                     "op='log' returns the lab's run log entries, each with the digest of the one before it; the answer says "
-                     "whether anything is missing (complete) and whether what it served still matches what was written "
-                     "(verified). op='audit' checks the whole record on disk end to end and names the first record that "
-                     "does not follow. op='updates' returns what a device PUSHED recently without being asked: "
+                     "op='log' returns the lab's run log entries -- what THIS host did -- each with the digest of the one "
+                     "before it; the answer says whether anything is missing (complete) and whether what it served still "
+                     "matches what was written (verified). op='audit' checks the whole record on disk end to end and names "
+                     "the first record that does not follow. op='record' device=<id> returns the INSTRUMENT's own record of "
+                     "what was done to it and what it refused, whoever asked -- a write from the CLI or a script is in there "
+                     "and not in the run log. op='updates' returns what a device PUSHED recently without being asked: "
                      "signal updates (a GC's last_result after every injection), job progress and completions; device=<id>, "
                      "optional signal=<name>, since=<ts>. Use it in an adaptive loop to see each new result before deciding the next run."),
      "inputSchema": {"type": "object", "properties": {
-         "op": {"type": "string", "enum": ["runs", "list", "read", "log", "audit", "updates"]},
+         "op": {"type": "string", "enum": ["runs", "list", "read", "log", "audit", "record", "updates"]},
          "device": {"type": "string", "description": "updates: device id"}, "signal": {"type": "string", "description": "updates: only this signal"},
          "run": {"type": "string", "description": "run id or 'latest'"}, "path": {"type": "string"},
          "since": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["op"]},
      "input_examples": [{"op": "runs"}, {"op": "list", "run": "latest"}, {"op": "read", "run": "latest", "path": "stdout.txt"},
-                        {"op": "read", "run": "20260909-1402-a1b2", "path": "readings.csv"}, {"op": "log", "since": 0, "limit": 50}, {"op": "audit"},
+                        {"op": "read", "run": "20260909-1402-a1b2", "path": "readings.csv"}, {"op": "log", "since": 0, "limit": 50}, {"op": "audit"}, {"op": "record", "device": "tc-01"},
                         {"op": "updates", "device": "gc-01", "signal": "last_result", "limit": 5}]},
     {"name": "mhp_method",
      "description": ("Methods: the instrument's own named, versioned parameter sets (an HPLC or GC method, a PCR program), kept on "
@@ -682,6 +684,13 @@ class Bridge:
             return self.log.window(int(a.get("since", 0)), int(a.get("limit", 100)))
         if op == "audit":
             return self.log.audit()
+        if op == "record":
+            from .runs import RunLog
+            own = RunLog(self.home, f"records/{safe_id(a['device'])}")
+            w = own.window(int(a.get("since", 0)), int(a.get("limit", 100)))
+            return {**w, "device": a["device"], **({} if w["events"] else
+                    {"note": "no record on this machine; an instrument keeps its own where it is hosted, "
+                             "so for a device served over HTTP the record is on that bench computer"})}
         if op == "updates":
             self._device(a["device"])                      # connecting is what starts the relay
             return self.updates(a["device"], a.get("signal"), float(a.get("since", 0) or 0), int(a.get("limit", 20)))
