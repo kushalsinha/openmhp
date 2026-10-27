@@ -55,6 +55,7 @@ Run the test suite:
 python tests/test_adapters.py
 python tests/test_runs.py
 python tests/test_safety_gates.py
+python tests/test_inclusion.py
 python tests/test_methods.py
 ```
 
@@ -69,6 +70,8 @@ python tests/test_methods.py
 - Fail closed when hardware state or command outcome is uncertain.
 - Document the external system and versions used for an adapter change. Tests should use
   injected fakes when real hardware is not available, and clearly say what was not exercised.
+- A device package for `supported-devices/` must pass `mhp inclusion <folder>` in both tiers.
+  Run it before opening the PR; `tests/test_inclusion.py` runs it over every shipped package.
 - Keep commits focused and describe validation in the pull request.
 
 ## Building your own lab integration

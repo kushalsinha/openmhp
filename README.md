@@ -363,6 +363,7 @@ Run the test suite:
 python tests/test_adapters.py
 python tests/test_runs.py
 python tests/test_safety_gates.py
+python tests/test_inclusion.py
 python tests/test_methods.py
 ```
 
