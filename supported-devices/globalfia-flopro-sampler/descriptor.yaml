@@ -1,0 +1,51 @@
+device:
+  notes: >
+    Automated reactor sampler with dilution and a 54-vial archive. Each request runs one of the
+    owner's FloZF sequences, chosen by destination, with the numbers given here.
+
+physical:
+  notes: Sample probes sit in reactors; diluent reservoir 300 mL; sample 10-50 uL; diluted sample up to 1.8 mL.
+
+signals:
+  - {name: connected, type: boolean, notes: True while FloZF's server sequence has polled within the last few poll intervals.}
+  - {name: busy, type: boolean, notes: True from the moment FloZF picks up a job until it reports DONE.}
+  - {name: vials_used, type: array, notes: Archive vials filled by jobs from this package since it started.}
+  - {name: last_sample, type: object}
+
+settings: []
+
+actions:
+  - name: take_sample
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      destination: {type: string, limits: {enum: [archive, inject, detector]}}
+      probe: {type: integer, limits: {min: 1, max: 4}, notes: Reactor probe to sample from.}
+      dilution_1: {type: number, limits: {min: 1, max: 10}, notes: Primary dilution factor.}
+      dilution_2: {type: number, limits: {min: 1, max: 100}, notes: Secondary dilution factor; 1 = none.}
+      vial: {type: integer, limits: {min: 1, max: 54}, nullable: true, notes: Archive vial; required for destination archive, ignored otherwise.}
+      label: {type: string, nullable: true, notes: Sample name for the record.}
+    required: [destination, probe, dilution_1, dilution_2]
+    notes: Queued for FloZF's next poll; finishes when FloZF reports DONE. Cancelling only works before FloZF picks the job up.
+    examples:
+      - {destination: archive, probe: 1, dilution_1: 5, dilution_2: 20, vial: 3, label: "reactor1_t30min"}
+      - {destination: inject, probe: 2, dilution_1: 10, dilution_2: 1}
+  - name: rinse
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    notes: Runs the owner's rinse sequence (code in config.json).
+  - name: stop_server
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Tells FloZF's server sequence to leave its loop. A person restarts it in FloZF.
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 300
+  watchdog_action: release
+  notes: "E-stop is not instantaneous. It latches here and this package stops answering FloZF; FloZF aborts at its next CHECK step (seconds apart in a sequence built as in references/flozf_server_sequence.md), and the abort runs FloZF's stop sequence, which turns the pumps off. Without CHECK steps it acts only at the next POLL, after the running sequence. A controller silent for 5 minutes loses its lease; a sequence already running finishes. Reset after a person has restarted mhp_server in FloZF."

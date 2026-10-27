@@ -1,0 +1,63 @@
+device:
+  notes: >
+    Analytical HPLC/UPLC under Empower 3. Runs injection sample sets through the Empower Web API on
+    one node and chromatographic system. Empower keeps methods, audit trail and results.
+
+physical:
+  notes: Solvent delivery up to the system's pressure limit (set in the instrument method). Flammable and toxic mobile phases.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Empower Web API accepts this package's login.}
+  - {name: system_status, type: object, notes: "Empower's status entries for the configured node and system (name: value)."}
+  - {name: busy, type: boolean, notes: True while a sample set started here is running.}
+  - {name: last_result, type: object}
+
+settings: []
+
+actions:
+  - name: list_methods
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Lists the project's instrument methods, method sets and sample set methods, and the plate types Empower knows.
+  - name: run_samples
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    params:
+      samples:
+        type: array
+        notes: One entry per sample; a sample with injections > 1 becomes that many sample set lines.
+        items:
+          type: object
+          required: [name, vial, injection_volume_ul, method]
+          properties:
+            name: {type: string}
+            vial: {type: string, notes: "Empower vial position, e.g. '1:A,1'"}
+            injection_volume_ul: {type: number, unit: uL, limits: {min: 0.1, max: 100}, notes: Also checked against this system's range in config.json.}
+            method: {type: string, notes: Empower method set to inject with.}
+            injections: {type: integer, limits: {min: 1, max: 10}, default: 1}
+      plates:
+        type: object
+        nullable: true
+        notes: "{plate position: plate type}. Omitted or null uses the plates in config.json; the result reports which were used."
+      run_mode: {type: string, limits: {enum: [RunOnly, RunAndProcess, RunAndReport]}, default: RunAndProcess}
+      sample_set_name: {type: string, nullable: true, notes: Omitted or null names it after the job; the result reports the name.}
+      audit_comment: {type: string, nullable: true, notes: Omitted or null records the OpenMHP job id.}
+    required: [samples]
+    notes: >
+      Creates a sample set method from the samples, starts it on the configured node and system,
+      and follows the system status until it is idle. Each sample's injection volume and count are
+      checked against the limits in config.json before anything is written to Empower.
+    examples:
+      - samples: [{name: "std_1", vial: "1:A,1", injection_volume_ul: 5, method: "Assay_C18"},
+                  {name: "batch12_t30", vial: "1:A,2", injection_volume_ul: 5, method: "Assay_C18", injections: 2}]
+        run_mode: RunAndProcess
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 300
+  watchdog_action: release
+  notes: No remote stop through the Web API calls used here. A person stops a run in Empower Run Samples; the instrument method's own pressure limits protect the column. A controller silent for 5 minutes loses its lease; the sample set keeps running.
