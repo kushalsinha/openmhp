@@ -504,7 +504,14 @@ def package_folder(target: str) -> str | None:
 
 def package_fingerprint(folder: str | Path) -> str:
     """What the driver enforces: descriptor, instructions, code, references and scripts. The `methods/`
-    store is written by the device itself (SPEC 4.5) and is not part of the fingerprint."""
+    store is written by the device itself (SPEC 4.5) and is not part of the fingerprint.
+
+    Over the files' *contents*. Size and modification time are both chosen by whoever writes the
+    file, so a fingerprint taken from them says only that nothing changed carelessly: an edit that
+    keeps the byte count and puts the timestamp back -- two lines around the write -- left the
+    descriptor loosened and the pin still matching. Reading the bytes costs a few milliseconds for
+    a package of this size, once per load, and is what makes the pin mean what it says.
+    """
     h = hashlib.sha256()
     root = Path(folder)
     for p in sorted(root.rglob("*")):
@@ -512,8 +519,14 @@ def package_fingerprint(folder: str | Path) -> str:
         if rel and rel[0] == "methods":
             continue
         if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith("."):
-            st = p.stat()
-            h.update(f"{p.relative_to(root).as_posix()}:{st.st_size}:{st.st_mtime_ns};".encode())
+            h.update(f"{p.relative_to(root).as_posix()}:".encode())
+            try:
+                with open(p, "rb") as f:
+                    for chunk in iter(lambda: f.read(1 << 16), b""):
+                        h.update(chunk)
+            except OSError as e:
+                h.update(f"<unreadable:{type(e).__name__}>".encode())   # unreadable is itself a change
+            h.update(b";")
     return h.hexdigest()[:16]
 
 
@@ -543,6 +556,25 @@ def _load_inprocess(target: str) -> Driver:
         drv = load_driver(folder, sim=sim)
         _inprocess[target] = (drv, fp)
         return drv
+
+
+def loaded_package_folders() -> list[Path]:
+    """The folders every in-process device is currently loaded from, resolved.
+
+    A device package *is* what the runtime enforces, so these folders are not ordinary files
+    to whatever the host is running: a run that writes one is rewriting a limit.
+    """
+    with _inprocess_lock:
+        targets = list(_inprocess)
+    out = []
+    for t in targets:
+        folder = package_folder(t)
+        if folder:
+            try:
+                out.append(Path(folder).resolve())
+            except (OSError, ValueError):
+                continue
+    return out
 
 
 def drop_inprocess(target: str) -> bool:
