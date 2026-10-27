@@ -44,6 +44,22 @@ def expect(code, fn):
     raise AssertionError(f"expected error {code}, but the call succeeded")
 
 
+def eventually(test, within=5.0, poll=0.02):
+    """Wait for something a background thread does, instead of sleeping long enough and hoping.
+
+    The watchdog runs on one shared scheduler thread whose sleep is set from the drivers it saw
+    when it last woke, so a newly leased device can go a quarter second before its first check.
+    A fixed sleep turns that into a test that passes on a quiet laptop and fails on a loaded CI
+    runner for the timer rather than for the watchdog.
+    """
+    deadline = time.time() + within
+    while time.time() < deadline:
+        if test():
+            return True
+        time.sleep(poll)
+    return False
+
+
 def register(target, driver):
     C._inprocess[target] = (driver, "")
 
@@ -95,8 +111,8 @@ def test_watchdog_stops_a_silent_lease_holder():
     w = drv(settings=[Setting("x", lambda v: None, limits={"min": 0, "max": 1})], safety={"watchdog_s": 0.1},
             estop=lambda: stops.append("stop"))
     w.rpc("session/acquire", {"ttl": 60}, "owner")            # a raw client that never renews
-    time.sleep(0.6)
-    assert w.state == "estop" and stops == ["stop"] and w.lease is None
+    assert eventually(lambda: w.state == "estop"), f"a silent holder was not stopped (state {w.state})"
+    assert stops == ["stop"] and w.lease is None
     w2 = drv(settings=[Setting("x", lambda v: None, limits={"min": 0, "max": 1})], safety={"watchdog_s": 0.2},
              estop=lambda: stops.append("stop2"))
     c = LocalDevice(w2)
@@ -126,8 +142,9 @@ def test_a_watchdog_can_hand_an_instrument_over_instead_of_stopping_it():
     expect(NotLeased.code, lambda: LocalDevice(d).call("actions/invoke", {"name": "electrolyse"}, _auto_lease=False))
     d.rpc("session/acquire", {"ttl": 60}, "controller")        # a controller that then dies
     jid = d.rpc("actions/invoke", {"name": "electrolyse"}, "controller")["job"]["id"]
-    time.sleep(0.7)
-    assert d.lease is None, "the dead holder kept the instrument"
+    # well inside the two-second electrolysis, so the assertions below are about a release that
+    # happened while the work carried on, not about a job that had time to finish
+    assert eventually(lambda: d.lease is None, within=1.5), "the dead holder kept the instrument"
     assert d.state == "busy" and not d.jobs[jid].cancel_requested, "the electrolysis was interrupted"
     assert stopped == [] and [(e["action"], e["stopped"], e["activeJobs"]) for e in heard] == [("release", False, [jid])]
     LocalDevice(d).acquire(ttl=60)                             # and another controller can take over
