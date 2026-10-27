@@ -708,6 +708,76 @@ def test_electrochemistry_packages_validate_and_rehearse():
     assert len(g["chromatograms"]["TCD01.ASC"]["peaks"]) == 4
 
 
+def test_chromatography_packages_validate_and_rehearse():
+    """ÄKTA avant (UNICORN OPC), Empower HPLC (Web API) and FloPro sampler (FloZF serial handshake):
+    the real drivers load without their vendor libraries, and the twins run through the gates."""
+    import os
+    from openmhp.package import load_driver
+    from openmhp.validate import validate_path
+    os.environ["OPENMHP_SIM_TIME_SCALE"] = "0.0005"
+    for name in ["cytiva-akta-avant", "waters-empower-hplc", "globalfia-flopro-sampler"]:
+        v = validate_path(f"supported-devices/{name}")
+        assert v["ok"], (name, v["errors"])
+        assert LocalDevice(load_driver(f"supported-devices/{name}")).read("connected") is False
+
+    def refused(code, fn):
+        try:
+            fn(); raise AssertionError("expected a refusal")
+        except RemoteError as e:
+            assert e.code == code, e
+
+    akta = LocalDevice(load_driver("supported-devices/cytiva-akta-avant", sim=True))
+    assert akta.read("run_state") == "Ready"
+    methods = {m["name"]: m for m in akta.wait(akta.invoke("list_methods"))["result"]["methods"]}
+    assert methods["HisTrap_5ml_purification"]["variables"]["Flow rate"]["max"] == 5.0
+    refused(-32010, lambda: akta.invoke("run_method", method="HisTrap_5ml_purification", result_name="r",
+                                        variables={"Flow rate": 9}))
+    refused(-32014, lambda: akta.invoke("run_method", method="nope", result_name="r"))
+    refused(-32012, lambda: akta.invoke("end_run"))                         # a person confirms ending a run
+    r = akta.wait(akta.invoke("run_method", method="Superdex200_SEC", result_name="sec_1", variables={"Flow rate": 0.5}))
+    assert r["result"]["result_name"] == "sec_1" and akta.read("run_state") == "Ready"
+    akta.invoke("run_method", method="HisTrap_5ml_purification", result_name="imac_1")
+    deadline = time.time() + 5
+    while akta.read("run_state") != "Method Run" and time.time() < deadline:
+        time.sleep(0.01)
+    akta.estop()
+    assert akta.read("run_state") == "System Pause" and akta.read("flow_ml_min") == 0.0
+
+    hplc = LocalDevice(load_driver("supported-devices/waters-empower-hplc", sim=True))
+    sample = {"name": "s1", "vial": "1:A,1", "injection_volume_ul": 5, "method": "Assay_C18"}
+    refused(-32010, lambda: hplc.invoke("run_samples", samples=[{**sample, "injection_volume_ul": 500}]))
+    refused(-32014, lambda: hplc.invoke("run_samples", samples=[{**sample, "flow": 2}]))
+    r = hplc.wait(hplc.invoke("run_samples", samples=[sample, {**sample, "name": "s2", "injections": 2}]))["result"]
+    assert r["injections"] == 3 and {row["Vial"] for row in r["exported_rows"]} == {"1:A,1"}
+
+    drv = load_driver("supported-devices/globalfia-flopro-sampler", sim=True)
+    flo = LocalDevice(drv)
+    flo.read("connected")
+    deadline = time.time() + 5
+    while not flo.read("connected") and time.time() < deadline:
+        time.sleep(0.01)
+    refused(-32010, lambda: flo.invoke("take_sample", destination="archive", probe=5, dilution_1=5, dilution_2=20, vial=1))
+    refused(-32014, lambda: flo.invoke("take_sample", destination="archive", probe=1, dilution_1=5, dilution_2=20))
+    s = flo.wait(flo.invoke("take_sample", destination="archive", probe=1, dilution_1=5, dilution_2=20, vial=3))["result"]
+    assert s["dilution_total"] == 100 and flo.read("vials_used") == [3]
+    assert "GET vial -> 3" in drv.transport.log
+    refused(-32014, lambda: flo.invoke("take_sample", destination="archive", probe=1, dilution_1=5, dilution_2=20, vial=3))
+    # e-stop: the package stops answering, so FloZF's next CHECK times out and its stop sequence runs
+    job = flo.invoke("take_sample", destination="inject", probe=2, dilution_1=10, dilution_2=1)
+    deadline = time.time() + 5
+    while not flo.read("busy") and time.time() < deadline:
+        time.sleep(0.01)
+    flo.estop()
+    try:
+        flo.wait(job); raise AssertionError("the sample survived an e-stop")
+    except RemoteError as e:
+        assert "emergency stop" in str(e)
+    deadline = time.time() + 5
+    while not any(line.startswith("ABORTED") for line in drv.transport.log) and time.time() < deadline:
+        time.sleep(0.01)
+    assert drv.transport.log[-1].startswith("ABORTED"), drv.transport.log[-3:]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

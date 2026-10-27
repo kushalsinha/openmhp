@@ -23,6 +23,15 @@
      "tags": ["raman", "spectroscopy", "in-situ"], "target": "github:kushalsinha/openmhp/supported-devices/wasatch-raman-blaze", "sim": true},
     {"name": "sri-8610c-gc", "class": "gas_chromatograph", "make": "SRI Instruments", "model": "8610C", "kind": "sdk",
      "description": "SRI 8610C gas chromatograph through PeakSimple's .NET connector (Windows). Runs a saved control file and returns the peak table.",
-     "tags": ["gc", "gas-analysis", "methods"], "target": "github:kushalsinha/openmhp/supported-devices/sri-8610c-gc", "sim": true}
+     "tags": ["gc", "gas-analysis", "methods"], "target": "github:kushalsinha/openmhp/supported-devices/sri-8610c-gc", "sim": true},
+    {"name": "cytiva-akta-avant", "class": "chromatography_system", "make": "Cytiva (GE Healthcare)", "model": "ÄKTA avant", "kind": "opc-da",
+     "description": "Cytiva/GE ÄKTA avant through the UNICORN OPC Data Access server (Windows). Runs saved UNICORN methods with their Start Protocol variables; live UV, conductivity, pressure, flow; pause, hold, continue, end.",
+     "tags": ["chromatography", "fplc", "protein-purification"], "target": "github:kushalsinha/openmhp/supported-devices/cytiva-akta-avant", "sim": true},
+    {"name": "waters-empower-hplc", "class": "hplc", "make": "Waters", "model": "HPLC/UPLC under Empower 3", "kind": "rest",
+     "description": "Waters HPLC/UPLC through the Empower Web API (opti-hplc-handler). Builds and runs injection sample sets on a node and system and follows the system status.",
+     "tags": ["hplc", "chromatography", "analysis"], "target": "github:kushalsinha/openmhp/supported-devices/waters-empower-hplc", "sim": true},
+    {"name": "globalfia-flopro-sampler", "class": "sampler", "make": "Global FIA", "model": "FloPro Sampler", "kind": "serial-handshake",
+     "description": "Global FIA FloPro reactor sampler and diluter run by FloZF; FloZF polls OpenMHP over a virtual serial pair and runs the owner's sampling sequences.",
+     "tags": ["sampling", "dilution", "reactor"], "target": "github:kushalsinha/openmhp/supported-devices/globalfia-flopro-sampler", "sim": true}
   ]
 }

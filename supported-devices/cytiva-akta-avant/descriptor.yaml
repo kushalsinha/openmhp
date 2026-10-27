@@ -1,0 +1,86 @@
+device:
+  notes: >
+    Preparative liquid chromatography system. Runs saved UNICORN methods; live values come from
+    UNICORN's OPC Data Access server. UNICORN keeps its own pressure alarms and user rights.
+
+physical:
+  notes: Pumps to 20 MPa (system); column limits are usually far lower and are set in the method. Buffers may be corrosive or flammable (ethanol storage solution).
+
+signals:
+  - {name: connected, type: boolean, notes: True when the UNICORN OPC DA server answers.}
+  - {name: in_control, type: boolean, notes: True when this package holds control of the system (UNICORN AssignState = Control).}
+  - {name: run_state, type: string, notes: "UNICORN run state: Ready, Method Run, System Pause, Hold, Manual Pause, Wash, Alarms and errors, Starting method run, ..."}
+  - {name: current_method, type: string}
+  - {name: current_result, type: string}
+  - {name: current_block, type: string, notes: The method block (phase step) executing now.}
+  - {name: uv_mAU, type: number, unit: "{mAU}", notes: UV absorbance in milli-absorbance units.}
+  - {name: conductivity_mS_cm, type: number, unit: mS/cm}
+  - {name: pressure_MPa, type: number, unit: MPa, notes: System pressure as configured (pre-column pressure if the avant has the sensor).}
+  - {name: flow_ml_min, type: number, unit: mL/min}
+  - {name: live, type: object, notes: Pushed every few seconds during a run with all of the above.}
+  - {name: last_result, type: object}
+
+settings: []
+
+actions:
+  - name: list_methods
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Lists the methods this package may run, each with its Start Protocol variables (unit, min, max, default) and questions.
+  - name: run_method
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      method: {type: string, notes: "UNICORN method name, one of list_methods"}
+      result_name: {type: string, notes: Name for the UNICORN result; UNICORN will not start a run without one.}
+      variables:
+        type: object
+        default: {}
+        notes: "{Start Protocol variable name: value}. Names and ranges come from UNICORN (list_methods); checked before anything is written."
+      questions:
+        type: object
+        default: {}
+        notes: "{question: answer} for the method's start questions; a mandatory one left out blocks the start."
+      batch_id: {type: string, nullable: true, notes: Omitted or null lets UNICORN generate one.}
+      queue: {type: boolean, default: false, notes: Allow UNICORN to queue the run behind a running method.}
+    required: [method, result_name]
+    notes: >
+      Takes control, writes variables, questions, batch id and result name, then starts the method,
+      and follows it until UNICORN returns to Ready. Cancelling the job ends the run (result saved).
+    examples:
+      - {method: "HisTrap_5ml_purification", result_name: "batch12_IMAC", variables: {"Sample volume": 20, "Flow rate": 1.0}}
+  - name: pause
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    concurrent: true
+    notes: Stops the pumps and the method. Resume with continue.
+  - name: hold
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    concurrent: true
+    notes: Keeps the current flow and valve positions but freezes the method clock.
+  - name: continue_run
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    concurrent: true
+    notes: Resumes after pause or hold.
+  - name: end_run
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    concurrent: true
+    notes: Ends the method; UNICORN saves the result. A person confirms, because a sample on the column may be lost.
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 300
+  watchdog_action: release
+  notes: "E-stop sends Pause, which stops the pumps; the run can be continued or ended by a person in UNICORN. If the controlling agent goes silent for 5 minutes its lease is released and reported, but the run is not stopped: ending a purification midway loses the sample."
