@@ -1,0 +1,8 @@
+{
+  "port": "COM21",
+  "baud": 9600,
+  "poll_s": 2,
+  "sequence_codes": {"archive": 1, "inject": 2, "detector": 3, "rinse": 9},
+  "pickup_timeout_s": 60,
+  "sequence_timeout_s": 900
+}

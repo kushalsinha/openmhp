@@ -1,0 +1,22 @@
+{
+  "address": "https://empower-api.example.local:3076",
+  "service": null,
+  "project": "MyProject",
+  "username": "svc_openmhp",
+  "verify_tls": true,
+  "node": "HPLC-NODE-01",
+  "system": "Arc_HPLC_1",
+  "plates": {
+    "1": "ANSI-48Vial2mLHolder"
+  },
+  "injection_volume_ul": [
+    0.1,
+    50
+  ],
+  "max_lines": 96,
+  "max_injections_per_sample": 10,
+  "allowed_methods": [],
+  "poll_s": 15,
+  "max_run_hours": 24,
+  "export_dir": null
+}
