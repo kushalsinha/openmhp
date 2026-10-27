@@ -1,0 +1,13 @@
+{
+  "progid": "UNICORN_DAServer30.System1.1",
+  "host": "localhost",
+  "method_root": "\\Method\\DefaultHome",
+  "allowed_methods": [],
+  "items": {
+    "uv_mAU": "Event\\Analog Picture\\UV1",
+    "conductivity_mS_cm": "Event\\Analog Picture\\Cond",
+    "pressure_MPa": "Event\\Analog Picture\\System pressure",
+    "flow_ml_min": "Event\\Rundata\\System flow"
+  },
+  "live_every_s": 5
+}

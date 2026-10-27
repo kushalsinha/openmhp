@@ -19,6 +19,9 @@ mhp lab add github:kushalsinha/openmhp/supported-devices/<name>          # the r
 | [`biologic-sp300`](biologic-sp300) | BioLogic SP-300 potentiostat | EC-Lab Development Package, easy-biologic | Windows | twin tested |
 | [`wasatch-raman-blaze`](wasatch-raman-blaze) | Wasatch Raman spectrometer behind a BlazeMetrics Blaze probe | Wasatch.PY | any | twin tested |
 | [`sri-8610c-gc`](sri-8610c-gc) | SRI 8610C gas chromatograph | PeakSimple .NET connector, pythonnet | Windows | twin tested |
+| [`cytiva-akta-avant`](cytiva-akta-avant) | Cytiva (GE) ÄKTA avant FPLC | UNICORN OPC Data Access, OpenOPC | Windows | twin tested |
+| [`waters-empower-hplc`](waters-empower-hplc) | Waters HPLC/UPLC under Empower 3 | Empower Web API, opti-hplc-handler | any | twin tested |
+| [`globalfia-flopro-sampler`](globalfia-flopro-sampler) | Global FIA FloPro reactor sampler | FloZF serial handshake (virtual COM pair) | Windows | twin tested |
 
 **Status** is honest about what has been exercised:
 
