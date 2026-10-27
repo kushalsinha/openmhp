@@ -1245,7 +1245,20 @@ class Driver:
                 if len(blob) > self.RESULT_INLINE:
                     rec["result"] = self._save_result(d, job.id, blob)
             rec["digest"] = _digest(rec)           # of the record as stored, the pointer included
-            (d / f"{job.id}.json").write_text(json.dumps(rec, default=str))
+            # Written to one side and moved into place, because this file is written twice -- once
+            # when the job is admitted and again when it finishes -- and a plain write truncates
+            # before it fills. A reader that arrives in that window gets an empty file where a
+            # complete record was a moment ago, and the record of what an instrument did is the
+            # last thing that should momentarily cease to exist. os.replace is atomic on POSIX and
+            # on Windows, so a reader sees the old record or the new one. UTF-8 because that is
+            # what reads it back; the default encoding is the host's, and a result with a degree
+            # sign in it is not the place to discover that.
+            tmp = d / f".{job.id}.json.{os.getpid()}.tmp"      # dotted, so _trim_jobs ignores it
+            try:
+                tmp.write_text(json.dumps(rec, default=str), encoding="utf-8")
+                os.replace(tmp, d / f"{job.id}.json")
+            finally:
+                tmp.unlink(missing_ok=True)                    # a half-written one leaves nothing behind
             self._trim_jobs(d)
         except OSError:
             pass                                   # never let bookkeeping break an instrument
