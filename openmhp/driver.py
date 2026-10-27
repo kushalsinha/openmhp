@@ -29,6 +29,7 @@ import json
 import math
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -342,6 +343,31 @@ class _WatchdogScheduler:
 
 _WATCHDOGS = _WatchdogScheduler()
 
+REPLACE_RETRY_S = 1.0
+
+
+def _replace_when_free(tmp: Path, final: Path, within: float = REPLACE_RETRY_S) -> None:
+    """Move `tmp` onto `final`, waiting out a reader that has `final` open.
+
+    POSIX lets a file be replaced while it is being read -- the reader keeps the old inode and
+    finishes. Windows does not: a replace onto a path somebody has open fails, because Python's
+    `open` does not ask for share-delete. Something reading the record every few milliseconds is
+    exactly what an auditor or a `jobs/status` poller does, so the collision is ordinary rather
+    than rare, and the readers hold the file for microseconds.
+
+    Giving up on that would be worse than the torn read this replaces: a lost race becomes a
+    record that never arrived, which is the one thing an audit trail must not do quietly.
+    """
+    deadline = time.time() + within
+    while True:
+        try:
+            os.replace(tmp, final)
+            return
+        except OSError:
+            if time.time() >= deadline:
+                raise
+            time.sleep(0.01)
+
 # What the instrument writes to its own record, and what it calls each one. Mutations and
 # safety only: reads belong to the caller's record, not the instrument's.
 RECORDED = {"settings/write": "write", "actions/invoke": "invoke", "safety/estop": "estop",
@@ -387,6 +413,7 @@ class Driver:
         self._closed = False
         self._methods = None
         self._own_record = None                      # the instrument's own record, opened on first write
+        self.record_errors = 0                       # job records that could not be written (see _persist_job)
         if self.package_dir and self.package is None:
             from .package import load_package
             self.attach_package(load_package(self.package_dir))
@@ -1256,12 +1283,17 @@ class Driver:
             tmp = d / f".{job.id}.json.{os.getpid()}.tmp"      # dotted, so _trim_jobs ignores it
             try:
                 tmp.write_text(json.dumps(rec, default=str), encoding="utf-8")
-                os.replace(tmp, d / f"{job.id}.json")
+                _replace_when_free(tmp, d / f"{job.id}.json")
             finally:
                 tmp.unlink(missing_ok=True)                    # a half-written one leaves nothing behind
             self._trim_jobs(d)
-        except OSError:
-            pass                                   # never let bookkeeping break an instrument
+        except OSError as e:
+            # Bookkeeping never breaks an instrument -- but a job record that quietly failed to
+            # arrive is how you later find a job nobody can account for, so say it once per job,
+            # the way RunLog does when its own chain breaks.
+            self.record_errors += 1
+            print(f"[openmhp] could not record job {job.id} ({e}); this device's job history on "
+                  f"disk is incomplete", file=sys.stderr)
 
     def _save_result(self, d: Path, jid: str, blob: str) -> dict:
         """A result too big for its record goes in a file beside it, with the same lifetime.

@@ -1677,6 +1677,54 @@ def test_the_record_cannot_be_edited_without_showing_it():
     assert "does not match its own digest" in restored["unverified"], restored
 
 
+def test_a_job_record_is_not_lost_to_a_reader_holding_the_file():
+    """Windows refuses a replace onto a path somebody has open; POSIX does not, so this forces it.
+
+    The record is written beside and moved into place so a reader never sees it torn. On Windows
+    that move fails while a reader has the destination open -- Python's `open` does not ask for
+    share-delete -- and something polling the record every few milliseconds is exactly what an
+    auditor does. Losing the record to that would be worse than the torn read, because
+    `_persist_job` swallows OSError so bookkeeping can never break an instrument: the job would
+    simply never be accounted for. So the move waits for the reader, and if it truly cannot
+    write, it says so instead of leaving a silent hole.
+    """
+    import openmhp.driver as D
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+
+    real_replace, attempts = os.replace, []
+
+    def busy_twice(src, dst):                       # as a reader holding `dst` looks on Windows
+        attempts.append(dst)
+        if len(attempts) <= 2:
+            raise PermissionError(13, "The process cannot access the file because it is being used "
+                                      "by another process")
+        return real_replace(src, dst)
+
+    d = LocalDevice(SimThermocycler())
+    D.os.replace = busy_twice
+    try:
+        job = d.wait(d.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
+        rec_file = HOME / "jobs" / "thermocycler-01" / f"{job['id']}.json"
+        assert eventually(lambda: rec_file.is_file()), "the record never arrived"
+        assert json.loads(rec_file.read_text(encoding="utf-8"))["id"] == job["id"]
+        assert len(attempts) > 2, "the replace was not retried"
+    finally:
+        D.os.replace = real_replace
+
+    # and when it cannot be written at all, the instrument keeps working and the loss is reported
+    drvr = SimThermocycler()
+    c = LocalDevice(drvr)
+    D.os.replace = fails(PermissionError(13, "still busy"))
+    stderr, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        done = c.wait(c.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
+    finally:
+        warned, sys.stderr = sys.stderr.getvalue(), stderr
+        D.os.replace = real_replace
+    assert done["state"] == "done", "a failed record stopped the instrument"
+    assert drvr.record_errors >= 1 and "job history on disk is incomplete" in warned, warned
+
+
 def test_conformance_scores_a_device_behaviourally():
     """C17: the levels are a command anyone can run, not a claim in a document."""
     from openmhp.conformance import run, report
