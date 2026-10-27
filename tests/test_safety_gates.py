@@ -1657,7 +1657,18 @@ def test_the_record_cannot_be_edited_without_showing_it():
     first = LocalDevice(SimThermocycler())
     job = first.wait(first.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
     rec_file = HOME / "jobs" / "thermocycler-01" / f"{job['id']}.json"
-    rec = json.loads(rec_file.read_text(encoding="utf-8"))
+    # The record is written just after completion becomes visible, not inside the critical section
+    # that publishes it -- holding the device's state lock across a disk write would stall every
+    # other call. So a reader that polled jobs/status can arrive a moment early; the guarantee is
+    # that it never sees a torn record, which is why _persist_job moves one into place.
+    def finished_record():
+        try:
+            return json.loads(rec_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    assert eventually(lambda: (finished_record() or {}).get("result") == job["result"]), \
+        f"the finished job was never recorded: {finished_record()}"
+    rec = finished_record()
     assert rec["digest"] and rec["result"] == job["result"]
     rec["result"] = {"cycles_completed": 99}
     rec_file.write_text(json.dumps(rec), encoding="utf-8")
