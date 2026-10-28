@@ -182,7 +182,7 @@ def test_directory_live_state():
     from openmhp.devices.sim_thermocycler import SimThermocycler
     a, b = SimThermocycler(), SimThermocycler()
     b.descriptor = {**b.descriptor, "device": {**b.descriptor["device"], "id": "thermocycler-02"}}
-    b._index = a._index
+    b._reindex()                       # re-seal: a bare descriptor edit is not what a device goes by
     d = Directory(state_ttl=0)
     d.add_driver(a, "local:a"); d.add_driver(b, "local:b")
     assert {r["id"] for r in d.search("pcr", state="idle")} == {"thermocycler-01", "thermocycler-02"}

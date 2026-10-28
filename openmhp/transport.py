@@ -208,7 +208,26 @@ def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765, *,
             auth = self.headers.get("Authorization", "")
             return auth.startswith("Bearer ") and hmac.compare_digest(auth[7:].encode(), str(token).encode())
 
+        def _drain(self) -> None:
+            """Read the body we are about to refuse, so the refusal is what the client sees.
+
+            Replying without reading it leaves the request sitting in the socket buffer, and
+            closing a socket with unread data sends a reset: on Windows the client's own send
+            then fails with "connection aborted" and it never sees the 401 -- a device that
+            looks unreachable instead of one that told you it wants a token.
+            """
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                n = 0
+            while n > 0:
+                chunk = self.rfile.read(min(n, 1 << 16))
+                if not chunk:
+                    break
+                n -= len(chunk)
+
         def _unauthorized(self) -> None:
+            self._drain()
             self._json(401, {"error": "this device requires 'Authorization: Bearer <token>'; the operator has "
                                       "the token (OPENMHP_DEVICE_TOKEN or ~/.openmhp/device_token on its host)"})
 
@@ -241,6 +260,7 @@ def serve_http(driver: Driver, host: str = "127.0.0.1", port: int = 8765, *,
 
         def do_POST(self):
             if self.path != "/rpc":
+                self._drain()
                 return self._json(404, {"error": "POST /rpc"})
             if not self._authorized():
                 return self._unauthorized()
