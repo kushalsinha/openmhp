@@ -1703,6 +1703,54 @@ def test_the_error_taxonomy_survives_the_client_boundary():
         assert e.recovery == "abort" and e.effect == "none", e.__dict__
 
 
+def test_a_result_with_mixed_key_types_is_persisted():
+    """csv.DictReader on a malformed CSV puts surplus fields under the key None. Digesting the job
+    record sorted its keys, None against str raised inside the job thread, and everything after
+    persistence was skipped: no record, no jobs/finished, no method-run record. Keys are now
+    written as JSON would write them, and the completion steps run whatever persistence does."""
+    rows = list(csv.DictReader(io.StringIO("a\n1,x\n")))
+    assert None in rows[0], rows                                    # the shape that broke it
+    d = BoundDriver(device={"id": "csv-1", "class": "generic"}, safety={"estop": False, "watchdog_s": None},
+                    actions=[Action("parse", lambda job, params: {"rows": [{None: ["x"], "a": 1}]})])
+    dev = LocalDevice(d)
+    job = dev.wait(dev.invoke("parse"))
+    assert job["state"] == "done", job
+    got = dev.call("jobs/status", {"id": job["id"]})["job"]
+    assert got["state"] == "done" and got["result"]["rows"][0]["a"] == 1, got
+
+    f = HOME / "jobs" / "csv-1" / f"{job['id']}.json"
+    for _ in range(200):                                            # the record lands just after done
+        if f.exists():
+            break
+        time.sleep(0.02)
+    rec = json.loads(f.read_text(encoding="utf-8"))
+    assert rec["result"] == {"rows": [{"null": ["x"], "a": 1}]}, rec
+
+    again = BoundDriver(device={"id": "csv-1", "class": "generic"}, safety={"estop": False, "watchdog_s": None},
+                        actions=[Action("parse", lambda job, params: None)])
+    restored = LocalDevice(again).call("jobs/status", {"id": job["id"]})["job"]
+    assert restored["state"] == "done" and restored["result"]["rows"][0]["null"] == ["x"], restored
+    assert again.jobs[job["id"]].unverified is None, "the restored record failed its own digest"
+
+    # and a persistence failure of any kind still lets the job finish
+    boom = BoundDriver(device={"id": "csv-2", "class": "generic"}, safety={"estop": False, "watchdog_s": None},
+                       actions=[Action("parse", lambda job, params: {"ok": True})])
+    queued_persist = boom._persist_job
+    boom._persist_job = lambda job: (queued_persist(job) if job.state == "queued"
+                                     else fails(RuntimeError("disk on fire"))())
+    told = []
+    real_notify = boom.notify
+    boom.notify = lambda m, p: (told.append(m), real_notify(m, p))
+    bdev = LocalDevice(boom)
+    bj = bdev.wait(bdev.invoke("parse"))
+    assert bj["state"] == "done" and bj["result"] == {"ok": True}, bj
+    for _ in range(200):
+        if "jobs/finished" in told:
+            break
+        time.sleep(0.02)
+    assert "jobs/finished" in told, told
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):
