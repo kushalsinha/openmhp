@@ -29,6 +29,7 @@ import json
 import math
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -342,6 +343,31 @@ class _WatchdogScheduler:
 
 _WATCHDOGS = _WatchdogScheduler()
 
+REPLACE_RETRY_S = 1.0
+
+
+def _replace_when_free(tmp: Path, final: Path, within: float = REPLACE_RETRY_S) -> None:
+    """Move `tmp` onto `final`, waiting out a reader that has `final` open.
+
+    POSIX lets a file be replaced while it is being read -- the reader keeps the old inode and
+    finishes. Windows does not: a replace onto a path somebody has open fails, because Python's
+    `open` does not ask for share-delete. Something reading the record every few milliseconds is
+    exactly what an auditor or a `jobs/status` poller does, so the collision is ordinary rather
+    than rare, and the readers hold the file for microseconds.
+
+    Giving up on that would be worse than the torn read this replaces: a lost race becomes a
+    record that never arrived, which is the one thing an audit trail must not do quietly.
+    """
+    deadline = time.time() + within
+    while True:
+        try:
+            os.replace(tmp, final)
+            return
+        except OSError:
+            if time.time() >= deadline:
+                raise
+            time.sleep(0.01)
+
 # What the instrument writes to its own record, and what it calls each one. Mutations and
 # safety only: reads belong to the caller's record, not the instrument's.
 RECORDED = {"settings/write": "write", "actions/invoke": "invoke", "safety/estop": "estop",
@@ -387,6 +413,7 @@ class Driver:
         self._closed = False
         self._methods = None
         self._own_record = None                      # the instrument's own record, opened on first write
+        self.record_errors = 0                       # job records that could not be written (see _persist_job)
         if self.package_dir and self.package is None:
             from .package import load_package
             self.attach_package(load_package(self.package_dir))
@@ -395,12 +422,60 @@ class Driver:
         self._arm_watchdog()
         self._load_jobs()                      # settled work survives a restart (C11)
 
+    # ---- what a device enforces, and what it merely reports -------------- #
+    #
+    # These are two different dicts on purpose. `descriptor` is the reporting copy: it is what
+    # describe, the lists and safety/limits answer with, and callers are handed a copy of it.
+    # `_enforced` is what the gates below actually consult, and it is sealed here -- in
+    # ``_reindex``, which is the only route that sets it: ``__init__``, ``attach_package``,
+    # ``load_driver`` after it merges a package, and a driver that extends its own descriptor
+    # in ``setup()``. All four are the package load path, which is where a person's accepted
+    # configuration enters the process.
+    #
+    # Splitting them closes an escalation that needed no sandbox escape at all. describe,
+    # settings/list, actions/list and safety/limits used to return the very dicts the gates
+    # consult, so a caller that works through the sanctioned API -- which is what a run script
+    # is given -- could raise a bound with one assignment to what it was handed:
+    #
+    #     dev.limits()["settings"]["target_temperature"]["max"] = 900     # and 900 was enforced
+    #
+    # `_seal_digest` is over the enforced copy, so an in-place edit of the index or the sealed
+    # safety block is detected at the gate (``_verify_seal``) instead of obeyed.
     def _reindex(self):
+        self._enforced = copy.deepcopy({
+            "device":   self.descriptor.get("device") or {},
+            "signals":  self.descriptor.get("signals") or [],
+            "settings": self.descriptor.get("settings") or [],
+            "actions":  self.descriptor.get("actions") or [],
+            "safety":   self.descriptor.get("safety") or {},
+        })
         self._index = {
-            "signals":  {s["name"]: s for s in self.descriptor.get("signals", [])},
-            "settings": {s["name"]: s for s in self.descriptor.get("settings", [])},
-            "actions":  {a["name"]: a for a in self.descriptor.get("actions", [])},
+            "signals":  {s["name"]: s for s in self._enforced["signals"]},
+            "settings": {s["name"]: s for s in self._enforced["settings"]},
+            "actions":  {a["name"]: a for a in self._enforced["actions"]},
         }
+        self._seal_digest = _digest(self._enforced)
+
+    @property
+    def enforced_safety(self) -> dict:
+        """The sealed safety block: what the watchdog, the interlocks and the gates go by."""
+        return self._enforced["safety"]
+
+    def _verify_seal(self) -> None:
+        """Refuse to actuate when the sealed configuration was edited in memory after it loaded.
+
+        Ignoring the edit would be enough to keep the device safe, but silence is the wrong
+        answer: something in this process tried to change what the instrument enforces, and the
+        person whose instrument it is should hear about it rather than discover that a limit
+        quietly stopped matching the package on disk.
+        """
+        if _digest(self._enforced) != self._seal_digest:
+            raise Forbidden(
+                "the safety configuration this device enforces was changed in memory after the package "
+                "was loaded, so this device will not actuate until it is loaded again. Limits, interlocks, "
+                "approval levels and the safety block are changed by a person editing the device package "
+                "and accepting it (mhp_lab op='reload'), never from a script or a client",
+                {"configuration": "tampered", "expected": self._seal_digest, "now": _digest(self._enforced)})
 
     def attach_package(self, pkg) -> None:
         """Use a DevicePackage as this driver's descriptor, instructions and resources."""
@@ -435,7 +510,7 @@ class Driver:
                 root = Path(self.package.dir) / "methods"                          # M2: Level 3 of the package
             else:
                 home = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp"))
-                root = home / "methods" / str(self.descriptor["device"]["id"])
+                root = home / "methods" / str(self._enforced["device"]["id"])
             self._methods = MethodStore(root, capable=bool(self.method_driven()), check=self._method_check,
                                         method_driven=self.method_driven)
         return self._methods
@@ -632,7 +707,7 @@ class Driver:
 
     @property
     def watchdog_s(self) -> float | None:
-        wd = (self.descriptor.get("safety") or {}).get("watchdog_s")
+        wd = self.enforced_safety.get("watchdog_s")
         return float(wd) if is_finite_number(wd) and wd > 0 else None
 
     @property
@@ -647,7 +722,7 @@ class Driver:
         silence is reported as ``notifications/safety/watchdog``. Anything unrecognised fails
         safe as ``estop``.
         """
-        a = (self.descriptor.get("safety") or {}).get("watchdog_action") or "estop"
+        a = self.enforced_safety.get("watchdog_action") or "estop"
         return a if a in self.WATCHDOG_ACTIONS else "estop"
 
     def _arm_watchdog(self) -> None:
@@ -808,6 +883,7 @@ class Driver:
         """State, approval, interlocks, value/params, lease, busy. Dry runs report approval,
         lease and busy conditions as notes instead of raising, so a plan can show them."""
         notes: dict = {}
+        self._verify_seal()            # before anything else: these very rules are what the rest of this checks
         self._check_state()
         approval = spec.get("approval", "auto")
         if approval == "forbid":
@@ -847,7 +923,7 @@ class Driver:
         if log is None:
             return
         try:
-            log.write(kind, device=(self.descriptor.get("device") or {}).get("id"), **fields)
+            log.write(kind, device=(self._enforced.get("device") or {}).get("id"), **fields)
         except Exception:                          # noqa: BLE001
             pass
 
@@ -897,10 +973,10 @@ class Driver:
     def rpc_initialize(self, p, client):
         return {
             "protocolVersion": PROTOCOL_VERSION,
-            "device": {k: self.descriptor["device"].get(k) for k in ("id", "class", "make", "model")},
+            "device": {k: self._enforced["device"].get(k) for k in ("id", "class", "make", "model")},
             "capabilities": {
                 "signals": True, "settings": True, "actions": True, "methods": bool(self.method_driven()),
-                "subscribe": True, "lease": True, "estop": bool(self.descriptor.get("safety", {}).get("estop", False)),
+                "subscribe": True, "lease": True, "estop": bool(self.enforced_safety.get("estop", False)),
                 "watchdog_s": self.watchdog_s, "resources": self.package is not None,
             },
             "session": client,
@@ -917,17 +993,19 @@ class Driver:
         if p.get("select"):
             out = self.card()
             for section, names in p["select"].items():
-                out[section] = [self._index[section][n] for n in names if n in self._index.get(section, {})]
+                out[section] = copy.deepcopy([self._index[section][n] for n in names
+                                              if n in self._index.get(section, {})])
             return out
         if detail == "card":
             return self.card()
         if detail == "summary":
             return self.summary()
-        return {**self.descriptor, "mhp": PROTOCOL_VERSION, "state": self.state}
+        return {**copy.deepcopy(self.descriptor), **copy.deepcopy(self._enforced),
+                "mhp": PROTOCOL_VERSION, "state": self.state}
 
     def card(self) -> dict:
         """Level 1. The DEVICE.md frontmatter plus live state and capability names."""
-        d = self.descriptor["device"]
+        d = copy.deepcopy(self._enforced["device"])
         notes = d.get("notes", "")
         description = d.get("description") or (notes.split(". ")[0].rstrip(".") + ("." if notes else ""))
         return {
@@ -941,24 +1019,24 @@ class Driver:
 
     def summary(self) -> dict:
         """Level 2. Card + operating instructions + a slim capability table."""
-        slim = lambda items, keys: [{k: i[k] for k in keys if k in i} for i in items]  # noqa: E731
+        slim = lambda items, keys: copy.deepcopy([{k: i[k] for k in keys if k in i} for i in items])  # noqa: E731
         return {
             **self.card(),
             "instructions": self.instructions,
-            "physical": self.descriptor.get("physical", {}),
-            "signals": slim(self.descriptor.get("signals", []), ("name", "type", "unit")),
-            "settings": slim(self.descriptor.get("settings", []), ("name", "type", "unit", "limits", "approval", "during_job")),
-            "actions": slim(self.descriptor.get("actions", []), ("name", "duration", "approval", "interlocks", "required", "limits", "methods", "returns")),
+            "physical": copy.deepcopy(self.descriptor.get("physical", {})),
+            "signals": slim(self._enforced["signals"], ("name", "type", "unit")),
+            "settings": slim(self._enforced["settings"], ("name", "type", "unit", "limits", "approval", "during_job")),
+            "actions": slim(self._enforced["actions"], ("name", "duration", "approval", "interlocks", "required", "limits", "methods", "returns")),
             "methods": ({**self.methods.overview(),
                          "how": "methods/find {compound, project} -> actions/invoke {name, method: {name, project, overrides?}, project}"}
                         if self.method_driven() else None),
-            "safety": self.descriptor.get("safety", {}),
-            "resources": self.package.resources if self.package else [],
+            "safety": copy.deepcopy(self.enforced_safety),
+            "resources": list(self.package.resources) if self.package else [],
         }
 
     # resources: Level 3, loaded only when asked for by path
     def rpc_resources_list(self, p, client):
-        return {"resources": self.package.resources if self.package else []}
+        return {"resources": list(self.package.resources) if self.package else []}
 
     def rpc_resources_read(self, p, client):
         if not self.package:
@@ -970,7 +1048,7 @@ class Driver:
 
     # signals
     def rpc_signals_list(self, p, client):
-        return {"signals": self.descriptor.get("signals", [])}
+        return {"signals": copy.deepcopy(self._enforced["signals"])}
 
     def rpc_signals_read(self, p, client):
         """Every reading carries an id, so a number an agent writes down can be pointed back at
@@ -991,7 +1069,7 @@ class Driver:
 
     # settings
     def rpc_settings_list(self, p, client):
-        return {"settings": self.descriptor.get("settings", [])}
+        return {"settings": copy.deepcopy(self._enforced["settings"])}
 
     def rpc_settings_write(self, p, client):
         name = p.get("name")
@@ -1027,7 +1105,7 @@ class Driver:
 
     # actions -> jobs
     def rpc_actions_list(self, p, client):
-        return {"actions": self.descriptor.get("actions", [])}
+        return {"actions": copy.deepcopy(self._enforced["actions"])}
 
     def rpc_actions_invoke(self, p, client):
         name = p.get("name")
@@ -1120,7 +1198,7 @@ class Driver:
     RESULT_FILE_CAP = 4_000_000                    # and a bigger one than that does not fit at all
 
     def _device_dir(self, kind: str) -> Path | None:
-        did = (self.descriptor.get("device") or {}).get("id")
+        did = (self._enforced.get("device") or {}).get("id")
         if not did or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", str(did)):
             return None                            # no stable id: nothing safe to name a folder
         home = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp"))
@@ -1157,7 +1235,7 @@ class Driver:
         if log is None:
             return
         kind = RECORDED[method]
-        ev = {"device": (self.descriptor.get("device") or {}).get("id"), "by": client}
+        ev = {"device": (self._enforced.get("device") or {}).get("id"), "by": client}
         for key, into in (("name", "name"), ("value", "value"), ("id", "job"), ("reason", "reason")):
             if params.get(key) is not None:
                 ev[into] = params[key]
@@ -1188,16 +1266,34 @@ class Driver:
         try:
             d.mkdir(parents=True, exist_ok=True)
             rec = {**job.snapshot(), "params": job.params,
-                   "device": (self.descriptor.get("device") or {}).get("id")}
+                   "device": (self._enforced.get("device") or {}).get("id")}
             if rec.get("result") is not None:
                 blob = json.dumps(rec["result"], default=str)
                 if len(blob) > self.RESULT_INLINE:
                     rec["result"] = self._save_result(d, job.id, blob)
             rec["digest"] = _digest(rec)           # of the record as stored, the pointer included
-            (d / f"{job.id}.json").write_text(json.dumps(rec, default=str))
+            # Written to one side and moved into place, because this file is written twice -- once
+            # when the job is admitted and again when it finishes -- and a plain write truncates
+            # before it fills. A reader that arrives in that window gets an empty file where a
+            # complete record was a moment ago, and the record of what an instrument did is the
+            # last thing that should momentarily cease to exist. os.replace is atomic on POSIX and
+            # on Windows, so a reader sees the old record or the new one. UTF-8 because that is
+            # what reads it back; the default encoding is the host's, and a result with a degree
+            # sign in it is not the place to discover that.
+            tmp = d / f".{job.id}.json.{os.getpid()}.tmp"      # dotted, so _trim_jobs ignores it
+            try:
+                tmp.write_text(json.dumps(rec, default=str), encoding="utf-8")
+                _replace_when_free(tmp, d / f"{job.id}.json")
+            finally:
+                tmp.unlink(missing_ok=True)                    # a half-written one leaves nothing behind
             self._trim_jobs(d)
-        except OSError:
-            pass                                   # never let bookkeeping break an instrument
+        except OSError as e:
+            # Bookkeeping never breaks an instrument -- but a job record that quietly failed to
+            # arrive is how you later find a job nobody can account for, so say it once per job,
+            # the way RunLog does when its own chain breaks.
+            self.record_errors += 1
+            print(f"[openmhp] could not record job {job.id} ({e}); this device's job history on "
+                  f"disk is incomplete", file=sys.stderr)
 
     def _save_result(self, d: Path, jid: str, blob: str) -> dict:
         """A result too big for its record goes in a file beside it, with the same lifetime.
@@ -1371,15 +1467,17 @@ class Driver:
 
     # safety
     def rpc_safety_limits(self, p, client):
-        return {
-            "settings": {s["name"]: s.get("limits", {}) for s in self.descriptor.get("settings", [])},
-            "actions": {a["name"]: a.get("limits", {}) for a in self.descriptor.get("actions", [])},
-            "interlocks": self.descriptor.get("safety", {}).get("interlocks", []),
-            "approval": {**{s["name"]: s.get("approval", "auto") for s in self.descriptor.get("settings", [])},
-                         **{a["name"]: a.get("approval", "auto") for a in self.descriptor.get("actions", [])}},
+        # a copy of every one of them: this answer is the bounds a caller is about to plan
+        # against, not a handle on the bounds this device enforces
+        return copy.deepcopy({
+            "settings": {s["name"]: s.get("limits", {}) for s in self._enforced["settings"]},
+            "actions": {a["name"]: a.get("limits", {}) for a in self._enforced["actions"]},
+            "interlocks": self.enforced_safety.get("interlocks", []),
+            "approval": {**{s["name"]: s.get("approval", "auto") for s in self._enforced["settings"]},
+                         **{a["name"]: a.get("approval", "auto") for a in self._enforced["actions"]}},
             "watchdog_s": self.watchdog_s,
             **({"watchdog_action": self.watchdog_action} if self.watchdog_s else {}),
-        }
+        })
 
     def _enter_estop_locked(self, source: str = "client", clearable: bool = True,
                             clearance: str | None = None) -> None:

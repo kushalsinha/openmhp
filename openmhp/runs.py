@@ -40,7 +40,7 @@ import uuid
 import weakref
 from pathlib import Path
 
-from .client import Device, Lab, RemoteError
+from .client import Device, Lab, RemoteError, loaded_package_folders
 from .driver import InterlockOpen
 
 HOME = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp"))
@@ -366,6 +366,73 @@ _INSTEAD = {
 
 _BEHIND: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()      # facade -> (wrapped object, blocked hook)
 
+# ------------------------------------------------------------------ what a script may import, and write ---- #
+#
+# Two guards, in the same spirit as the facades above and with the same honest limit: they remove
+# the obvious reach rather than containing code that goes looking. What makes a safety value
+# actually unchangeable from a script is on the device side -- the driver seals the rules it
+# enforces and refuses to actuate if that seal is broken, and a package whose files changed is not
+# loaded until a person accepts it. These two keep a script from getting as far as trying, and make
+# the attempt a refusal in the run log rather than a silent edit.
+#
+# Both are bypassable from inside the process by design of the language: ``__builtins__`` is
+# reachable, and ``Path.write_text`` does not go through this ``open``. Containing code that works
+# around them needs a process boundary: host the devices out of process (`mhp node`, http targets)
+# or run the bridge with --no-scripts.
+_BLOCKED_IMPORTS = {
+    "openmhp": "the host that is running this script. openmhp.client holds the in-process drivers, "
+               "openmhp.driver the safety gates themselves, and openmhp.fleet the configuration a "
+               "person accepted. A script is given `lab`: use lab['<device-id>'] and the device API.",
+    "gc": "the object graph of this process, which reaches every driver in it. "
+          "Use lab['<device-id>'] and the device API.",
+}
+_WRITE_MODES = frozenset("wxa+")
+
+
+def _import_guard(real_import, blocked, override=None):
+    """``__import__`` for a run: refuses the host's own internals, and `override` wins for the rest."""
+    def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+        top = (name or "").split(".")[0]
+        if top in _BLOCKED_IMPORTS:
+            blocked(f"import:{name}")
+            raise ImportError(f"a run script cannot import '{name}': {_BLOCKED_IMPORTS[top]}")
+        if override is not None and name in override:
+            return override[name]
+        return real_import(name, globals, locals, fromlist, level)
+    return guarded
+
+
+def _write_refused(path, run_dir: Path, homes: tuple[Path, ...] = ()) -> str | None:
+    """Why a run may not write here, or None. Reads are not restricted; only writes."""
+    try:
+        p = Path(os.fsdecode(path) if not isinstance(path, (str, Path)) else path).resolve()
+    except (OSError, ValueError, TypeError):
+        return None                                   # a file descriptor or something exotic: not a path we police
+    if p == run_dir or run_dir in p.parents:
+        return None                                   # its own folder, always
+    for folder in loaded_package_folders():
+        if p == folder or folder in p.parents:
+            return (f"{p} is inside the device package at {folder}. A package is what the runtime enforces -- "
+                    "limits, interlocks, approval levels, the safety block -- so changing one is the owner's "
+                    "decision, made outside a run and accepted deliberately (mhp_lab op='reload'). "
+                    "Write what this run produces to run_dir.")
+    for home in homes:
+        if p == home or home in p.parents:
+            return (f"{p} is inside the host's own configuration at {home} (the fleet record of what was "
+                    "accepted, the device packages, the run log). Write what this run produces to run_dir.")
+    return None
+
+
+def _open_guard(real_open, blocked, run_dir: Path, homes: tuple[Path, ...] = ()):
+    def guarded(file, mode="r", *a, **kw):
+        if isinstance(mode, str) and (set(mode) & _WRITE_MODES):
+            why = _write_refused(file, run_dir, homes)
+            if why is not None:
+                blocked(f"write:{file}")
+                raise PermissionError(f"a run script cannot write here: {why}")
+        return real_open(file, mode, *a, **kw)
+    return guarded
+
 
 class _ScriptFacade:
     """Delegates the calls in ``_API`` and refuses everything else.
@@ -439,6 +506,18 @@ class Runs:
         self.runs: dict[str, Run] = {}
         self._mark_interrupted()
 
+    def _protected(self) -> tuple[Path, ...]:
+        """The host's own configuration: this process's home and the default one, resolved."""
+        out = []
+        for h in (self.home, HOME):
+            try:
+                r = Path(h).resolve()
+            except (OSError, ValueError):
+                continue
+            if r not in out:
+                out.append(r)
+        return tuple(out)
+
     def _mark_interrupted(self) -> None:
         base = self.home / "runs"
         if not base.is_dir():
@@ -483,13 +562,11 @@ class Runs:
 
         env = {"lab": ScriptLab(run_lab, blocked), "run_dir": str(run.dir), "run_id": run.id,
                "__name__": "__mhp_run__", "__mhp_params__": dict(params or {}), "print": run_print}
-        if plan is not None:
-            vt = _virtual_time_module(plan)
-            real_import = builtins.__import__
-
-            def plan_import(n, globals=None, locals=None, fromlist=(), level=0):
-                return vt if n == "time" else real_import(n, globals, locals, fromlist, level)
-            env["__builtins__"] = {**builtins.__dict__, "__import__": plan_import, "print": run_print}
+        run_root = run.dir.resolve()
+        override = {"time": _virtual_time_module(plan)} if plan is not None else None
+        env["__builtins__"] = {**builtins.__dict__, "print": run_print,
+                               "__import__": _import_guard(builtins.__import__, blocked, override),
+                               "open": _open_guard(builtins.open, blocked, run_root, self._protected())}
 
         def target():
             try:

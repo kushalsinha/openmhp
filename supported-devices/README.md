@@ -41,8 +41,23 @@ to what your cell, tubing or sample can take, and start with the first-hardware-
 
 ## Adding a device
 
-Write the package with the `openmhp-onboard-device` skill or by hand, include a `sim.py` twin
-that needs no vendor library, add an entry to `openmhp/registry.json`, and extend the package
-test in `tests/test_adapters.py`. Keep lab-specific values (addresses, serial numbers, SOPs) in
-`config.json`, which is never committed; ship a `config.example.json` instead. When you have run
-it on the instrument, change its status here to hardware tested.
+Write the package with the `openmhp-onboard-device` skill or by hand, then run the gate:
+
+```bash
+mhp inclusion supported-devices/<name>
+```
+
+It reports two tiers. **Package** is the bar for any package anywhere: the validator, the rules a
+driver must follow about the configuration it enforces, and behavioural proof from the package's
+own twin that the gates refuse what they declare and that nothing the device reports is a handle
+on what it enforces. **Submission** is what this repository needs in order to carry it — a twin
+that loads with no vendor library, an entry in `openmhp/registry.json`, a row in the table above
+with an honest status, `config.example.json` rather than a committed `config.json`, and a
+`references/setup.md`. `[-]` means a check did not apply here and says why; it is not a pass.
+Every package listed above passes both tiers, and `tests/test_inclusion.py` keeps it that way.
+
+Then extend `tests/test_adapters.py` so the twin is exercised in CI, and open the PR. What each
+check means and how to fix it:
+[openmhp/skills/openmhp-onboard-device/references/inclusion.md](../openmhp/skills/openmhp-onboard-device/references/inclusion.md).
+When you have run it on the instrument, change its status here to hardware tested and record the
+firmware and SDK versions in the package's setup note.
