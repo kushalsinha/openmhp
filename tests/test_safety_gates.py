@@ -1794,12 +1794,18 @@ def test_a_result_with_mixed_key_types_is_persisted():
     got = dev.call("jobs/status", {"id": job["id"]})["job"]
     assert got["state"] == "done" and got["result"]["rows"][0]["a"] == 1, got
 
+    # The record is written twice -- once when the job is admitted and again when it finishes --
+    # so waiting for the file to exist catches the queued one. Wait for the settled record.
     f = HOME / "jobs" / "csv-1" / f"{job['id']}.json"
-    for _ in range(200):                                            # the record lands just after done
-        if f.exists():
-            break
-        time.sleep(0.02)
-    rec = json.loads(f.read_text(encoding="utf-8"))
+
+    def record():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    assert eventually(lambda: (record() or {}).get("state") == "done"), \
+        f"the finished job was never recorded: {record()}"
+    rec = record()
     assert rec["result"] == {"rows": [{"null": ["x"], "a": 1}]}, rec
 
     again = BoundDriver(device={"id": "csv-1", "class": "generic"}, safety={"estop": False, "watchdog_s": None},
