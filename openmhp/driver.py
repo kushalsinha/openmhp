@@ -106,10 +106,30 @@ def reading_id() -> str:
     return "read_" + uuid.uuid4().hex[:8]
 
 
+def _json_keys(value):
+    """The value with every dict key a string, as JSON would write it.
+
+    Drivers return what their libraries hand them: csv.DictReader puts surplus fields under the
+    key None, and a reading may be keyed by numbers or tuples. JSON can only store string keys,
+    and sorting a dict whose keys mix None and str raises, so the digest and the stored record
+    both go through this one conversion. Applying it twice changes nothing, so a record read
+    back from disk digests the same as the one that was written.
+    """
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if not isinstance(k, str):
+                k = json.dumps(k) if k is None or isinstance(k, (bool, int, float)) else str(k)
+            out[k] = _json_keys(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_json_keys(v) for v in value]
+    return value
+
+
 def _digest(value) -> str:
     import hashlib
-    import json
-    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()[:12]
+    return hashlib.sha256(json.dumps(_json_keys(value), sort_keys=True, default=str).encode()).hexdigest()[:12]
 _TYPES = {"number", "integer", "boolean", "string", "object", "array"}
 _NOTED_DRY_RUN_LEASE = "needsLease"
 
@@ -1265,8 +1285,8 @@ class Driver:
             return
         try:
             d.mkdir(parents=True, exist_ok=True)
-            rec = {**job.snapshot(), "params": job.params,
-                   "device": (self._enforced.get("device") or {}).get("id")}
+            rec = _json_keys({**job.snapshot(), "params": job.params,
+                              "device": (self._enforced.get("device") or {}).get("id")})
             if rec.get("result") is not None:
                 blob = json.dumps(rec["result"], default=str)
                 if len(blob) > self.RESULT_INLINE:
@@ -1287,8 +1307,9 @@ class Driver:
             finally:
                 tmp.unlink(missing_ok=True)                    # a half-written one leaves nothing behind
             self._trim_jobs(d)
-        except OSError as e:
-            # Bookkeeping never breaks an instrument -- but a job record that quietly failed to
+        except Exception as e:                     # noqa: BLE001
+            # Bookkeeping never breaks an instrument, and a record that will not serialise must no
+            # more propagate than a disk error may -- but a job record that quietly failed to
             # arrive is how you later find a job nobody can account for, so say it once per job,
             # the way RunLog does when its own chain breaks.
             self.record_errors += 1
@@ -1411,11 +1432,20 @@ class Driver:
                 # the device state to be published together. Latching afterwards leaves a window
                 # in which an observer sees a failed job on an idle device.
                 self.state, self.fault_reason = "fault", fault_reason
-        self._persist_job(job)
-        if fault_reason:
-            self._run_fault_hook(fault_reason)
-        self._record_method_run(job)
-        self.notify("jobs/finished", {"job": job.snapshot()})
+        # The job is already published as finished, so what follows must all run: a failure in
+        # one step (a record that will not serialise, a hook that raises) must not skip the rest.
+        try:
+            self._persist_job(job)
+        except Exception:                          # noqa: BLE001
+            pass
+        try:
+            if fault_reason:
+                self._run_fault_hook(fault_reason)
+        finally:
+            try:
+                self._record_method_run(job)
+            finally:
+                self.notify("jobs/finished", {"job": job.snapshot()})
 
     def _job(self, jid: str) -> Job:
         job = self.jobs.get(jid)
