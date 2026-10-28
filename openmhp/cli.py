@@ -36,7 +36,7 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", help="lab | log | validate | conformance | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("target", help="lab | log | validate | inclusion | conformance | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
@@ -196,6 +196,10 @@ def main(argv=None):
     if a.target == "validate":              # mhp validate <device package folder>
         from .validate import main as vmain
         return vmain([a.verb, *a.args])
+
+    if a.target == "inclusion":             # mhp inclusion <device package folder> [--json]
+        from .inclusion import main as imain
+        return imain([a.verb, *a.args] if a.verb else [])
 
     if a.target == "log":                   # mhp log [since] | mhp log audit
         from .runs import RunLog

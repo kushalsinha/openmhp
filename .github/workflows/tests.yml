@@ -37,4 +37,28 @@ jobs:
           python tests/test_adapters.py
           python tests/test_runs.py
           python tests/test_safety_gates.py
+          python tests/test_inclusion.py
           python tests/test_methods.py
+
+  # The one check `main` requires, because this name does not change when the matrix does.
+  #
+  # GitHub names a matrix job after every dimension it has, so each leg above is reported as
+  # `test (ubuntu-latest, 3.12)`. Requiring those names in branch protection writes the matrix
+  # down in a second place, outside the repository, where it drifts: adding a leg leaves it
+  # unrequired, so it can fail without blocking anything, and renaming one leaves a required
+  # check that will never report again. This repository has had both.
+  #
+  # `needs` makes this job wait for every leg, so it is the matrix itself that decides what must
+  # pass, in the file the matrix lives in.
+  tests-complete:
+    needs: [test]
+    runs-on: ubuntu-latest
+    # always(), because without it a failed or cancelled matrix would *skip* this job, and GitHub
+    # counts a skipped required check as satisfied -- the gate would wave through exactly what it
+    # exists to catch. So it runs regardless and asks what the matrix actually did.
+    if: always()
+    steps:
+      - name: Every test leg passed
+        run: |
+          echo "test matrix: ${{ needs.test.result }}"
+          test "${{ needs.test.result }}" = "success"

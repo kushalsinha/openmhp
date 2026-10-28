@@ -44,6 +44,22 @@ def expect(code, fn):
     raise AssertionError(f"expected error {code}, but the call succeeded")
 
 
+def eventually(test, within=5.0, poll=0.02):
+    """Wait for something a background thread does, instead of sleeping long enough and hoping.
+
+    The watchdog runs on one shared scheduler thread whose sleep is set from the drivers it saw
+    when it last woke, so a newly leased device can go a quarter second before its first check.
+    A fixed sleep turns that into a test that passes on a quiet laptop and fails on a loaded CI
+    runner for the timer rather than for the watchdog.
+    """
+    deadline = time.time() + within
+    while time.time() < deadline:
+        if test():
+            return True
+        time.sleep(poll)
+    return False
+
+
 def register(target, driver):
     C._inprocess[target] = (driver, "")
 
@@ -95,8 +111,8 @@ def test_watchdog_stops_a_silent_lease_holder():
     w = drv(settings=[Setting("x", lambda v: None, limits={"min": 0, "max": 1})], safety={"watchdog_s": 0.1},
             estop=lambda: stops.append("stop"))
     w.rpc("session/acquire", {"ttl": 60}, "owner")            # a raw client that never renews
-    time.sleep(0.6)
-    assert w.state == "estop" and stops == ["stop"] and w.lease is None
+    assert eventually(lambda: w.state == "estop"), f"a silent holder was not stopped (state {w.state})"
+    assert stops == ["stop"] and w.lease is None
     w2 = drv(settings=[Setting("x", lambda v: None, limits={"min": 0, "max": 1})], safety={"watchdog_s": 0.2},
              estop=lambda: stops.append("stop2"))
     c = LocalDevice(w2)
@@ -126,8 +142,9 @@ def test_a_watchdog_can_hand_an_instrument_over_instead_of_stopping_it():
     expect(NotLeased.code, lambda: LocalDevice(d).call("actions/invoke", {"name": "electrolyse"}, _auto_lease=False))
     d.rpc("session/acquire", {"ttl": 60}, "controller")        # a controller that then dies
     jid = d.rpc("actions/invoke", {"name": "electrolyse"}, "controller")["job"]["id"]
-    time.sleep(0.7)
-    assert d.lease is None, "the dead holder kept the instrument"
+    # well inside the two-second electrolysis, so the assertions below are about a release that
+    # happened while the work carried on, not about a job that had time to finish
+    assert eventually(lambda: d.lease is None, within=1.5), "the dead holder kept the instrument"
     assert d.state == "busy" and not d.jobs[jid].cancel_requested, "the electrolysis was interrupted"
     assert stopped == [] and [(e["action"], e["stopped"], e["activeJobs"]) for e in heard] == [("release", False, [jid])]
     LocalDevice(d).acquire(ttl=60)                             # and another controller can take over
@@ -1640,13 +1657,72 @@ def test_the_record_cannot_be_edited_without_showing_it():
     first = LocalDevice(SimThermocycler())
     job = first.wait(first.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
     rec_file = HOME / "jobs" / "thermocycler-01" / f"{job['id']}.json"
-    rec = json.loads(rec_file.read_text(encoding="utf-8"))
+    # The record is written just after completion becomes visible, not inside the critical section
+    # that publishes it -- holding the device's state lock across a disk write would stall every
+    # other call. So a reader that polled jobs/status can arrive a moment early; the guarantee is
+    # that it never sees a torn record, which is why _persist_job moves one into place.
+    def finished_record():
+        try:
+            return json.loads(rec_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    assert eventually(lambda: (finished_record() or {}).get("result") == job["result"]), \
+        f"the finished job was never recorded: {finished_record()}"
+    rec = finished_record()
     assert rec["digest"] and rec["result"] == job["result"]
     rec["result"] = {"cycles_completed": 99}
     rec_file.write_text(json.dumps(rec), encoding="utf-8")
     restored = LocalDevice(SimThermocycler()).call("jobs/status", {"id": job["id"]})["job"]
     assert restored["result"] == {"cycles_completed": 99}   # still returned: dropping evidence is worse
     assert "does not match its own digest" in restored["unverified"], restored
+
+
+def test_a_job_record_is_not_lost_to_a_reader_holding_the_file():
+    """Windows refuses a replace onto a path somebody has open; POSIX does not, so this forces it.
+
+    The record is written beside and moved into place so a reader never sees it torn. On Windows
+    that move fails while a reader has the destination open -- Python's `open` does not ask for
+    share-delete -- and something polling the record every few milliseconds is exactly what an
+    auditor does. Losing the record to that would be worse than the torn read, because
+    `_persist_job` swallows OSError so bookkeeping can never break an instrument: the job would
+    simply never be accounted for. So the move waits for the reader, and if it truly cannot
+    write, it says so instead of leaving a silent hole.
+    """
+    import openmhp.driver as D
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+
+    real_replace, attempts = os.replace, []
+
+    def busy_twice(src, dst):                       # as a reader holding `dst` looks on Windows
+        attempts.append(dst)
+        if len(attempts) <= 2:
+            raise PermissionError(13, "The process cannot access the file because it is being used "
+                                      "by another process")
+        return real_replace(src, dst)
+
+    d = LocalDevice(SimThermocycler())
+    D.os.replace = busy_twice
+    try:
+        job = d.wait(d.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
+        rec_file = HOME / "jobs" / "thermocycler-01" / f"{job['id']}.json"
+        assert eventually(lambda: rec_file.is_file()), "the record never arrived"
+        assert json.loads(rec_file.read_text(encoding="utf-8"))["id"] == job["id"]
+        assert len(attempts) > 2, "the replace was not retried"
+    finally:
+        D.os.replace = real_replace
+
+    # and when it cannot be written at all, the instrument keeps working and the loss is reported
+    drvr = SimThermocycler()
+    c = LocalDevice(drvr)
+    D.os.replace = fails(PermissionError(13, "still busy"))
+    stderr, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        done = c.wait(c.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 0}], cycles=1))
+    finally:
+        warned, sys.stderr = sys.stderr.getvalue(), stderr
+        D.os.replace = real_replace
+    assert done["state"] == "done", "a failed record stopped the instrument"
+    assert drvr.record_errors >= 1 and "job history on disk is incomplete" in warned, warned
 
 
 def test_conformance_scores_a_device_behaviourally():
@@ -1750,6 +1826,187 @@ def test_a_result_with_mixed_key_types_is_persisted():
         time.sleep(0.02)
     assert "jobs/finished" in told, told
 
+
+# ------------------------------------------------- safety values are not a script's to change ---- #
+#
+# Scripts are code the host executes, and an agent writes them, so every route from a script to a
+# safety value is a route from the agent to its own limits. The routes below were each reachable;
+# one test per route, and each of them fails without the seal in the driver.
+def test_a_caller_cannot_raise_a_bound_through_the_answer_it_was_given():
+    """Every call that reports a bound used to hand back the very dict the gate consults, so a
+    caller working through the sanctioned API -- which is all a run script is ever given -- could
+    raise a limit with one assignment and no sandbox escape at all:
+
+        dev.limits()["settings"]["temp"]["max"] = 900        # and 900 was then enforced
+
+    What a device enforces is sealed when its package loads; what it reports is a copy of it.
+    """
+    moved = []
+    d = LocalDevice(drv(settings=[Setting("temp", moved.append, limits={"min": 4, "max": 105})],
+                        actions=[Action("go", lambda j, p: moved.append(("go", p)), limits={"secs": [0, 10]})]))
+    d.limits()["settings"]["temp"]["max"] = 900                      # safety/limits
+    d.limits()["actions"]["go"]["secs"][1] = 900
+    for s in d.describe("full")["settings"]:                         # describe, all three tiers
+        s["limits"]["max"] = 900
+    for s in d.describe("summary")["settings"]:
+        s["limits"]["max"] = 900
+    d.call("device/describe", {"select": {"settings": ["temp"]}})["settings"][0]["limits"]["max"] = 900
+    for s in d.call("settings/list")["settings"]:                    # the lists
+        s["limits"]["max"] = 900
+    for a in d.call("actions/list")["actions"]:
+        a["limits"]["secs"] = [0, 900]
+
+    expect(LimitViolation.code, lambda: d.write("temp", 900))
+    expect(LimitViolation.code, lambda: d.invoke("go", secs=900))
+    assert moved == []                                               # 900 never reached the hook
+    assert d.write("temp", 50)["ok"] and moved == [50]               # and the real bound still works
+    # the device also still *reports* what it enforces: an edited answer must not make describe lie,
+    # or an agent that reads a bound and plans against it is planning against something invented
+    assert d.limits()["settings"]["temp"]["max"] == 105
+    assert [s for s in d.describe("full")["settings"] if s["name"] == "temp"][0]["limits"]["max"] == 105
+    assert [s for s in d.describe("summary")["settings"] if s["name"] == "temp"][0]["limits"]["max"] == 105
+
+
+def test_a_caller_cannot_lower_an_approval_level_or_clear_an_interlock():
+    """`approval: confirm` is a person's decision and an interlock is a physical precondition.
+    Both were reachable the same way as a limit: edit the answer that reported them."""
+    moved = []
+    d = LocalDevice(drv(signals=[Signal("lid_closed", lambda: False)],
+                        actions=[Action("ask", lambda j, p: moved.append("ask"), approval="confirm"),
+                                 Action("move", lambda j, p: moved.append("move"), interlocks=["lid_closed"])]))
+    for answer in (d.call("actions/list")["actions"], d.describe("full")["actions"], d.describe("summary")["actions"]):
+        for a in answer:
+            a["approval"], a["interlocks"] = "auto", []
+    d.describe("full")["safety"]["interlocks"] = []
+    d.limits()["approval"]["ask"] = "auto"
+    d.limits()["interlocks"].clear()
+
+    expect(ApprovalRequired.code, lambda: d.invoke("ask"))
+    expect(InterlockOpen.code, lambda: d.invoke("move"))
+    assert moved == []
+    assert d.limits()["approval"]["ask"] == "confirm" and d.limits()["interlocks"] == ["lid_closed"]
+
+
+def test_a_caller_cannot_disarm_the_watchdog():
+    """The watchdog is what makes a lease mandatory and what stops an instrument whose controller
+    went silent. `describe()["safety"]` aliased the block it reads, so a script could switch the
+    dead man's switch off and keep the instrument."""
+    d = LocalDevice(drv(settings=[Setting("temp", lambda v: None, limits={"min": 4, "max": 105})],
+                        safety={"watchdog_s": 30, "watchdog_action": "estop"}))
+    d.describe("full")["safety"]["watchdog_s"] = None
+    d.describe("full")["safety"]["watchdog_action"] = "release"
+    d.describe("summary")["safety"]["watchdog_s"] = None
+    d.limits()["watchdog_s"] = None
+
+    assert d.driver.watchdog_s == 30.0 and d.driver.watchdog_action == "estop"
+    assert d.limits()["watchdog_s"] == 30.0
+    # _raw_call skips the SDK's automatic lease, so the lease requirement itself is what answers
+    e = expect(NotLeased.code, lambda: d._raw_call("settings/write", {"name": "temp", "value": 50}))
+    assert e.data["reason"] == "lease_required"
+
+
+def test_editing_the_enforced_rules_in_memory_stops_the_device_rather_than_the_limit():
+    """Reaching the sealed rules themselves -- through the object graph, or any other way a
+    same-process escape allows -- is detected at the gate. Ignoring the edit would be enough to
+    keep the instrument safe, but silence is the wrong answer: something tried to change what this
+    instrument enforces, and its owner should hear that rather than find out later."""
+    moved = []
+    drv_ = drv(settings=[Setting("temp", moved.append, limits={"min": 4, "max": 105})])
+    d = LocalDevice(drv_)
+    assert d.write("temp", 50)["ok"]
+
+    drv_._index["settings"]["temp"]["limits"]["max"] = 900           # straight at the sealed rules
+    e = expect(Forbidden.code, lambda: d.write("temp", 900))
+    assert "changed in memory" in e.message and "reload" in e.message
+    expect(Forbidden.code, lambda: d.write("temp", 50))              # nothing actuates until it is loaded again
+    assert moved == [50]
+
+    drv_._reindex()                   # the load path re-seals, from a reporting copy nothing edited
+    assert d.write("temp", 50)["ok"] and moved == [50, 50]
+    expect(LimitViolation.code, lambda: d.write("temp", 900))
+
+
+def test_a_run_script_cannot_import_the_host_it_runs_in():
+    """`openmhp.client` holds the in-process drivers, `openmhp.driver` the gate functions, `gc` the
+    object graph that reaches both. A script orchestrates instruments through `lab`; it has no
+    reason to import the host, and every attempt is refused and recorded."""
+    moved = []
+    b = Bridge(home=HOME / "t40")
+    register("local:probe.t40", drv(settings=[Setting("temp", moved.append, limits={"min": 4, "max": 105})]))
+    b.lab.targets["thermo"] = "local:probe.t40"
+    for script, named in (("from openmhp.client import _inprocess", "openmhp.client"),
+                          ("import openmhp.driver", "openmhp.driver"),
+                          ("from openmhp.fleet import Fleet", "openmhp.fleet"),
+                          ("import gc", "gc")):
+        r = b.call_tool("mhp_run", {"script": script})
+        assert not r["ok"] and named in r["error"], (named, r)
+    assert [e["attribute"] for e in b.log.recent if e["kind"] == "script/blocked"] == \
+        ["import:openmhp.client", "import:openmhp.driver", "import:openmhp.fleet", "import:gc"]
+    # what a real orchestration script imports still imports, and the device API still works
+    assert b.call_tool("mhp_run", {"script": "import time, csv, os, json, statistics, re\n"
+                                             "from pathlib import Path\n"
+                                             "lab['thermo'].write('temp', 50)"})["ok"]
+    assert moved == [50]
+
+
+def test_a_run_script_cannot_write_a_device_package_or_the_fleet_record():
+    """A package is what the runtime enforces and the fleet record is what a person accepted, so a
+    run that can write either is a run that can set its own limits. Its own run folder, which is
+    where a run's output belongs, stays writable."""
+    from openmhp.fleet import Fleet
+    home = HOME / "t41"
+    (home / "devices").mkdir(parents=True)
+    pkg = home / "devices" / "thermocycler-01"
+    shutil.copytree("openmhp/devices/thermocycler-01", pkg)
+    b = Bridge(fleet=Fleet(home / "fleet.json"))
+    did = b.call_tool("mhp_lab", {"op": "add", "target": str(pkg)})["added"]["id"]
+    desc, fleet_file = str(pkg / "descriptor.yaml"), str(home / "fleet.json")
+
+    r = b.call_tool("mhp_run", {"script": f"open({desc!r}, 'w').write('x')"})
+    assert not r["ok"] and "device package" in json.dumps(r["error"]), r
+    r = b.call_tool("mhp_run", {"script": f"open({fleet_file!r}, 'a').write('x')"})
+    assert not r["ok"] and "configuration" in json.dumps(r["error"]), r
+    assert "max: 105}" in (pkg / "descriptor.yaml").read_text(encoding="utf-8")       # untouched
+    assert json.loads(Path(fleet_file).read_text(encoding="utf-8"))["devices"][did]   # still a fleet record
+    assert [e["kind"] for e in b.log.recent if e["kind"] == "script/blocked"] == ["script/blocked"] * 2
+
+    assert b.call_tool("mhp_run", {"script": "import os\n"
+                                             "open(os.path.join(run_dir, 'out.csv'), 'w').write('a,b\\n')"})["ok"]
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", {"device": did, "name": "target_temperature",
+                                                                  "value": 300}))
+
+
+def test_a_package_edit_is_detected_with_the_size_and_timestamp_put_back():
+    """The pin was taken from each file's size and modification time, and both of those belong to
+    whoever writes the file: an edit that kept the byte count and put the timestamp back left the
+    descriptor loosened and the pin still matching, so the next load enforced a configuration
+    nobody accepted. It is taken over the bytes now."""
+    from openmhp.fleet import Fleet
+    home = HOME / "t42"
+    home.mkdir(parents=True)
+    pkg = home / "tc"
+    shutil.copytree("openmhp/devices/thermocycler-01", pkg)
+    b = Bridge(fleet=Fleet(home / "fleet.json"))
+    did = b.call_tool("mhp_lab", {"op": "add", "target": str(pkg)})["added"]["id"]
+    hot = {"device": did, "name": "target_temperature", "value": 300}
+    expect(LimitViolation.code, lambda: b.call_tool("mhp_write", hot))
+
+    desc = pkg / "descriptor.yaml"
+    st, text = desc.stat(), desc.read_text(encoding="utf-8")
+    loosened = text.replace("max: 105}", "max: 905}")                 # exactly as many bytes
+    assert len(loosened) == len(text) and loosened != text
+    desc.write_text(loosened, encoding="utf-8")
+    os.utime(desc, ns=(st.st_atime_ns, st.st_mtime_ns))               # and the same timestamp
+
+    for target in list(C._inprocess):
+        C.drop_inprocess(target)
+    b2 = Bridge(fleet=Fleet(home / "fleet.json"))                     # a restart
+    try:
+        b2.lab[did]
+        raise AssertionError("a loosened package nobody accepted was enforced")
+    except Exception as e:                                            # noqa: BLE001
+        assert "accepted it" in str(e), e
+    assert b2.call_tool("mhp_lab", {"op": "status"})["configuration_changed"] == [did]
 
 if __name__ == "__main__":
     failed = 0
