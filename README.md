@@ -394,7 +394,10 @@ questions, roadmap work, interoperability gaps, bugs, and design proposals belon
 | `openmhp/devices/` | Bundled reference devices and simulated twins |
 | `openmhp/recipes/` | Reusable multi-step procedures |
 | `supported-devices/` | Ready-made device packages for specific instruments, each with a simulated twin |
-| `tests/` | Simulator and fake-client coverage |
+| `openmhp/gateway.py` | `mhp gateway`: the relay agents reach when lab PCs sit behind a firewall |
+| `openmhp/relay.py` | Node side of the relay: `mhp node --join` dials out and serves through the gateway |
+| `docs/` | Deployment guides: [the relay](docs/relay.md), [firewalled labs](docs/firewalled-labs.md) |
+| `tests/` | Simulator and fake-client coverage, plus a relay end-to-end test |
 
 ## Project status
 
