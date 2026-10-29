@@ -36,7 +36,7 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", help="lab | log | validate | inclusion | conformance | skills | serve | node | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("target", help="lab | log | validate | inclusion | conformance | skills | serve | node | gateway | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
@@ -52,6 +52,13 @@ def main(argv=None):
     ap.add_argument("--uninstall-service", action="store_true", help="(node) remove a service installed with --install-service")
     ap.add_argument("--service-status", action="store_true", help="(node) is a service installed, and is it running")
     ap.add_argument("--dry-run-service", action="store_true", help="(node --install-service) print what would be written and run, but do neither")
+    ap.add_argument("--check", action="store_true", help="(node) check the packages and ports and say what to fix, without serving")
+    ap.add_argument("--name", help="(gateway init) the address lab PCs and agents will use for the gateway; (node --join) this PC's name at the gateway")
+    ap.add_argument("--listen", type=int, metavar="PORT", help="(gateway init|serve) TLS port, default 443")
+    ap.add_argument("--cert", metavar="FILE", help="(gateway init) TLS certificate from IT; a self-signed one is made otherwise")
+    ap.add_argument("--key", metavar="FILE", help="(gateway init) private key for --cert")
+    ap.add_argument("--join", nargs=2, metavar=("GATEWAY_URL", "CODE"), help="(node) pair this PC with a gateway once, using a code from `mhp gateway pair` there; later runs connect by themselves")
+    ap.add_argument("--no-relay", action="store_true", help="(node) serve locally only, even if this PC has joined a gateway")
     a = ap.parse_args(argv)
 
     def _serve_token():
@@ -64,6 +71,11 @@ def main(argv=None):
         drv = _load_driver(a.verb)
         return serve_http(drv, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
             else serve_stdio(drv)
+
+    if a.target == "gateway":               # mhp gateway init | serve | pair | add-agent <name> | check | status
+        from . import gateway
+        return gateway.main(a.verb, a.args, server_name=a.name, listen=a.listen, cert=a.cert, key=a.key, host=a.host,
+                            install_service=a.install_service, dry_run_service=a.dry_run_service)
 
     if a.target == "node":                  # mhp node <packages-dir> [--http BASE_PORT] [--install-service | ...]
         import threading
@@ -112,9 +124,39 @@ def main(argv=None):
         from .transport import device_token, device_token_file, is_loopback
         host = a.host or "0.0.0.0"              # a node exists to serve other machines; see the token below
         token = False if a.no_auth else (a.token or (None if is_loopback(host) else device_token(create=True)))
+
+        # preflight: say what is wrong in words a person at the bench can act on, before anything serves
+        import socket
+        problems = []
+        for i, folder in enumerate(folders):
+            if (folder / "config.example.json").is_file() and not (folder / "config.json").is_file():
+                copy = "copy" if os.name == "nt" else "cp"
+                problems.append(f"{folder.name}: no config.json yet. In that folder run:  {copy} config.example.json config.json"
+                                f"\n    then open config.json and fill in the serial numbers / ports / paths it asks for")
+            try:
+                with socket.socket() as sock:
+                    sock.bind((host, base + i))
+            except OSError:
+                problems.append(f"port {base + i} (for {folder.name}) is already in use. Is another `mhp node` running? "
+                                f"Close it (or `mhp node --service-status`), or start with  --http {base + 100}")
+        if problems:
+            print("\nBEFORE THIS PC CAN SERVE ITS INSTRUMENTS:", file=sys.stderr)
+            for pr in problems:
+                print(f"  - {pr}", file=sys.stderr)
+            print(f"\nthen run again:  mhp node {root}" + (f" --http {base}" if a.http else ""), file=sys.stderr)
+            if a.check or any("port" in pr for pr in problems):
+                return 1
+        elif a.check:
+            print(f"all {len(folders)} package(s) under {root} are ready to serve on ports {base}..{base + len(folders) - 1}", file=sys.stderr)
+            return 0
+
+        served, drivers = [], {}
         print(f"serving {len(folders)} package(s) from {root}, ports {base}..{base + len(folders) - 1}", file=sys.stderr)
         for i, folder in enumerate(folders):
             port = base + i
+            if any(folder.name in pr for pr in problems):
+                print(f"  {folder.name:24s} SKIPPED until config.json exists", file=sys.stderr)
+                continue
             try:
                 drv = load_driver(folder)
             except Exception as e:                          # noqa: BLE001  one bad package must not take the rest down
@@ -122,13 +164,46 @@ def main(argv=None):
                 continue
             threading.Thread(target=serve_http, args=(drv,), kwargs={"host": host, "port": port, "token": token},
                              daemon=True).start()
+            served.append((drv.descriptor["device"]["id"], port))
+            drivers[drv.descriptor["device"]["id"]] = drv
             print(f"  {drv.descriptor['device']['id']:24s} http://{host}:{port}  ({folder})", file=sys.stderr)
-        if token:
-            where = ("the token you supplied" if a.token else
+
+        # the relay: this PC dials OUT to a gateway so agents beyond the firewall can reach these devices
+        from . import relay as R
+        relay_cfg = None
+        if a.join:
+            try:
+                relay_cfg = R.join(a.join[0], a.join[1], drivers, name=a.name)
+                print(f"joined gateway {relay_cfg['gateway']} as '{relay_cfg['name']}'; saved to {R.NODE_FILE}", file=sys.stderr)
+            except SystemExit as e:
+                print(f"\nCOULD NOT JOIN THE GATEWAY: {e}\n  (the instruments are still served locally; fix the above and run the --join command again)", file=sys.stderr)
+        elif not a.no_relay:
+            relay_cfg = R.load_node_config()
+        relay_client = R.RelayClient(relay_cfg, drivers) if relay_cfg and drivers else None
+        if relay_client:
+            relay_client.start()
+
+        from .discovery import _local_ip
+        ip = host if host not in ("0.0.0.0", "::") else _local_ip()
+        tok_where = ("the token you supplied" if a.token else
                      "OPENMHP_DEVICE_TOKEN" if os.environ.get("OPENMHP_DEVICE_TOKEN") else str(device_token_file()))
-            print(f"these devices require 'Authorization: Bearer <token>' on /rpc and /events; the token is in "
-                  f"{where}.\n  On the machine running the bridge:  export OPENMHP_DEVICE_TOKEN=<token>\n"
-                  f"  GET /mhp.json stays open, so `mhp lab scan` still finds them.", file=sys.stderr)
+        print("\n" + "=" * 72 + f"\nThis PC now serves {len(served)} instrument(s). Leave this window open.", file=sys.stderr)
+        print(f"To keep serving after a reboot with no window open, run once:  mhp node {root} --install-service", file=sys.stderr)
+        if served:
+            print("\nAgents on the SAME network add the instruments with:", file=sys.stderr)
+            for did, port in served:
+                print(f"  mhp lab add http://{ip}:{port}", file=sys.stderr)
+        if token:
+            print(f"  and need the token in {tok_where}  (set OPENMHP_DEVICE_TOKEN=<token> on the agent machine)", file=sys.stderr)
+        if relay_client:
+            print(f"\nAgents beyond the firewall: this PC connects out to the gateway {relay_cfg['gateway']} as '{relay_cfg['name']}'.", file=sys.stderr)
+            print("  Nothing to open on the lab network. If the gateway is down, this PC keeps retrying by itself.", file=sys.stderr)
+        elif served:
+            print("\nAgents beyond the firewall: pair this PC with your lab's gateway once. Ask whoever runs it for a code", file=sys.stderr)
+            print(f"  (`mhp gateway pair` there), then:  mhp node {root} --join https://<gateway> <code>", file=sys.stderr)
+        if token is False and not is_loopback(host):
+            print("\nWARNING: --no-auth: anyone on this network can drive these instruments, and agents cannot be asked for approvals.", file=sys.stderr)
+        print("=" * 72, file=sys.stderr)
         print("advertising on the LAN if zeroconf is installed (pip install \"openmhp[all]\"); Ctrl-C to stop", file=sys.stderr)
         try:
             threading.Event().wait()
@@ -240,9 +315,9 @@ def main(argv=None):
         return serve_http(d, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
             else serve_stdio(d)
 
-    dev = connect(a.target, token=a.token)
     v, x = a.verb, a.args
     try:
+        dev = connect(a.target, token=a.token)
         if v == "find":      out = dev.call("directory/search", {"query": " ".join(x)})["results"]
         elif v == "describe":
             out = dev.call("device/describe", {"detail": x[0]} if x else {})

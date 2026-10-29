@@ -363,11 +363,18 @@ class HttpDevice(Device):
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
-            if e.code != 401:                    # a refusal the device meant to make comes back as JSON-RPC
-                raise
-            raise _remote(Forbidden.code, f"{self.url} requires a bearer token: set OPENMHP_DEVICE_TOKEN to the "
-                                          "token on the device's host (~/.openmhp/device_token there), or pass "
-                                          "token=... to connect()", {"status": 401}) from None
+            if e.code == 401:
+                raise _remote(Forbidden.code, f"{self.url} requires a bearer token: set OPENMHP_DEVICE_TOKEN to the "
+                                              "token on the device's host (~/.openmhp/device_token there), or pass "
+                                              "token=... to connect()", {"status": 401}) from None
+            # a gateway (SPEC 9.2) answers 404/503/504 with {"error": "<what happened, in words>"}: say that
+            try:
+                detail = json.loads(e.read() or b"{}").get("error")
+            except (ValueError, AttributeError):
+                detail = None
+            if isinstance(detail, str):
+                raise _remote(-32000, f"{self.url}: {detail}", {"status": e.code}) from None
+            raise
 
     def _start_events(self):
         """Consume GET /events (Server-Sent Events) on a daemon thread and reconnect if it drops."""
