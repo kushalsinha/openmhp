@@ -27,6 +27,7 @@ import queue
 import re
 import secrets
 import shutil
+import errno
 import socket
 import ssl
 import subprocess
@@ -436,13 +437,28 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
     return srv
 
 
-def serve(host: str = "0.0.0.0", port: int | None = None) -> int:
+def bind_address(state: dict) -> str | None:
+    """The one address this gateway answers on: the name given at `init`, resolved. Never every interface."""
+    name = state["server_name"]
+    try:
+        return socket.gethostbyname(name)
+    except OSError:
+        return None
+
+
+def serve(host: str | None = None, port: int | None = None) -> int:
     state = load()
     if state is None:
         say("no gateway on this machine yet. Run `mhp gateway init` first.")
         return 1
     gw = Gateway(state)
     port = port or state.get("listen", 443)
+    if not host:
+        host = bind_address(state)
+        if host is None:
+            say(f"'{state['server_name']}' does not resolve to an address on this network, so there is nothing to listen on.",
+                "  Run `mhp gateway init --name <this machine's DNS name or IP>` with a name that resolves here.")
+            return 1
     try:
         srv = make_server(gw, host, port)
     except PermissionError:
@@ -450,7 +466,12 @@ def serve(host: str = "0.0.0.0", port: int | None = None) -> int:
             f"  mhp gateway init --listen 8443   and tell lab PCs and agents to use https://{state['server_name']}:8443")
         return 1
     except OSError as e:
-        say(f"cannot listen on port {port}: {e}. Is another `mhp gateway serve` running?")
+        if getattr(e, "errno", None) in (errno.EADDRNOTAVAIL, 10049):      # 10049 is Windows' WSAEADDRNOTAVAIL
+            say(f"{state['server_name']} resolves to {host}, but that address is not on this machine.",
+                "  The gateway listens only on the address it was named with, so run it on that machine, or",
+                f"  re-run `mhp gateway init --name <this machine's name or IP>` here.  (`--host <address>` overrides for one run.)")
+            return 1
+        say(f"cannot listen on {host}:{port}: {e}. Is another `mhp gateway serve` running?")
         return 1
     say(f"MHP gateway '{state['server_name']}' listening on https://{host}:{port}",
         f"  lab PCs join with:   mhp node <devices folder> --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair`>",
@@ -496,7 +517,8 @@ def init(*, server_name: str | None = None, listen: int | None = None, cert: str
     say("", "Next:", "  1. mhp gateway serve            (add --install-service to keep it running across reboots)",
         "  2. mhp gateway pair             then run the printed line on each lab PC",
         "  3. mhp gateway add-agent <name> for every machine that runs an AI agent",
-        f"  4. the only network requirement: lab PCs and agent machines must reach {name}:{port}. Nothing inbound to the lab.")
+        f"  4. the only network requirement: lab PCs and agent machines must reach {name}:{port} (over the office network or the VPN).",
+        "     The gateway listens on that address only. Nothing inbound to the lab.")
     return 0
 
 
@@ -661,7 +683,7 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
                 say(f"  {step}")
             say(("installed. " + r.get("note", "")) if r["ok"] else f"FAILED: {r.get('error') or 'see above'}")
             return 0 if r["ok"] else 1
-        return serve(host or "0.0.0.0", listen)
+        return serve(host, listen)
     if verb == "pair":
         return pair()
     if verb == "add-agent":

@@ -69,6 +69,13 @@ def wait_quiet(node, timeout):
     raise TimeoutError("node client did not stop polling")
 
 
+def test_gateway_binds_only_the_address_it_was_named_with():
+    from openmhp import gateway as G
+    assert G.bind_address({"server_name": "127.0.0.1"}) == "127.0.0.1"
+    assert G.bind_address({"server_name": "localhost"}) in ("127.0.0.1", "::1")
+    assert G.bind_address({"server_name": "nosuchhost.invalid"}) is None     # serve() then refuses with a sentence
+
+
 def test_relay_end_to_end():
     from openmhp import gateway as G, relay as R
     from openmhp.client import RemoteError, connect
@@ -217,5 +224,6 @@ if __name__ == "__main__":
     if SKIP:
         print("skipped:", SKIP)
     else:
+        test_gateway_binds_only_the_address_it_was_named_with()
         test_relay_end_to_end()
         print("ok: relay end to end")
