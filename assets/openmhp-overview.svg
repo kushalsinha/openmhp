@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">OpenMHP connects AI agents to physical devices</title>
+  <desc id="desc">AI coding, autonomous, and science agents send intent through OpenMHP and receive results. OpenMHP sends commands to laboratory instruments, automation, robotics, and existing control stacks such as OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot and MQTT, and receives telemetry. Device-side safety enforces limits, interlocks, approvals, and emergency stop. A dashed line marks the lab firewall between OpenMHP and the devices: lab PCs dial out through it, nothing is opened inbound.</desc>
+  <style>
+    :root{--bg:#edf1ef;--grid:#dbe2de;--card:#f8faf9;--line:#c7d1cc;--ink:#172126;--mute:#63737a;--green:#087665;--green-bg:#dcefe9;--amber:#a9600d;--amber-bg:#f7e8d2;--wire:#84958e}
+    @media(prefers-color-scheme:dark){:root{--bg:#171d20;--grid:#252e31;--card:#1e272a;--line:#354246;--ink:#e6ece9;--mute:#93a19c;--green:#4bc1a5;--green-bg:#17332d;--amber:#e5a14b;--amber-bg:#38291a;--wire:#84958e}}
+    text{font-family:"Instrument Sans","Helvetica Neue",Arial,sans-serif;fill:var(--ink)}
+    .section{font-size:17px;font-weight:700;letter-spacing:2.2px;fill:var(--mute)}
+    .title{font-size:20px;font-weight:700}.sub{font-size:16px;fill:var(--mute)}
+    .micro{font-size:13px;fill:var(--mute)}.flow{font-size:13px;fill:var(--mute)}
+    .card{fill:var(--card);stroke:var(--line)}
+  </style>
+  <defs>
+    <pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="var(--wire)"/></marker>
+  </defs>
+  <rect x="1" y="1" width="1198" height="498" rx="18" fill="var(--bg)" stroke="var(--line)"/>
+  <rect x="1" y="1" width="1198" height="498" rx="18" fill="url(#grid)"/>
+
+  <text class="section" x="32" y="58">AI AGENTS</text>
+  <g>
+    <rect class="card" x="32" y="82" width="310" height="88" rx="10"/>
+    <text class="title" x="52" y="118">Coding agents</text><text class="sub" x="52" y="145">Claude Code · Codex</text>
+    <rect class="card" x="32" y="192" width="310" height="88" rx="10"/>
+    <text class="title" x="52" y="228">Autonomous agents</text><text class="sub" x="52" y="255">OpenClaw · Hermes</text>
+    <rect class="card" x="32" y="302" width="310" height="88" rx="10"/>
+    <text class="title" x="52" y="338">Science agents</text><text class="sub" x="52" y="365">Claude Science · Open Science</text>
+    <text class="sub" x="32" y="424">Any model. Any harness.</text>
+  </g>
+
+  <g>
+    <rect x="420" y="34" width="360" height="420" rx="16" fill="var(--green-bg)" stroke="var(--green)" stroke-width="1.5"/>
+    <text x="600" y="76" text-anchor="middle" font-size="15" font-weight="700" letter-spacing="2" fill="var(--green)">MCP SERVER</text>
+    <rect x="560" y="94" width="80" height="76" rx="20" fill="var(--green)"/>
+    <text x="600" y="141" text-anchor="middle" font-size="23" font-weight="700" style="fill:#fff">MHP</text>
+    <text x="600" y="211" text-anchor="middle" font-size="31" font-weight="700">OpenMHP</text>
+    <text x="600" y="246" text-anchor="middle" font-size="18" fill="var(--mute)">One safe interface to the</text>
+    <text x="600" y="270" text-anchor="middle" font-size="18" fill="var(--mute)">physical world</text>
+    <g font-size="14" text-anchor="middle">
+      <rect x="453" y="294" width="54" height="30" rx="15" fill="var(--card)" stroke="var(--green)"/><text x="480" y="314">find</text>
+      <rect x="515" y="294" width="80" height="30" rx="15" fill="var(--card)" stroke="var(--green)"/><text x="555" y="314">describe</text>
+      <rect x="603" y="294" width="54" height="30" rx="15" fill="var(--card)" stroke="var(--green)"/><text x="630" y="314">read</text>
+      <rect x="665" y="294" width="56" height="30" rx="15" fill="var(--card)" stroke="var(--green)"/><text x="693" y="314">write</text>
+      <rect x="729" y="294" width="38" height="30" rx="15" fill="var(--card)" stroke="var(--green)"/><text x="748" y="314">act</text>
+    </g>
+    <rect x="444" y="342" width="312" height="66" rx="10" fill="var(--amber-bg)"/>
+    <text x="600" y="370" text-anchor="middle" font-size="16" font-weight="700" fill="var(--amber)">Safety at the device</text>
+    <text x="600" y="393" text-anchor="middle" font-size="14" fill="var(--mute)">Limits · interlocks · approvals · e-stop</text>
+    <text class="micro" x="600" y="434" text-anchor="middle">11 stable tools · stdio or HTTP</text>
+  </g>
+
+  <g stroke="var(--wire)" stroke-width="2" fill="none">
+    <path d="M354 226H408" marker-end="url(#arrow)"/><path d="M408 270H354" marker-end="url(#arrow)"/>
+    <path d="M792 226H846" marker-end="url(#arrow)"/><path d="M846 270H792" marker-end="url(#arrow)"/>
+  </g>
+  <text class="flow" x="381" y="214" text-anchor="middle">intent</text><text class="flow" x="381" y="291" text-anchor="middle">results</text>
+  <text class="flow" x="819" y="214" text-anchor="middle">commands</text><text class="flow" x="819" y="291" text-anchor="middle">telemetry</text>
+  <g stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="6 5" fill="none" opacity="0.85">
+    <path d="M819 70V196"/><path d="M819 304V440"/>
+  </g>
+  <text class="micro" x="800" y="60" font-weight="700" letter-spacing="1.5" fill="var(--amber)">LAB FIREWALL</text>
+  <text class="micro" x="819" y="460" text-anchor="middle">lab PCs dial out</text>
+  <text class="micro" x="819" y="476" text-anchor="middle">nothing opened inbound</text>
+
+  <text class="section" x="1168" y="58" text-anchor="end">PHYSICAL DEVICES</text>
+  <g>
+    <rect class="card" x="858" y="82" width="310" height="88" rx="10"/>
+    <text class="title" x="878" y="118">Lab instruments</text><text class="sub" x="878" y="143">Thermocyclers · HPLC ·</text><text class="sub" x="878" y="164">microscopes</text>
+    <rect class="card" x="858" y="192" width="310" height="88" rx="10"/>
+    <text class="title" x="878" y="228">Automation &amp; robotics</text><text class="sub" x="878" y="255">Liquid handlers · robot arms</text>
+    <rect class="card" x="858" y="302" width="310" height="88" rx="10"/>
+    <text class="title" x="878" y="338">Existing control stacks</text><text class="sub" x="878" y="363">OPC UA · ROS 2 · SiLA 2 ·</text><text class="sub" x="878" y="384">MADSci · PyLabRobot · MQTT</text>
+    <text class="sub" x="1168" y="424" text-anchor="end">One device package each.</text>
+  </g>
+</svg>

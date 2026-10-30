@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">One call through the relay</title>
+  <desc id="desc">A sequence diagram with three columns: the agent, the gateway and the lab PC, with the lab firewall between the last two. The agent posts a request with its token to the device URL on the gateway. The gateway checks the token and queues the request. The lab PC already has a long-poll open on /relay/next; the gateway hands it the request once. The driver on the lab PC runs it, enforcing limits, interlocks, approvals and e-stop. The lab PC posts the reply, and the gateway returns it to the agent. Events flow the same way as a batch to the gateway and as server-sent events to the agent. If the lab PC is offline the agent gets 503 at once; if it does not answer in time, 504; in both cases the request is dropped and never re-sent.</desc>
+  <style>
+    :root{--bg:#edf1ef;--grid:#dbe2de;--card:#f8faf9;--line:#c7d1cc;--ink:#172126;--mute:#63737a;--green:#087665;--green-bg:#dcefe9;--amber:#a9600d;--amber-bg:#f7e8d2;--wire:#84958e}
+    @media(prefers-color-scheme:dark){:root{--bg:#171d20;--grid:#252e31;--card:#1e272a;--line:#354246;--ink:#e6ece9;--mute:#93a19c;--green:#4bc1a5;--green-bg:#17332d;--amber:#e5a14b;--amber-bg:#38291a;--wire:#84958e}}
+    text{font-family:"Instrument Sans","Helvetica Neue",Arial,sans-serif;fill:var(--ink)}
+    .title{font-size:19px;font-weight:700}.sub{font-size:14.5px;fill:var(--mute)}
+    .micro{font-size:13px;fill:var(--mute)}
+    .mono{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:13.5px}
+    .step{font-size:13px;font-weight:700;fill:#fff}
+    .card{fill:var(--card);stroke:var(--line)}
+  </style>
+  <defs>
+    <pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="var(--wire)"/></marker>
+    <marker id="arrowg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="var(--green)"/></marker>
+  </defs>
+  <rect x="1" y="1" width="1198" height="618" rx="18" fill="var(--bg)" stroke="var(--line)"/>
+  <rect x="1" y="1" width="1198" height="618" rx="18" fill="url(#grid)"/>
+
+  <!-- lifeline heads -->
+  <g>
+    <rect class="card" x="90" y="28" width="240" height="56" rx="10"/>
+    <text class="title" x="210" y="52" text-anchor="middle">Agent</text><text class="sub" x="210" y="72" text-anchor="middle">mhp-mcp on your laptop</text>
+    <rect x="480" y="28" width="240" height="56" rx="10" fill="var(--green-bg)" stroke="var(--green)" stroke-width="1.5"/>
+    <text class="title" x="600" y="52" text-anchor="middle">Gateway</text><text class="sub" x="600" y="72" text-anchor="middle">company network</text>
+    <rect class="card" x="870" y="28" width="240" height="56" rx="10"/>
+    <text class="title" x="990" y="52" text-anchor="middle">Lab PC</text><text class="sub" x="990" y="72" text-anchor="middle">mhp node, behind the firewall</text>
+  </g>
+  <g stroke="var(--line)" stroke-width="1.5" stroke-dasharray="4 5" fill="none">
+    <path d="M210 84V470"/><path d="M600 84V470"/><path d="M990 84V470"/>
+  </g>
+  <!-- firewall -->
+  <g stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="6 5" fill="none" opacity="0.9"><path d="M795 112V470"/></g>
+  <text class="micro" x="795" y="106" text-anchor="middle" font-weight="700" letter-spacing="1.5" fill="var(--amber)">LAB FIREWALL</text>
+
+  <!-- step 0: the poll is already open -->
+  <g stroke="var(--wire)" stroke-width="2" fill="none"><path d="M980 140H612" marker-end="url(#arrow)"/></g>
+  <circle cx="990" cy="140" r="11" fill="var(--wire)"/><text class="step" x="990" y="144.5" text-anchor="middle">0</text>
+  <text class="mono" x="796" y="130" text-anchor="middle">GET /relay/next</text>
+  <text class="micro" x="796" y="158" text-anchor="middle">already open: the lab PC waits here for work, up to 25 s, then asks again</text>
+
+  <!-- step 1: agent request -->
+  <g stroke="var(--wire)" stroke-width="2" fill="none"><path d="M222 190H588" marker-end="url(#arrow)"/></g>
+  <circle cx="210" cy="190" r="11" fill="var(--wire)"/><text class="step" x="210" y="194.5" text-anchor="middle">1</text>
+  <text class="mono" x="405" y="180" text-anchor="middle">POST /&lt;node&gt;/&lt;device&gt;/rpc</text>
+  <text class="micro" x="405" y="208" text-anchor="middle">Authorization: Bearer &lt;agent token&gt; · the usual JSON-RPC body</text>
+
+  <!-- step 2: gateway note -->
+  <rect x="486" y="226" width="228" height="58" rx="8" fill="var(--green-bg)" stroke="var(--green)"/>
+  <circle cx="600" cy="226" r="11" fill="var(--green)"/><text class="step" x="600" y="230.5" text-anchor="middle">2</text>
+  <text class="micro" x="600" y="252" text-anchor="middle">checks the token · queues the request</text>
+  <text class="micro" x="600" y="270" text-anchor="middle">client = the agent's name · approvals carried</text>
+
+  <!-- step 3: handed to the node -->
+  <g stroke="var(--wire)" stroke-width="2" fill="none"><path d="M612 310H978" marker-end="url(#arrow)"/></g>
+  <circle cx="600" cy="310" r="11" fill="var(--wire)"/><text class="step" x="600" y="314.5" text-anchor="middle">3</text>
+  <text class="mono" x="796" y="300" text-anchor="middle">the request, once</text>
+  <text class="micro" x="796" y="328" text-anchor="middle">answers the open poll; a second copy is never sent</text>
+
+  <!-- step 4: driver note -->
+  <rect x="876" y="346" width="228" height="58" rx="8" fill="var(--amber-bg)"/>
+  <circle cx="990" cy="346" r="11" fill="var(--amber)"/><text class="step" x="990" y="350.5" text-anchor="middle">4</text>
+  <text class="micro" x="990" y="372" text-anchor="middle" font-weight="700" fill="var(--amber)">the driver runs it, on the bench</text>
+  <text class="micro" x="990" y="390" text-anchor="middle">limits · interlocks · approvals · e-stop</text>
+
+  <!-- step 5: reply -->
+  <g stroke="var(--wire)" stroke-width="2" fill="none"><path d="M978 430H612" marker-end="url(#arrow)"/></g>
+  <circle cx="990" cy="430" r="11" fill="var(--wire)"/><text class="step" x="990" y="434.5" text-anchor="middle">5</text>
+  <text class="mono" x="796" y="420" text-anchor="middle">POST /relay/reply</text>
+  <text class="micro" x="796" y="448" text-anchor="middle">the result, matched to the request by its id</text>
+
+  <!-- step 6: result -->
+  <g stroke="var(--wire)" stroke-width="2" fill="none"><path d="M588 430H222" marker-end="url(#arrow)"/></g>
+  <circle cx="600" cy="430" r="11" fill="var(--wire)"/><text class="step" x="600" y="434.5" text-anchor="middle">6</text>
+  <text class="mono" x="405" y="420" text-anchor="middle">200 · the result</text>
+  <text class="micro" x="405" y="448" text-anchor="middle">to the agent, as if the device were on the LAN</text>
+
+  <!-- events + failure bands -->
+  <rect class="card" x="40" y="490" width="548" height="104" rx="10"/>
+  <text class="title" x="60" y="518" font-size="16">Events take the same road</text>
+  <text class="micro" x="60" y="542">The driver's notifications go up as a batch, <tspan class="mono">POST /relay/events</tspan>, within half a second.</text>
+  <text class="micro" x="60" y="562">The gateway streams them to the agent at <tspan class="mono">/&lt;node&gt;/&lt;device&gt;/events</tspan> as</text>
+  <text class="micro" x="60" y="582">server-sent events, exactly like a device on the LAN.</text>
+
+  <rect x="612" y="490" width="548" height="104" rx="10" fill="var(--amber-bg)"/>
+  <text class="title" x="632" y="518" font-size="16" fill="var(--amber)">Once, or not at all</text>
+  <text class="micro" x="632" y="542">Lab PC offline (no poll for 45 s): the agent gets <tspan font-weight="700">503</tspan> at once, naming the PC.</text>
+  <text class="micro" x="632" y="562">No reply in 120 s (<tspan class="mono">X-MHP-Timeout</tspan> raises it): <tspan font-weight="700">504</tspan>.</text>
+  <text class="micro" x="632" y="582">Either way the request is dropped and never re-sent. The agent checks the job first.</text>
+</svg>
