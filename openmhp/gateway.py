@@ -430,6 +430,7 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
     srv = ThreadingHTTPServer((host, port), H)
     srv.daemon_threads = True
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2    # nothing older answers here
     ctx.load_cert_chain(gw.state["cert"], gw.state["key"])
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     return srv
