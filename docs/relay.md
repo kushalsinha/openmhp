@@ -14,8 +14,9 @@ either finishes or prints the one thing to do next. No files to edit.
 
 ## On the gateway machine, once
 
-Any always-on machine the lab PCs and the agent machines can reach: a small VM in the office network
-or in the company cloud. `pip install openmhp`, then:
+Any always-on machine on the enterprise network that the lab PCs and the agent machines can reach:
+a desktop or small VM in the office. Someone working from home reaches it the moment their VPN is
+up, exactly as they would at their desk. `pip install openmhp`, then:
 
 ```
 mhp gateway init
@@ -23,8 +24,9 @@ mhp gateway serve --install-service
 ```
 
 `init` asks for the address others will use and the port (press Enter for the defaults), and makes a
-certificate if IT has not given you one (`--cert`/`--key` when they do). `serve` runs the gateway;
-`--install-service` keeps it running across reboots.
+certificate if IT has not given you one (`--cert`/`--key` when they do). `serve` runs the gateway and
+listens on **that one address only**, never on every interface; if the name does not resolve to this
+machine it says so and stops. `--install-service` keeps it running across reboots.
 
 ## For each lab PC
 
