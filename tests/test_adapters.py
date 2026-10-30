@@ -598,7 +598,8 @@ def test_cli_node_serves_every_package_in_a_directory():
         proc.terminate()
         _, err = proc.communicate(timeout=5)
     assert "broken" in err and "SKIPPED" in err                    # the bad package didn't take the process down
-    assert f"arm-01" in err and f"http://0.0.0.0:{port}" in err
+    assert f"arm-01" in err and f"http://127.0.0.1:{port}" in err   # loopback unless --host says otherwise
+    assert "No other machine can reach these ports" in err
     shutil.rmtree(root, ignore_errors=True)
 
 

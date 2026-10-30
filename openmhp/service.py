@@ -73,30 +73,94 @@ def windows_startup_script(packages_dir: str | Path, http_base: int) -> str:
 
 
 # ---- paths --------------------------------------------------------------------------------
-def _systemd_unit_path() -> Path:
-    return Path.home() / ".config" / "systemd" / "user" / f"{LABEL}.service"
+def _systemd_unit_path(label: str = LABEL) -> Path:
+    return Path.home() / ".config" / "systemd" / "user" / f"{label}.service"
 
 
-def _launchd_plist_path() -> Path:
-    return Path.home() / "Library" / "LaunchAgents" / "com.openmhp.node.plist"
+def _launchd_plist_path(label: str = LABEL) -> Path:
+    short = "node" if label == LABEL else label.removeprefix("openmhp-")
+    return Path.home() / "Library" / "LaunchAgents" / f"com.openmhp.{short}.plist"
 
 
-def _windows_startup_path() -> Path:
+def _windows_startup_path(label: str = LABEL) -> Path:
     import os
     startup = os.environ.get("APPDATA")
     base = Path(startup) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" if startup else Path.home()
-    return base / f"{LABEL}.bat"
+    return base / f"{label}.bat"
 
 
-def target_path() -> Path:
+def target_path(label: str = LABEL) -> Path:
     system = platform.system()
     if system == "Linux":
-        return _systemd_unit_path()
+        return _systemd_unit_path(label)
     if system == "Darwin":
-        return _launchd_plist_path()
+        return _launchd_plist_path(label)
     if system == "Windows":
-        return _windows_startup_path()
-    raise NotImplementedError(f"no service integration for {system!r} yet; run `mhp node` in a terminal that stays open")
+        return _windows_startup_path(label)
+    raise NotImplementedError(f"no service integration for {system!r} yet; run the command in a terminal that stays open")
+
+
+def _content(label: str, argv: list[str], description: str) -> str:
+    """Service definition for any long-running `python -m openmhp.cli ...` command, per OS."""
+    system = platform.system()
+    cmd = " ".join(argv)
+    if system == "Linux":
+        return ("[Unit]\n" f"Description={description}\n" "After=network-online.target\n\n"
+                "[Service]\n" f"ExecStart={cmd}\n" "Restart=on-failure\nRestartSec=3\n\n" "[Install]\nWantedBy=default.target\n")
+    if system == "Darwin":
+        short = "node" if label == LABEL else label.removeprefix("openmhp-")
+        log = Path.home() / ".openmhp" / f"{short}.log"
+        args = "".join(f"      <string>{a}</string>\n" for a in argv)
+        return ('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n'
+                f"  <key>Label</key><string>com.openmhp.{short}</string>\n  <key>ProgramArguments</key>\n  <array>\n{args}  </array>\n"
+                "  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n"
+                f"  <key>StandardOutPath</key><string>{log}</string>\n  <key>StandardErrorPath</key><string>{log}</string>\n"
+                "</dict>\n</plist>\n")
+    if system == "Windows":
+        quoted = " ".join(f'"{a}"' if " " in a else a for a in argv)
+        return f'@echo off\r\nstart "" /min {quoted}\r\n'
+    raise NotImplementedError(f"no service integration for {system!r} yet; run the command in a terminal that stays open")
+
+
+def install_command(label: str, argv: list[str], description: str, dry_run: bool = False) -> dict:
+    """Install any openmhp command as a login/boot service. Never raises."""
+    system = platform.system()
+    result = {"system": system, "dry_run": dry_run, "ok": True, "steps": []}
+    try:
+        path = target_path(label)
+        text = _content(label, argv, description)
+    except NotImplementedError as e:
+        return {**result, "ok": False, "error": str(e), "path": "", "content": ""}
+    result.update(path=str(path), content=text, command=" ".join(argv))
+    if dry_run:
+        result["note"] = "dry run: nothing was written or enabled"
+        return result
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        result["steps"].append(f"wrote {path}")
+        if system == "Linux":
+            for cmd in (["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", f"{label}.service"]):
+                r = subprocess.run(cmd, capture_output=True, text=True)
+                result["steps"].append(f"{' '.join(cmd)}: {'ok' if r.returncode == 0 else r.stderr.strip()[:200]}")
+                if r.returncode != 0:
+                    result["ok"] = False
+            if result["ok"]:
+                result["note"] = ("running now, and at every login. On a headless machine where nobody stays logged in, "
+                                  "also run: loginctl enable-linger $USER")
+        elif system == "Darwin":
+            r = subprocess.run(["launchctl", "load", "-w", str(path)], capture_output=True, text=True)
+            result["steps"].append(f"launchctl load -w: {'ok' if r.returncode == 0 else r.stderr.strip()[:200]}")
+            result["ok"] = r.returncode == 0
+            if result["ok"]:
+                result["note"] = "running now, and at every login."
+        elif system == "Windows":
+            result["note"] = "will start at the next login. To start it now too, run the file it just wrote."
+    except OSError as e:
+        result["ok"] = False
+        result["error"] = f"{type(e).__name__}: {e}"
+    return result
 
 
 def content_for(packages_dir: str | Path, http_base: int) -> str:

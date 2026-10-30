@@ -307,12 +307,14 @@ mhp node ~/instruments --http 18900
 mhp node ~/instruments --http 18900 --install-service
 ```
 
-A node serves other machines, so it generates a token the first time it starts
-(`~/.openmhp/device_token`) and requires `Authorization: Bearer <token>` on `/rpc` and `/events`.
-Copy it to the machine running the bridge (`export OPENMHP_DEVICE_TOKEN=...`); discovery stays
-open, so `mhp lab scan` still finds the devices. `--host 127.0.0.1` keeps a node to its own
-machine and needs no token; `--no-auth` serves the network without one, and callers from off the
-machine can then no longer confirm approval-gated operations.
+A node listens on `127.0.0.1` only, so by default no other machine can reach its ports; agents
+beyond the lab reach it through the relay (`--join`, see `docs/relay.md`), which opens nothing
+inbound. To serve agents on the same network directly, pass `--host <this PC's LAN address>`: the
+node then generates a token the first time it starts (`~/.openmhp/device_token`) and requires
+`Authorization: Bearer <token>` on `/rpc` and `/events`. Copy it to the machine running the bridge
+(`export OPENMHP_DEVICE_TOKEN=...`); discovery stays open, so `mhp lab scan` still finds the
+devices. `--no-auth` serves the network without one, and callers from off the machine can then no
+longer confirm approval-gated operations.
 
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of
@@ -394,7 +396,10 @@ questions, roadmap work, interoperability gaps, bugs, and design proposals belon
 | `openmhp/devices/` | Bundled reference devices and simulated twins |
 | `openmhp/recipes/` | Reusable multi-step procedures |
 | `supported-devices/` | Ready-made device packages for specific instruments, each with a simulated twin |
-| `tests/` | Simulator and fake-client coverage |
+| `openmhp/gateway.py` | `mhp gateway`: the relay agents reach when lab PCs sit behind a firewall |
+| `openmhp/relay.py` | Node side of the relay: `mhp node --join` dials out and serves through the gateway |
+| `docs/` | Deployment guides: [the relay](docs/relay.md), [firewalled labs](docs/firewalled-labs.md) |
+| `tests/` | Simulator and fake-client coverage, plus a relay end-to-end test |
 
 ## Project status
 

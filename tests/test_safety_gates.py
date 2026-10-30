@@ -112,7 +112,8 @@ def test_watchdog_stops_a_silent_lease_holder():
             estop=lambda: stops.append("stop"))
     w.rpc("session/acquire", {"ttl": 60}, "owner")            # a raw client that never renews
     assert eventually(lambda: w.state == "estop"), f"a silent holder was not stopped (state {w.state})"
-    assert stops == ["stop"] and w.lease is None
+    # the stop hook runs on its own thread after the state flips, so wait for it as well
+    assert eventually(lambda: stops == ["stop"] and w.lease is None), f"stops={stops} lease={w.lease}"
     w2 = drv(settings=[Setting("x", lambda v: None, limits={"min": 0, "max": 1})], safety={"watchdog_s": 0.2},
              estop=lambda: stops.append("stop2"))
     c = LocalDevice(w2)

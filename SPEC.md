@@ -658,6 +658,28 @@ This is how a scientist adds an instrument without leaving the conversation: *"f
 
 **Authentication.** The device HTTP transport takes a bearer token: `Authorization: Bearer <token>` on `POST /rpc` and `GET /events`, with `GET /mhp.json` left open as the device's nameplate so discovery and `mhp lab scan` keep working. A reference server requires none while it is bound to loopback, where the operating system is already the boundary, and generates one the moment it binds an address another machine can reach (`OPENMHP_DEVICE_TOKEN`, or `~/.openmhp/device_token` created with mode 0600), printing where to find it: a port that operates an instrument should not answer the whole network unasked. `mhp serve --no-auth` and `mhp node --no-auth` serve an exposed port openly on purpose — behind a proxy that authenticates, or on an isolated instrument VLAN — and then requests from off the machine are served but cannot assert `approved` (§7.2). A client presents an explicit token, else `OPENMHP_DEVICE_TOKEN`, else the local token file when the device is on the same machine; it never volunteers that secret to a host that did not issue it, and a 401 surfaces as `Forbidden` naming the variable to set. There is still no transport encryption here: run it on a trusted segment or behind a TLS proxy, and note that a caller holding the token is trusted entirely, including about which session it is (§5.7). The MCP bridge's HTTP endpoint (`mhp-mcp --http`) exposes script execution and hardware control, so it requires a bearer token (`OPENMHP_HTTP_TOKEN`, or a generated `~/.openmhp/http_token`), refuses requests whose `Origin` is not explicitly allowed (`--allow-origin`), and on a loopback bind refuses `Host` headers other than localhost. It has no server-initiated requests, so confirm-gated operations are unavailable over it. The protocol reserves `params.auth` for a future in-band scheme.
 
+### 9.2 The relay: nodes behind a firewall
+
+Instruments usually sit on a network nothing outside may enter. The relay lets a bench PC serve them to agents elsewhere with **no inbound connection anywhere**: the node dials out to a **gateway** over HTTPS and stays connected; agents reach the gateway. The reference implementation is `mhp gateway` (gateway) and `mhp node --join` (node).
+
+**Node face.** Every call is made by the node, authenticated with a node token the gateway issued at pairing, and framed as JSON:
+
+| Call | Meaning |
+|---|---|
+| `POST /relay/join {code, name, devices}` | once: a single-use pairing code (15 min) from the gateway operator → `{node_token, name}`. The node pins the gateway's certificate at this point and refuses any other afterwards |
+| `POST /relay/register {name, devices:[{id, card, nameplate, state}]}` | on every (re)connect; `nameplate` is what the device's `GET /mhp.json` returns |
+| `GET /relay/next` | long poll (≤ 25 s) → `{requests:[{rid, device, kind: rpc|nameplate, client, trusted, body}]}`; its presence is the node's heartbeat |
+| `POST /relay/reply {rid, body, state}` | the device's answer; `body` is the JSON-RPC response exactly as the HTTP transport would have returned it |
+| `POST /relay/events {events:[{device, event, state}]}` | notifications (§8), batched within 0.5 s |
+
+The node answers a request with the same `dispatch` the HTTP transport uses, with `client` the name the gateway supplies and `trusted` the gateway's statement about the caller (§7.2).
+
+**Agent face.** The gateway serves each registered device at `/<node>/<device>/` with the ordinary HTTP transport shape (`POST rpc`, `GET events`, `GET mhp.json`), so clients, the bridge and the fleet need no change, plus a directory (§3.2) at `/directory/` whose targets are those URLs and whose `state` is what the node last reported, or `offline`. Agents authenticate with an agent token the gateway operator issues per agent host; an unknown token is refused before anything is queued, the open nameplate included. The gateway **sets** the session the node sees to the agent's name, so leases are per agent and a caller cannot claim another's session (§5.7). A caller the gateway authenticated is a host in the sense of §7.2: `approved` is carried, which makes the gateway the approval boundary, and agent tokens belong only to harnesses that can really ask a person.
+
+**Delivery, exactly once or not at all.** A request is handed to the node once. If the node is offline (no poll in progress and none for a few seconds, or none at all for 45 s) the agent receives HTTP 503 at once and nothing is queued. If the node takes the request but no reply arrives within the timeout (120 s, or the `X-MHP-Timeout` header) the agent receives 504 and the reply, should it come, is discarded. Requests queued while a node was away are failed when it re-registers, not run late. The gateway never re-sends (§7.6); the agent confirms with `jobs/status` before repeating an action. Events pushed while no agent was subscribed, or during a node's gap, are not replayed, as on an SSE reconnect.
+
+**What the relay does not change.** The node serves its instruments locally exactly as before, with its own device token for callers on the lab network. Emergency stop, the device-side watchdog (§6) and the operator's own controls are on the bench and do not depend on the link; a dropped link is seen by the device as any other silent client, and `watchdog_action` applies.
+
 ---
 
 ## 10. Three control surfaces
