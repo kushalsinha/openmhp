@@ -32,7 +32,7 @@ MCP:      request ────────────────────�
 OpenMHP:  lease ─► job ─► live telemetry and events ─► result ─► release
 ```
 
-![AI agents connect through MCP and OpenMHP to physical devices, with safety enforced at the device and live telemetry flowing back](assets/openmhp-overview.png)
+![AI agents connect through MCP and OpenMHP to physical devices such as lab instruments, robots and existing control stacks (OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT), with safety enforced at the device and live telemetry flowing back. A dashed line marks the lab firewall: lab PCs dial out through it, nothing is opened inbound.](assets/openmhp-overview.svg)
 
 ## Why OpenMHP?
 
@@ -331,11 +331,7 @@ a gateway on the company network and registers its instruments; agents talk to t
 lab PC needs no AI agent and no network change, and working from home over the VPN is the same
 as being at your desk.
 
-```text
-lab PC (behind the firewall)          company network                     agent machine
-mhp node C:\lab\devices  ──HTTPS──▶  mhp gateway serve  ◀──HTTPS──  mhp-mcp --directory https://gw/directory/
-  dials out, long-polls for work       pairs lab PCs, issues agent tokens
-```
+![Bench PCs on the lab network dial out through the firewall to one gateway on the company network; agent machines in the office or on the VPN reach the same gateway with an agent token. Every arrow points at the gateway, none enters the lab.](assets/openmhp-gateway.svg)
 
 ```bash
 # on the gateway machine, once
@@ -347,6 +343,8 @@ mhp gateway add-agent my-laptop     # token + one line for each agent machine
 # on the lab PC, once; afterwards plain `mhp node C:\lab\devices` reconnects by itself
 mhp node C:\lab\devices --join https://gw.office ab12-cd34
 ```
+
+![One call through the relay: the lab PC holds a long-poll open on the gateway; the agent posts its request with its token; the gateway queues it under the agent's name and hands it to the open poll once; the driver runs it on the bench with every limit enforced; the reply comes back the same way. Offline means 503 at once, no answer means 504, and nothing is re-sent.](assets/openmhp-relay-flow.svg)
 
 Every connection is outbound. A request is handed to the lab PC once or not at all: if the PC
 is offline the agent gets a one-line error, never a silent retry. Agents hold agent tokens, the
@@ -363,7 +361,7 @@ hardware deployments.
 
 The full walkthrough is [Add an instrument](https://openmhp.com/add-a-device). For a lab with
 many existing devices, see [Adapters](https://openmhp.com/adapters) and
-[Lab nodes](https://openmhp.com/lab-nodes).
+[Lab nodes](https://openmhp.com/lab-nodes); for a closed instrument network, [Gateway and relay](https://openmhp.com/gateway).
 
 ## Contributing
 
