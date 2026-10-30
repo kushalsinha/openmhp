@@ -69,8 +69,10 @@ def ssl_context(pin_pem_path: str | None) -> ssl.SSLContext:
     if pin_pem_path and Path(pin_pem_path).is_file():
         ctx = ssl.create_default_context(cafile=pin_pem_path)
         ctx.check_hostname = False        # the pin IS the identity; the name may be an IP or a lab-internal alias
-        return ctx
-    return ssl.create_default_context()
+    else:
+        ctx = ssl.create_default_context()
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
 
 
 def nameplate(driver) -> dict:

@@ -30,9 +30,9 @@ Two things must never depend on the cross-firewall link:
 Facts the rest of this document rests on (file references are in the openmhp repo):
 
 - **Devices only listen.** `serve_http` (`openmhp/transport.py`) exposes `POST /rpc`, `GET /events`
-  and `GET /mhp.json`. `mhp node <dir>` serves every package on consecutive ports from 18900 and
-  binds `0.0.0.0` by default. Nothing in MHP dials out to a hub, registers itself, or heartbeats
-  upstream. The fleet (`fleet.py`) and directory (`directory.py`) are pull-only: they connect to a
+  and `GET /mhp.json`. `mhp node <dir>` serves every package on consecutive ports from 18900,
+  bound to `127.0.0.1` unless `--host` names a LAN address. Before the relay (§F) nothing in MHP
+  dialled out to a hub, registered itself, or heartbeated upstream. The fleet (`fleet.py`) and directory (`directory.py`) are pull-only: they connect to a
   URL you give them and ping it. mDNS discovery does not cross a VLAN.
 - **No TLS.** The HTTP transport has no certificate code. SPEC §9.1: "There is still no transport
   encryption here: run it on a trusted segment or behind a TLS proxy."

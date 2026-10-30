@@ -45,7 +45,7 @@ def main(argv=None):
     ap.add_argument("--sim", action="store_true", help="(lab add) use the package's simulated twin")
     ap.add_argument("--location", help="(lab add) where the instrument stands, e.g. \"bay 3, fume hood 2\"")
     ap.add_argument("--http", type=int, metavar="PORT", help="(serve) listen on HTTP instead of stdio; (node) base port, one per package")
-    ap.add_argument("--host", metavar="ADDR", help="(serve|node|serve-directory) bind address: 127.0.0.1 keeps a device on this machine, 0.0.0.0 serves the network (node's default)")
+    ap.add_argument("--host", metavar="ADDR", help="(serve|node|serve-directory) bind address; default 127.0.0.1 (this machine only). Give this PC's LAN address to serve agents on the same network; the relay (--join) needs no open port at all")
     ap.add_argument("--token", help="device bearer token: required by a server reachable from the network, and presented by the client verbs (OPENMHP_DEVICE_TOKEN)")
     ap.add_argument("--no-auth", action="store_true", help="(serve|node) serve the network with no token; remote callers are then served but cannot confirm approval-gated operations")
     ap.add_argument("--install-service", action="store_true", help="(node) run in the background from now on, across reboots, with no terminal open")
@@ -122,7 +122,7 @@ def main(argv=None):
             return 0
 
         from .transport import device_token, device_token_file, is_loopback
-        host = a.host or "0.0.0.0"              # a node exists to serve other machines; see the token below
+        host = a.host or "127.0.0.1"            # nothing listens off this PC unless asked; the relay dials out instead
         token = False if a.no_auth else (a.token or (None if is_loopback(host) else device_token(create=True)))
 
         # preflight: say what is wrong in words a person at the bench can act on, before anything serves
@@ -184,27 +184,33 @@ def main(argv=None):
             relay_client.start()
 
         from .discovery import _local_ip
+        on_lan = not is_loopback(host)
         ip = host if host not in ("0.0.0.0", "::") else _local_ip()
         tok_where = ("the token you supplied" if a.token else
                      "OPENMHP_DEVICE_TOKEN" if os.environ.get("OPENMHP_DEVICE_TOKEN") else str(device_token_file()))
         print("\n" + "=" * 72 + f"\nThis PC now serves {len(served)} instrument(s). Leave this window open.", file=sys.stderr)
         print(f"To keep serving after a reboot with no window open, run once:  mhp node {root} --install-service", file=sys.stderr)
-        if served:
+        if served and on_lan:
             print("\nAgents on the SAME network add the instruments with:", file=sys.stderr)
             for did, port in served:
                 print(f"  mhp lab add http://{ip}:{port}", file=sys.stderr)
-        if token:
-            print(f"  and need the token in {tok_where}  (set OPENMHP_DEVICE_TOKEN=<token> on the agent machine)", file=sys.stderr)
+            if token:
+                print(f"  and need the token in {tok_where}  (set OPENMHP_DEVICE_TOKEN=<token> on the agent machine)", file=sys.stderr)
+        elif served:
+            print("\nAgents on THIS PC add the instruments with:", file=sys.stderr)
+            for did, port in served:
+                print(f"  mhp lab add http://127.0.0.1:{port}", file=sys.stderr)
+            print(f"  No other machine can reach these ports. To serve agents on the lab network too, restart with:  mhp node {root} --host {_local_ip()}", file=sys.stderr)
         if relay_client:
             print(f"\nAgents beyond the firewall: this PC connects out to the gateway {relay_cfg['gateway']} as '{relay_cfg['name']}'.", file=sys.stderr)
             print("  Nothing to open on the lab network. If the gateway is down, this PC keeps retrying by itself.", file=sys.stderr)
         elif served:
             print("\nAgents beyond the firewall: pair this PC with your lab's gateway once. Ask whoever runs it for a code", file=sys.stderr)
             print(f"  (`mhp gateway pair` there), then:  mhp node {root} --join https://<gateway> <code>", file=sys.stderr)
-        if token is False and not is_loopback(host):
+        if token is False and on_lan:
             print("\nWARNING: --no-auth: anyone on this network can drive these instruments, and agents cannot be asked for approvals.", file=sys.stderr)
         print("=" * 72, file=sys.stderr)
-        print("advertising on the LAN if zeroconf is installed (pip install \"openmhp[all]\"); Ctrl-C to stop", file=sys.stderr)
+        print(("advertising on the LAN if zeroconf is installed (pip install \"openmhp[all]\"); " if on_lan else "") + "Ctrl-C to stop", file=sys.stderr)
         try:
             threading.Event().wait()
         except KeyboardInterrupt:
