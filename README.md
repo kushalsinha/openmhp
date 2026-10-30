@@ -173,6 +173,8 @@ An OpenMHP deployment has three parts:
    the native control API, publishes events, and enforces the device boundary.
 3. **MCP bridge** — gives an agent a fixed set of OpenMHP tools regardless of whether the lab
    has two devices or two thousand.
+4. **Gateway** (optional) — for labs whose network nothing outside may enter. Bench PCs dial
+   out to it and register their instruments; agents reach them there. Nothing is opened inbound.
 
 ```text
 agent harness
@@ -190,6 +192,10 @@ device server / lab node
 physical instrument
 ```
 
+When the bench PC sits behind a lab firewall, the step between the bridge and the lab node
+runs through the relay instead: the node dials out to a gateway over HTTPS and the bridge talks
+to the gateway. See [Instruments behind the lab firewall](#instruments-behind-the-lab-firewall).
+
 ### Built to bridge the automation stack you already have
 
 Labs have invested years in control systems such as **ROS 2, OPC UA, SiLA 2, MADSci,
@@ -201,7 +207,8 @@ agent-facing layer above it:
 - SiLA 2 properties and commands retain observable progress and cancellation.
 - MADSci nodes expose their existing actions, status, and safety controls.
 - PyLabRobot machines expose their existing operations through the same job model.
-- MQTT topics connect existing telemetry and command channels to the device model.
+- MQTT topics, the way many labs already stream time-varying sensor data, become signals
+  with a staleness window; command topics become settings and actions.
 
 The adapter translates each technology into the same discovery, job, lease, telemetry, and
 safety contract. The agent gets one way to interact with the lab while the lab keeps its
@@ -315,6 +322,38 @@ node then generates a token the first time it starts (`~/.openmhp/device_token`)
 (`export OPENMHP_DEVICE_TOKEN=...`); discovery stays open, so `mhp lab scan` still finds the
 devices. `--no-auth` serves the network without one, and callers from off the machine can then no
 longer confirm approval-gated operations.
+
+### Instruments behind the lab firewall
+
+In most companies the instrument network is one nothing outside may enter, and IT will not open
+a port for a lab PC. OpenMHP does not need one. The bench PC connects **outward** over HTTPS to
+a gateway on the company network and registers its instruments; agents talk to the gateway. The
+lab PC needs no AI agent and no network change, and working from home over the VPN is the same
+as being at your desk.
+
+```text
+lab PC (behind the firewall)          company network                     agent machine
+mhp node C:\lab\devices  ──HTTPS──▶  mhp gateway serve  ◀──HTTPS──  mhp-mcp --directory https://gw/directory/
+  dials out, long-polls for work       pairs lab PCs, issues agent tokens
+```
+
+```bash
+# on the gateway machine, once
+mhp gateway init
+mhp gateway serve --install-service
+mhp gateway pair                    # one-time code for one lab PC
+mhp gateway add-agent my-laptop     # token + one line for each agent machine
+
+# on the lab PC, once; afterwards plain `mhp node C:\lab\devices` reconnects by itself
+mhp node C:\lab\devices --join https://gw.office ab12-cd34
+```
+
+Every connection is outbound. A request is handed to the lab PC once or not at all: if the PC
+is offline the agent gets a one-line error, never a silent retry. Agents hold agent tokens, the
+lab PC's token never leaves it, and the gateway is the approval boundary. `mhp gateway check`
+prints `OK` or `FIX` for the gateway, each lab PC and each instrument. The guide is
+[docs/relay.md](docs/relay.md); the other deployment patterns and why the relay is the default
+are in [docs/firewalled-labs.md](docs/firewalled-labs.md).
 
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of
