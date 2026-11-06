@@ -1,13 +1,14 @@
 device:
   notes: >
-    Analytical HPLC/UPLC under Empower 3. Runs injection sample sets through the Empower Web API on
-    one node and chromatographic system. Empower keeps methods, audit trail and results.
+    Analytical HPLC/UPLC under Empower 3. Runs injection sample sets on one node and chromatographic
+    system through the Empower Web API or the Empower Toolkit. Empower keeps methods, audit trail and results.
 
 physical:
   notes: Solvent delivery up to the system's pressure limit (set in the instrument method). Flammable and toxic mobile phases.
 
 signals:
-  - {name: connected, type: boolean, notes: True when the Empower Web API accepts this package's login.}
+  - {name: connected, type: boolean, notes: True when Empower accepts this package's login through the configured backend.}
+  - {name: backend, type: object, notes: "Which route to Empower is in use and why: {name: web_api | toolkit, can_abort, connected, reason}. With backend auto the package picks the Toolkit when this PC has it, else the Web API."}
   - {name: system_status, type: object, notes: "Empower's status entries for the configured node and system (name: value)."}
   - {name: busy, type: boolean, notes: True while a sample set started here is running.}
   - {name: last_result, type: object}
@@ -46,10 +47,14 @@ actions:
       sample_set_name: {type: string, nullable: true, notes: Omitted or null names it after the job; the result reports the name.}
       audit_comment: {type: string, nullable: true, notes: Omitted or null records the OpenMHP job id.}
     required: [samples]
+    cancellable: true
     notes: >
       Creates a sample set method from the samples, starts it on the configured node and system,
       and follows the system status until it is idle. Each sample's injection volume and count are
-      checked against the limits in config.json before anything is written to Empower.
+      checked against the limits in config.json before anything is written to Empower. Cancelling
+      the job aborts the sample set in Empower on the toolkit backend; on the web_api backend the
+      sample set cannot be stopped from here, so the cancel fails the job and says so. The result
+      carries result rows from the backend (toolkit) or from export_dir (web_api), and names the source.
     examples:
       - samples: [{name: "std_1", vial: "1:A,1", injection_volume_ul: 5, method: "Assay_C18"},
                   {name: "batch12_t30", vial: "1:A,2", injection_volume_ul: 5, method: "Assay_C18", injections: 2}]
@@ -60,4 +65,4 @@ safety:
   interlocks: [connected]
   watchdog_s: 300
   watchdog_action: release
-  notes: No remote stop through the Web API calls used here. A person stops a run in Empower Run Samples; the instrument method's own pressure limits protect the column. A controller silent for 5 minutes loses its lease; the sample set keeps running.
+  notes: The toolkit backend aborts a running sample set on cancel and on safety/estop; the Web API calls used here have no stop, so a person stops a run in Empower Run Samples. The instrument method's own pressure limits protect the column. A controller silent for 5 minutes loses its lease; the sample set keeps running.
