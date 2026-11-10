@@ -1,0 +1,25 @@
+{
+  "device_name": {
+    "ask": "OB1 device name as NI MAX shows it",
+    "kind": "choice",
+    "choices_from": "devices",
+    "example": "01BECD3F",
+    "help": "Open NI MAX (National Instruments Measurement & Automation Explorer); the OB1 is listed under Devices and Interfaces."
+  },
+  "sdk_python_dir": {
+    "ask": "Elveflow SDK folder that holds Elveflow64.py",
+    "kind": "path",
+    "example": "C:/Elveflow/SDK/Python_64"
+  },
+  "sdk_dll_dir": {
+    "ask": "Elveflow SDK folder that holds Elveflow64.dll",
+    "kind": "path",
+    "example": "C:/Elveflow/SDK/DLL64"
+  },
+  "calibration_file": {
+    "ask": "Saved OB1 calibration file",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  }
+}

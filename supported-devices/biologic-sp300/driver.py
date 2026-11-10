@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import pathlib
+import re
 import threading
 import time
 
@@ -252,3 +253,15 @@ class SP300(Driver):
         except Exception:                             # noqa: BLE001  must not raise
             pass
         self.is_running = False
+
+    # ---- setup-time check (`mhp node setup`) ---------------------------------------------- #
+    @classmethod
+    def probe(cls, cfg: dict) -> str:
+        try:
+            import easy_biologic                             # noqa: F401
+        except ImportError:
+            raise DeviceFault("easy-biologic is not installed (pip install easy-biologic)") from None
+        addr = str(cfg.get("address") or "")
+        if not (addr.upper().startswith("USB") or re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", addr)):
+            raise DeviceFault(f"address {addr!r} is neither USBn nor an IP address")
+        return f"easy-biologic installed; the SP-300 at {addr} is contacted on the first `mhp node` run (close EC-Lab first)"

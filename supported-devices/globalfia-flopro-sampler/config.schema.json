@@ -1,0 +1,13 @@
+{
+  "port": {
+    "ask": "Serial port on this PC that FloZF's `mhp` device is paired with (the other end of the com0com pair)",
+    "kind": "com_port",
+    "example": "COM21",
+    "help": "com0com makes a pair such as COM20 <-> COM21. FloZF's General serial device `mhp` uses one end; name the other end here."
+  },
+  "baud": {
+    "ask": "Baud rate (as set on the FloZF device)",
+    "kind": "int",
+    "advanced": true
+  }
+}

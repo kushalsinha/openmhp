@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 
@@ -116,3 +117,24 @@ class MuxDistributor(Driver):
                 time.sleep(0.2)
             raise DeviceFault(f"valve did not reach port {port} within {SWITCH_TIMEOUT_S} s (reads {hw.get_valve()})")
         raise InvalidValue(f"unhandled action {job.action}")
+
+    # ---- setup-time checks (`mhp node setup`) --------------------------------------------- #
+    @classmethod
+    def discover(cls, cfg: dict, what: str) -> list:
+        if what != "visa_ports":
+            return []
+        from openmhp.node_setup import serial_ports
+        out = []
+        for p in serial_ports():
+            m = re.search(r"(\d+)$", p)
+            out.append((f"ASRL{m.group(1)}::INSTR", p) if m else p)
+        return out
+
+    @classmethod
+    def probe(cls, cfg: dict) -> str:
+        py, dll = pathlib.Path(cfg.get("sdk_python_dir") or ""), pathlib.Path(cfg.get("sdk_dll_dir") or "")
+        if not (py / "Elveflow64.py").is_file():
+            raise DeviceFault(f"Elveflow64.py not found in {py}")
+        if not (dll / "Elveflow64.dll").is_file():
+            raise DeviceFault(f"Elveflow64.dll not found in {dll}")
+        return f"Elveflow SDK found; the valve on {cfg.get('visa_com')} is contacted on the first `mhp node` run (close ESI first)"

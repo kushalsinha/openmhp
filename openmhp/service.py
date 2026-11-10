@@ -237,6 +237,17 @@ def uninstall() -> dict:
     return result
 
 
+def restart(packages_dir: str | Path, http_base: int) -> dict:
+    """Re-install the service so a running node picks up new packages: uninstall, then install."""
+    u = uninstall()
+    r = install(packages_dir, http_base)
+    r["steps"] = u.get("steps", []) + r.get("steps", [])
+    if not u.get("ok"):
+        r["ok"] = False
+        r["error"] = u.get("error")
+    return r
+
+
 def status() -> dict:
     system = platform.system()
     path = target_path()

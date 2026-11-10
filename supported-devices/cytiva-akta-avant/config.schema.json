@@ -1,0 +1,20 @@
+{
+  "progid": {
+    "ask": "UNICORN OPC server ProgID",
+    "kind": "choice",
+    "choices": [
+      "UNICORN_DAServer30.System1.1",
+      "UNICORN_DAServer20.System1.1"
+    ],
+    "help": "DA 3.0 is UNICORN_DAServer30, DA 2.05a is UNICORN_DAServer20. System1 is the first system UNICORN knows; type System2 for the second."
+  },
+  "host": {
+    "ask": "PC running UNICORN (Enter for this one)",
+    "required": false
+  },
+  "method_root": {
+    "ask": "OPC branch holding the methods",
+    "example": "\\\\Method\\\\DefaultHome",
+    "advanced": true
+  }
+}

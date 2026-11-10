@@ -1,6 +1,7 @@
 """``mhp`` command line: the second of the three control surfaces.
 
     mhp serve local:openmhp.devices.sim_thermocycler:SimThermocycler --http 8765
+    mhp node add waters-empower-hplc ~/instruments   # put a device package on this instrument PC
     mhp node ~/instruments --http 18900          # every package folder in one directory, one host
     mhp http://localhost:8765 describe
     mhp http://localhost:8765 read block_temperature lid_closed
@@ -59,6 +60,12 @@ def main(argv=None):
     ap.add_argument("--key", metavar="FILE", help="(gateway init) private key for --cert")
     ap.add_argument("--join", nargs=2, metavar=("GATEWAY_URL", "CODE"), help="(node) pair this PC with a gateway once, using a code from `mhp gateway pair` there; later runs connect by themselves")
     ap.add_argument("--no-relay", action="store_true", help="(node) serve locally only, even if this PC has joined a gateway")
+    ap.add_argument("--no-setup", action="store_true", help="(node add) only put the package on this PC; print the remaining steps instead of asking")
+    ap.add_argument("--yes", action="store_true", help="(node add|setup) ask nothing: take defaults and --set values, say what is still missing")
+    ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="(node add|setup) answer a config question from the command line; repeatable")
+    ap.add_argument("--all", action="store_true", help="(node add|setup) also ask the advanced questions")
+    ap.add_argument("--no-pip", action="store_true", help="(node add|setup) do not install the vendor client; name it instead")
+    ap.add_argument("--from", dest="from_", metavar="FOLDER|ARCHIVE", help="(node add) take the package from a local checkout, a copied folder or a .tar.gz instead of downloading it")
     a = ap.parse_args(argv)
 
     def _serve_token():
@@ -84,6 +91,19 @@ def main(argv=None):
         from .transport import serve_http
         from . import service as svc
 
+        if a.verb == "add":                 # mhp node add [<package> [<packages-dir>]] [--from FOLDER|ARCHIVE]
+            from . import node_add
+            r = node_add.main(a.args, source=a.from_, no_setup=a.no_setup, yes=a.yes, sets=a.set, all_fields=a.all, no_pip=a.no_pip, base=a.http or 18900)
+            if not isinstance(r, str):
+                return r
+            a.verb, a.args, a.check = r.split(":", 1)[1], [], False      # "serve:<dir>": the person said to serve in this window
+        elif a.verb == "setup":             # mhp node setup [<package> [<packages-dir>]]
+            from . import node_setup
+            r = node_setup.main(a.args, base=a.http or 18900, yes=a.yes, sets=a.set, all_fields=a.all, no_pip=a.no_pip)
+            if not isinstance(r, str):
+                return r
+            a.verb, a.args, a.check = r.split(":", 1)[1], [], False
+
         if a.uninstall_service:
             r = svc.uninstall()
             for step in r["steps"]:
@@ -100,10 +120,15 @@ def main(argv=None):
             return 0
 
         base = a.http or 18900
+        from .node_add import config_keys, default_dir, short
         root = Path(a.verb or ".").expanduser()
         folders = sorted(p.parent for p in root.glob("*/DEVICE.md"))
+        if not folders and not a.verb and default_dir().is_dir():       # plain `mhp node`: the packages `mhp node add` put there
+            root = default_dir()
+            folders = sorted(p.parent for p in root.glob("*/DEVICE.md"))
         if not folders:
-            ap.error(f"no device packages under {root} (looked for */DEVICE.md)")
+            ap.error(f"no device packages in {short(root)}. Add one with:  mhp node add <package>" + ("" if root == default_dir() else f" {short(root)}")
+                     + "   (`mhp node add` alone lists them)")
 
         if a.install_service or a.dry_run_service:
             r = svc.install(root, base, dry_run=a.dry_run_service)
@@ -126,28 +151,18 @@ def main(argv=None):
         token = False if a.no_auth else (a.token or (None if is_loopback(host) else device_token(create=True)))
 
         # preflight: say what is wrong in words a person at the bench can act on, before anything serves
-        import socket
-        problems = []
-        for i, folder in enumerate(folders):
-            if (folder / "config.example.json").is_file() and not (folder / "config.json").is_file():
-                copy = "copy" if os.name == "nt" else "cp"
-                problems.append(f"{folder.name}: no config.json yet. In that folder run:  {copy} config.example.json config.json"
-                                f"\n    then open config.json and fill in the serial numbers / ports / paths it asks for")
-            try:
-                with socket.socket() as sock:
-                    sock.bind((host, base + i))
-            except OSError:
-                problems.append(f"port {base + i} (for {folder.name}) is already in use. Is another `mhp node` running? "
-                                f"Close it (or `mhp node --service-status`), or start with  --http {base + 100}")
+        from .node_setup import preflight_problems
+        problems = preflight_problems(folders, host, base)
         if problems:
-            print("\nBEFORE THIS PC CAN SERVE ITS INSTRUMENTS:", file=sys.stderr)
+            print("\nbefore this PC can serve its instruments:", file=sys.stderr)
             for pr in problems:
                 print(f"  - {pr}", file=sys.stderr)
-            print(f"\nthen run again:  mhp node {root}" + (f" --http {base}" if a.http else ""), file=sys.stderr)
+            again = "mhp node" + ("" if not a.verb and root == default_dir() else f" {short(root)}") + (f" --http {base}" if a.http else "")
+            print(f"\nthen run again:  {again}", file=sys.stderr)
             if a.check or any("port" in pr for pr in problems):
                 return 1
         elif a.check:
-            print(f"all {len(folders)} package(s) under {root} are ready to serve on ports {base}..{base + len(folders) - 1}", file=sys.stderr)
+            print(f"all {len(folders)} package(s) in {short(root)} are ready to serve on ports {base}..{base + len(folders) - 1}", file=sys.stderr)
             return 0
 
         served, drivers = [], {}
@@ -155,7 +170,7 @@ def main(argv=None):
         for i, folder in enumerate(folders):
             port = base + i
             if any(folder.name in pr for pr in problems):
-                print(f"  {folder.name:24s} SKIPPED until config.json exists", file=sys.stderr)
+                print(f"  {folder.name:24s} SKIPPED until it is set up (mhp node setup {folder.name})", file=sys.stderr)
                 continue
             try:
                 drv = load_driver(folder)
