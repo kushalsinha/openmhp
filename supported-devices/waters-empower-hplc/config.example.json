@@ -1,9 +1,16 @@
 {
+  "backend": "auto",
+
   "address": "https://empower-api.example.local:3076",
   "service": null,
+  "verify_tls": true,
+
+  "database": "Empower",
+  "toolkit_progid": "MillenniumToolkit",
+  "result_fields": ["SampleName", "Vial", "Injection", "Name", "RetentionTime", "Area", "Height", "Amount"],
+
   "project": "MyProject",
   "username": "svc_openmhp",
-  "verify_tls": true,
   "node": "HPLC-NODE-01",
   "system": "Arc_HPLC_1",
   "plates": {

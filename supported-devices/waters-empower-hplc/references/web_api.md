@@ -1,4 +1,4 @@
-# Empower Web API calls used (via opti-hplc-handler)
+# Empower Web API calls used (backend `web_api`, via opti-hplc-handler)
 
 | Purpose | Call |
 |---|---|
@@ -13,4 +13,6 @@
 
 Each injection becomes an "Inject Samples" line with Empower fields SampleName, Vial, InjVol
 and MethodSetOrReportMethod; a sample with injections: 3 becomes three lines. Results retrieval through the Web API is not covered
-here; use an export method and `export_dir`.
+here; use an export method and `export_dir`, or the `toolkit` backend (`references/toolkit.md`).
+The calls used have no abort either, so `jobs/cancel` on this route fails the job and the sample set
+keeps running.
