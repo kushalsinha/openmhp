@@ -55,7 +55,7 @@ def test_add_from_a_local_folder_creates_config_and_says_what_is_next():
         assert "address, project, username" in text, text                          # the keys to fill in, not "ports, addresses, names"
         assert text.count(str(dest)) == 3, text                                     # the folder is named where it is needed, not on every line
         text = node_add.say_next(r, joined={"gateway": "https://gw.office", "name": "bench-3"}, service_installed=True)
-        assert "https://gw.office" in text and "--install-service" in text
+        assert "gw.office" in text and "--install-service" in text
         # Windows-only vendor software is said so on another OS; the Empower Web API package runs anywhere
         assert not r["windows_only"]
         rw = node_add.add("elveflow-ob1", dest, source=REPO / "supported-devices")

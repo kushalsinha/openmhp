@@ -233,12 +233,12 @@ def default_say(text: str) -> None:
 
 
 def default_ask(prompt: str, default: str | None = None, secret: bool = False) -> str:
+    if secret:                                                      # secrets never come back through this function
+        raise ValueError("ask a secret through secret_asker(ask)")
     own_line = prompt.endswith("\n  ")                               # a question: the answer goes on the line under it
     base = prompt.rstrip()
     dflt = f" [{default}]" if default not in (None, "") and not base.endswith("]") else ""
     shown = base + dflt + ("\n  > " if own_line else " > ")
-    if secret:
-        return getpass.getpass(shown)
     print(shown, end="", file=sys.stderr, flush=True)
     try:
         ans = input()
@@ -252,6 +252,21 @@ def auto_ask(prompt: str, default: str | None = None, secret: bool = False) -> s
     if default not in (None, ""):
         return default
     raise Unanswered(prompt)
+
+
+def hidden_input(prompt: str) -> str:
+    """Read a secret with no echo. Its value goes to the keyring and nowhere else."""
+    return getpass.getpass(prompt.rstrip() + " > ")
+
+
+def secret_asker(ask):
+    """The callable that collects a secret for the given ``ask``: kept apart from ordinary answers so a
+    password is never on the path that prints or re-asks."""
+    if ask is default_ask:
+        return hidden_input
+    if ask is auto_ask:
+        return lambda prompt: auto_ask(prompt)
+    return lambda prompt: ask(prompt, None, secret=True)
 
 
 def _yes(ans: str, default: bool = True) -> bool:
@@ -302,6 +317,7 @@ def interview(folder: Path, questions: list[Question], ask=default_ask, say=defa
     cfg = dict(example)
     cfg.update(current)
     answers = dict(answers or {})
+    ask_secret = secret_asker(ask)
     missing: list[str] = []
     for q in questions:
         if q.advanced and not all_fields and q.key not in answers:
@@ -314,7 +330,7 @@ def interview(folder: Path, questions: list[Question], ask=default_ask, say=defa
             continue
         if q.kind == "secret":
             try:
-                val = ask(f"  {_fill(q.ask, cfg)} (goes to the OS keyring, never into a file; Enter to skip)", None, secret=True)
+                val = ask_secret(f"  {_fill(q.ask, cfg)} (goes to the OS keyring, never into a file; Enter to skip)")
             except Unanswered:
                 missing.append(q.key); continue
             if val.strip():
