@@ -188,3 +188,25 @@ class BlazeRaman(Driver):
         except Exception:                             # noqa: BLE001  must not raise
             pass
         self.values["laser_enable"] = False
+
+    # ---- setup-time checks (`mhp node setup`) --------------------------------------------- #
+    @classmethod
+    def discover(cls, cfg: dict, what: str) -> list:
+        if what != "spectrometers":
+            return []
+        try:
+            from wasatch.WasatchBus import WasatchBus
+        except ImportError:
+            return []
+        return [str(d) for d in WasatchBus().device_ids]
+
+    @classmethod
+    def probe(cls, cfg: dict) -> str:
+        try:
+            from wasatch.WasatchBus import WasatchBus
+        except ImportError:
+            raise DeviceFault("wasatch is not installed (pip install wasatch)") from None
+        ids = [str(d) for d in WasatchBus().device_ids]
+        if not ids:
+            raise DeviceFault("no Wasatch spectrometer found on USB (is ENLIGHTEN closed?)")
+        return f"{len(ids)} spectrometer(s) on USB: {', '.join(ids)}"

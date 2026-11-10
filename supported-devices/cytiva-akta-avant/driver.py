@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import sys
 import time
 
 from openmhp.driver import DeviceFault, Driver, InvalidValue, Job, JobCancelled, LimitViolation
@@ -259,3 +260,15 @@ class AktaAvant(Driver):
                 self.hw.write("STATE\\Command", COMMAND["pause"])
         except Exception:                                   # noqa: BLE001  must not raise
             pass
+
+    # ---- setup-time check (`mhp node setup`) ---------------------------------------------- #
+    @classmethod
+    def probe(cls, cfg: dict) -> str:
+        if sys.platform != "win32":
+            raise DeviceFault("the UNICORN OPC server is a Windows COM server; this is not Windows")
+        import winreg
+        try:
+            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, str(cfg.get("progid"))))
+        except OSError:
+            raise DeviceFault(f"OPC server {cfg.get('progid')} is not registered on this PC (enable it in UNICORN Administration)") from None
+        return f"{cfg.get('progid')} is registered; UNICORN is contacted on the first `mhp node` run"

@@ -1,0 +1,54 @@
+{
+  "address": {
+    "ask": "Empower Web API address, from your Empower administrator",
+    "example": "https://empower-api.lab.local:3076",
+    "kind": "url",
+    "help": "Waters installs the Web API as a service on the Empower server, commonly on port 3076. Open the address in a browser: a certificate warning is fine, a timeout is not."
+  },
+  "username": {
+    "ask": "Empower user the agent logs in as",
+    "example": "svc_openmhp",
+    "help": "A dedicated Empower user with rights to the project and to the project Mobile, to create sample set methods and to run samples. No rights to edit or delete methods or results."
+  },
+  "password": {
+    "ask": "Password for {username}",
+    "kind": "secret",
+    "keyring": [
+      "Empower",
+      "{username}"
+    ]
+  },
+  "project": {
+    "ask": "Empower project the agent works in",
+    "example": "ProcessDev",
+    "help": "The project name exactly as Empower shows it."
+  },
+  "node": {
+    "ask": "Acquisition node (the LAC/E or PC name as Empower shows it)",
+    "kind": "choice",
+    "choices_from": "nodes",
+    "example": "HPLC-NODE-01"
+  },
+  "system": {
+    "ask": "Chromatographic system on that node",
+    "kind": "choice",
+    "choices_from": "systems",
+    "example": "Arc_HPLC_1"
+  },
+  "export_dir": {
+    "ask": "Folder where Empower's export method writes results",
+    "kind": "path",
+    "required": false,
+    "help": "Optional. Give the processing method an export method that writes CSV to a shared folder, and name that folder here; job results then include the exported rows."
+  },
+  "service": {
+    "ask": "Empower service name (Enter for the default)",
+    "required": false,
+    "advanced": true
+  },
+  "verify_tls": {
+    "ask": "Check the Web API's TLS certificate?",
+    "kind": "bool",
+    "advanced": true
+  }
+}

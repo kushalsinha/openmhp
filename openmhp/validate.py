@@ -164,6 +164,10 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
                 warn.append(f"actions/{a.get('name')}: {m!r} is optional but declares no default; "
                             f"if the driver substitutes one, the caller is never told (SPEC 4.4)")
 
+    # config.schema.json: the questions `mhp node setup` asks
+    from .node_setup import schema_problems
+    err += schema_problems(pkg.dir)
+
     # methods/ (SPEC 4.5): only on devices that declare a method-driven action, and only well-formed records
     from .methods import MethodStore
     driven = [a["name"] for a in d.get("actions", []) if a.get("methods") is True]

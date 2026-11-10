@@ -53,7 +53,11 @@ own twin that the gates refuse what they declare and that nothing the device rep
 on what it enforces. **Submission** is what this repository needs in order to carry it — a twin
 that loads with no vendor library, an entry in `openmhp/registry.json`, a row in the table above
 with an honest status, `config.example.json` rather than a committed `config.json`, and a
-`references/setup.md`. `[-]` means a check did not apply here and says why; it is not a pass.
+`references/setup.md`. A `config.schema.json` beside the example turns `mhp node add` into an
+interview (one entry per question: `ask`, `kind`, `example`, `help`; a `secret` goes to the OS
+keyring), and the driver may add two classmethods, `discover(cfg, what)` for choices read from the
+instrument and `probe(cfg)` for the one-line proof that the answers work; `openmhp/node_setup.py`
+documents both. `[-]` means a check did not apply here and says why; it is not a pass.
 Every package listed above passes both tiers, and `tests/test_inclusion.py` keeps it that way.
 
 Then extend `tests/test_adapters.py` so the twin is exercised in CI, and open the PR. What each

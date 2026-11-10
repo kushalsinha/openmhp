@@ -1,0 +1,13 @@
+{
+  "serial_number": {
+    "ask": "Spectrometer serial number (Enter for the first one found)",
+    "kind": "choice",
+    "choices_from": "spectrometers",
+    "required": false
+  },
+  "data_dir": {
+    "ask": "Folder for the saved spectra",
+    "kind": "path",
+    "example": "C:/lab/data/raman"
+  }
+}
