@@ -1,0 +1,87 @@
+device:
+  notes: >
+    An LC-MS sample queue written as the import file of the vendor acquisition software that
+    owns the instrument: a Waters MassLynx sample list, a SCIEX OS batch, an Agilent MassHunter
+    worklist or a Thermo Xcalibur sequence, chosen once in config.json. The package only writes
+    files into the output folder; a person imports the file and starts the run in the vendor
+    software, which keeps methods, tune files, data and audit trail.
+
+physical:
+  automated_load: true
+  notes: >
+    The instrument's own sample manager injects from the vial positions named in the worklist
+    (rack and well in the vendor's own notation). Nothing here reports the state of the sample
+    manager, so loading vials is coordinated with the person who imports the file.
+
+signals:
+  - {name: connected, type: boolean, notes: True when config.json names a vendor and the output folder exists and is writable.}
+  - {name: vendor, type: string, notes: "The configured target format: masslynx, sciexos, masshunter or xcalibur."}
+  - {name: last_worklist, type: string, nullable: true, notes: Full path of the most recent worklist written from here; null before the first.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a worklist is being written and read back (a second or two).}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state): the LC-MS system's calibration, which the vendor software does not export to a file."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ of the LC-MS system as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Worklists written from here (the lab's recorded count, or the number of finished build_worklist jobs when none is recorded); the instrument's own injection counter is not read.}
+
+settings: []
+
+actions:
+  - name: build_worklist
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    notes: >
+      Renders the samples as the configured vendor's import file, writes it to the output folder
+      and reads it back to confirm the rows. It never starts an acquisition: a person imports the
+      file (MassLynx File > Import Worksheet; SCIEX OS batch Open > Import from file; MassHunter
+      worklist "Add/Append Samples from..."; Xcalibur Sequence Setup File > Import Sequence) and
+      starts the run there. A saved method carries the project's MS and LC method names; the caller
+      passes the samples. Data file names are generated from the job token unless given.
+    params:
+      samples:
+        type: array
+        default: []
+        notes: "One row per injection, in run order. The declared default (an empty list) exists so a saved method can carry only the method names; a run with no samples is refused."
+        items:
+          type: object
+          required: [name, position]
+          properties:
+            name: {type: string, notes: Sample name as the vendor software shows it (also used as sample ID and, unless data_file is given, in the data file name).}
+            position: {type: string, notes: "Vial position in the vendor's own notation, written as given: MassLynx '1:A,1', SCIEX OS vial number or well, MassHunter 'P1-A1', Xcalibur 'RA1' or '1:A1'. Not checked against the rack."}
+            injection_volume_ul: {type: number, unit: uL, limits: {min: 0.1, max: 100}, default: 5, notes: Also bounded by the loop and sample manager; the limits here are generic.}
+            ms_method: {type: string, nullable: true, notes: MS acquisition method name as the vendor software lists it (no path; MassLynx .exp, SCIEX .msm, MassHunter .m, Xcalibur .meth). Null takes the top-level ms_method.}
+            lc_method: {type: string, nullable: true, notes: LC (inlet) method name; null takes the top-level lc_method, which may also be null for vendors whose MS method embeds the LC method.}
+            data_file: {type: string, nullable: true, notes: Data file name without path; null generates <date>_<job>_<row>_<name>. Must be unique in the file.}
+            sample_type: {type: string, limits: {enum: [sample, standard, blank, qc]}, default: sample, notes: "Mapped to the vendor's words: MassLynx Analyte/Standard/Blank/QC, SCIEX Unknown/Standard/Blank/QualityControl, MassHunter Sample/Calibration/Blank/QC, Xcalibur Unknown/Std Bracket/Blank/QC."}
+      ms_method: {type: string, nullable: true, notes: Default MS method for rows that give none; this is what a saved method usually carries.}
+      lc_method: {type: string, nullable: true, notes: Default LC method for rows that give none.}
+      worklist_name: {type: string, nullable: true, notes: File name without extension; null names it mhp_<date>_<job>. An existing file is never overwritten.}
+    required: [samples]
+    returns:
+      type: object
+      required: [vendor, file, rows, samples]
+      properties:
+        vendor: {type: string}
+        file: {type: string, notes: Full path of the file written.}
+        rows: {type: integer, notes: Rows read back from the file.}
+        samples: {type: integer, notes: Samples given.}
+    examples:
+      - samples:
+          - {name: "blank_01", position: "1:A,1", injection_volume_ul: 5, sample_type: blank}
+          - {name: "std_01", position: "1:A,2", injection_volume_ul: 5, sample_type: standard}
+          - {name: "batch12_t30", position: "1:A,3", injection_volume_ul: 5}
+        ms_method: "Assay_C18_pos"
+        lc_method: "Assay_C18_grad"
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 120
+  watchdog_action: release
+  notes: >
+    Nothing runs from here: the file is only queued for a person to import, and the vendor
+    software's own stop (MassLynx Stop, SCIEX OS Abort, MassHunter Stop, Xcalibur Stop Sequence)
+    stops the instrument. An e-stop here stops nothing physical and leaves written files in place.
+    A controller silent for 2 minutes loses its lease; no file is affected.

@@ -1,0 +1,13 @@
+{
+  "backend": "bmg",
+  "host": "localhost",
+  "port": 9000,
+  "control": "CLARIOstar",
+  "protocol_dir": "C:/Program Files (x86)/BMG/CLARIOstar/User/Definit",
+  "data_dir": "C:/Program Files (x86)/BMG/CLARIOstar/User/Data",
+  "export_dir": "C:/lab/data/platereader",
+  "allowed_protocols": [],
+  "max_read_minutes": 240,
+  "client_dll": "SoftMax Pro AutomationClient",
+  "feature": "ReaderService"
+}

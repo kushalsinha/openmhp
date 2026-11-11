@@ -1,0 +1,7 @@
+{
+  "host": "192.168.1.60",
+  "user": "rw",
+  "verify_tls": false,
+  "ca_cert": null,
+  "timeout_s": 10
+}

@@ -1,0 +1,15 @@
+{
+  "host": {
+    "ask": "IP address or hostname of the OT-2",
+    "example": "192.168.1.60",
+    "help": "Shown in the Opentrons App under the robot's settings (Wi-Fi or USB-Ethernet address)."
+  },
+  "deck_file": {
+    "ask": "Deck layout file saved from PyLabRobot (lh.deck.save)",
+    "kind": "path",
+    "example": "/home/lab/ot2/deck.json",
+    "help": "Build the OT-2 deck once in PyLabRobot (OTDeck with tip racks, plates and reservoirs in their slots, named as agents will use them) and save it. Without it an empty OTDeck is used and no labware can be named."
+  },
+  "port": {"ask": "HTTP API port of the robot", "kind": "int", "advanced": true},
+  "volume_cap": {"ask": "Largest volume (uL) the mounted tips or pipette allow", "kind": "int", "advanced": true}
+}

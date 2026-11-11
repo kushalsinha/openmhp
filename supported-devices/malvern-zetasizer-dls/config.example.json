@@ -1,0 +1,21 @@
+{
+  "sop_dir": "C:/ZSXplorer/SOPs",
+  "export_dir": "C:/lab/data/zetasizer",
+  "allowed_sops": [],
+  "max_minutes": 60,
+  "sdk": {
+    "assembly": "Malvern.ZsXplorer.Sdk",
+    "app": "Malvern.ZsXplorer.Sdk.ZsXplorerApplication",
+    "connect": "Connect",
+    "status": "InstrumentStatus",
+    "cell_temperature": "CellTemperature",
+    "set_temperature": "SetTemperature",
+    "set_equilibration": "SetEquilibrationTime",
+    "load_sop": "LoadSop",
+    "start": "StartMeasurement",
+    "is_running": "IsRunning",
+    "abort": "AbortMeasurement",
+    "result": "LastResult",
+    "export": "ExportResult"
+  }
+}

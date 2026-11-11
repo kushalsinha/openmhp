@@ -1,0 +1,145 @@
+device:
+  notes: >
+    Mettler Toledo EasyMax 102/402 (or OptiMax 1001) synthesis workstation under iControl: a thermostated
+    reactor with overhead stirrer, optional dosing unit and pH probe. Reached through iControl's OPC UA
+    server; the node ids are the lab's (config.json nodes), confirmed on the first hardware test.
+
+physical:
+  automated_load: false
+  notes: >
+    Glass reactor (25 to 100 mL on the 102, up to 400 mL on the 402, up to 1 L on the OptiMax) in a Peltier or
+    oil-free thermostat block, -40 to 180 degC jacket. The reactor cover, probes and dosing lines are fitted by a
+    person; nothing here is loaded by a handling system. Contents may be hot, cold, pressurised by gas evolution
+    or corrosive. The thermostat's own Tsafe, Tr/Tj min and max and Rsafe limits, set on the touchscreen, are the
+    first line of protection and are not overridden by this package.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the OPC UA server answers (and its ConnectionStatus node, when mapped, reads true).}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, notes: True while a start_experiment or dose job from here is running.}
+  - {name: tr, type: number, unit: Cel, notes: Reactor contents temperature (Tr probe). What the recipe controls.}
+  - {name: tj, type: number, unit: Cel, notes: Jacket temperature (Tj). Leads Tr by up to 60 K in Tr mode.}
+  - {name: stirrer_rpm, type: number, unit: "{rev}/min", notes: Measured overhead stirrer speed.}
+  - {name: stirrer_running, type: boolean, notes: "True while the stirrer turns (the StirrerRunning node, or stirrer_rpm above 0 when none is mapped). Interlock for dosing: never dose into an unstirred reactor."}
+  - {name: dosing_total_ml, type: number, unit: mL, nullable: true, notes: Cumulative volume delivered by the dosing unit in this experiment; null when no dosing unit node is mapped.}
+  - {name: ph, type: number, unit: "[pH]", nullable: true, notes: pH from the connected meter; null when no pH node is mapped.}
+  - {name: phase, type: string, notes: "iControl's experiment phase (idle, running, dosing, ...) from the phase node; when none is mapped, running while an experiment from here is open, else idle."}
+  - {name: experiment, type: string, nullable: true, notes: Name of the experiment started from here, null when none is open.}
+  - {name: last_result, type: object, notes: Result of the most recent start_experiment from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the Tr probe's calibration in iControl is not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Experiments run from here (the lab's recorded count, or the number of finished start_experiment jobs when none is recorded).}
+
+settings:
+  - name: tr_setpoint
+    type: number
+    unit: Cel
+    limits: {min: -40, max: 180}
+    resolution: 0.1
+    approval: auto
+    during_job: true
+    notes: "Reactor temperature setpoint; writing it puts the thermostat in Tr mode. Placeholder range is the EasyMax jacket range (-40 to 180); set min and max to this solvent's and glassware's limits, and keep the touchscreen Tsafe/Tr max below them. Auto because the thermostat's own limits stop a runaway, but a person should confirm the first run of a new reaction."
+  - name: tj_setpoint
+    type: number
+    unit: Cel
+    limits: {min: -40, max: 180}
+    resolution: 0.1
+    approval: auto
+    during_job: true
+    notes: Jacket temperature setpoint; writing it puts the thermostat in Tj mode. Same placeholder range and caveat as tr_setpoint.
+  - name: stirrer_setpoint
+    type: number
+    unit: "{rev}/min"
+    limits: {min: 0, max: 1200}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: "Stirrer speed. 0 stops it. The EasyMax runs 50 to 1000 rpm, the OptiMax 30 to 1200; glass and anchor stirrers should stay at or below 500. Set max to your stirrer."
+  - name: ramp_rate
+    type: number
+    unit: K/min
+    limits: {min: 0.1, max: 20}
+    resolution: 0.1
+    approval: auto
+    during_job: true
+    notes: Rate for the next setpoint ramp, as iControl's Rate ramp. The thermostat manages about 5 K/min on a full 100 mL reactor.
+
+actions:
+  - name: start_experiment
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    pausable: true
+    params:
+      name: {type: string, nullable: true, notes: Experiment name in iControl; omitted or null names it after the job.}
+      steps:
+        type: array
+        notes: Run in order; each step ramps Tr to tr_c (at ramp_k_min when given), waits until Tr is within tolerance_k, then holds.
+        items:
+          type: object
+          required: [tr_c, hold_min]
+          properties:
+            tr_c: {type: number, unit: Cel, limits: {min: -40, max: 180}, resolution: 0.1}
+            tj_c: {type: number, unit: Cel, limits: {min: -40, max: 180}, resolution: 0.1, nullable: true, notes: Control the jacket instead of the contents for this step; omitted or null uses Tr mode.}
+            hold_min: {type: number, unit: min, limits: {min: 0, max: 2880}}
+            ramp_k_min: {type: number, unit: K/min, limits: {min: 0.1, max: 20}, nullable: true, notes: Omitted or null leaves the ramp rate as it is (the thermostat's fastest).}
+            stirrer_rpm: {type: number, unit: "{rev}/min", limits: {min: 0, max: 1200}, resolution: 1, default: 300}
+      tolerance_k: {type: number, unit: K, limits: {min: 0.1, max: 10}, default: 1.0, notes: How close Tr must be to tr_c before a hold starts.}
+      end_tr_c: {type: number, unit: Cel, limits: {min: -40, max: 180}, resolution: 0.1, default: 20, notes: Temperature to bring the reactor to when the steps are done.}
+      end_stirrer_rpm: {type: number, unit: "{rev}/min", limits: {min: 0, max: 1200}, resolution: 1, default: 100}
+      end_experiment: {type: boolean, default: false, notes: Also end the iControl experiment (thermostat to idle) when done; false leaves it open for a dose or a second recipe.}
+    required: [steps]
+    notes: >
+      A recipe per compound: temperature steps with holds, driven by this package through the setpoint
+      nodes (iControl's own recipe editor is not reached). Cancelling stops the stirrer, stops dosing and
+      puts the thermostat in its idle state. Pausing holds at the current step.
+    returns:
+      type: object
+      required: [experiment, duration_s, steps, final]
+      properties:
+        experiment: {type: string}
+        duration_s: {type: number, unit: s}
+        steps: {type: integer, notes: Steps run.}
+        final: {type: object, notes: "Snapshot at the end: tr, tj, stirrer_rpm, stirrer_running, dosing_total_ml, ph, phase."}
+    examples:
+      - steps: [{tr_c: 60, hold_min: 30, ramp_k_min: 2, stirrer_rpm: 400}, {tr_c: 5, hold_min: 60, ramp_k_min: 0.5, stirrer_rpm: 300}]
+        end_tr_c: 20
+  - name: dose
+    duration: long
+    approval: auto
+    interlocks: [connected, stirrer_running]
+    cancellable: true
+    params:
+      volume_ml: {type: number, unit: mL, limits: {min: 0.1, max: 500}, resolution: 0.01}
+      rate_ml_min: {type: number, unit: mL/min, limits: {min: 0.01, max: 50}, resolution: 0.01}
+    required: [volume_ml, rate_ml_min]
+    notes: Delivers volume_ml from the dosing unit at rate_ml_min, through the mapped dose method node. Refused while the stirrer is stopped. Cancelling stops the pump.
+    returns:
+      type: object
+      required: [volume_ml, rate_ml_min, duration_s, dosing_total_ml]
+      properties:
+        volume_ml: {type: number, unit: mL}
+        rate_ml_min: {type: number, unit: mL/min}
+        duration_s: {type: number, unit: s}
+        dosing_total_ml: {type: number, unit: mL, notes: Cumulative volume after this dose (from the instrument, or counted here when no node is mapped).}
+    examples:
+      - {volume_ml: 10, rate_ml_min: 1}
+  - name: end_experiment
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Ends the open iControl experiment, stops the stirrer and puts the thermostat in its idle state.
+
+safety:
+  estop: true
+  interlocks: [connected, stirrer_running]
+  watchdog_s: 60
+  hardware_stop: "The OptiMax 1001 has a Safeguard button that triggers emergency cooling to Tsafe (release it and press Reset to continue) and a safety relay output. The EasyMax 102/402 has no physical emergency stop: its emergency programs (E, resettable; A, hardware faults) are triggered by its own Tsafe, Tr/Tj and torque limits. Neither is seen by this package; it latches nothing from them."
+  notes: >
+    E-stop writes stirrer 0, calls the stop-dosing and safe-state method nodes when mapped, and writes the
+    thermostat mode node to its idle value, so no heating or cooling demand remains; the contents cool or warm
+    passively. The node ids and the idle mode value are the lab's placeholders until confirmed on hardware.
+    A controller silent for 60 s while holding the lease triggers the same stop.

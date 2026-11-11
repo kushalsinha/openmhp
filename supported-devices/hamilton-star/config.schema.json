@@ -1,0 +1,17 @@
+{
+  "deck_file": {
+    "ask": "Deck layout file saved from PyLabRobot (lh.deck.save)",
+    "kind": "path",
+    "example": "C:/lab/star/deck.json",
+    "help": "Build the deck once in PyLabRobot (carriers, tip racks, plates, sites with the names agents will use) and save it with lh.deck.save('deck.json'). Every name in a request must exist in this file."
+  },
+  "deck": {
+    "ask": "Instrument deck when the file is absent",
+    "kind": "choice",
+    "choices": ["STARlet", "STAR"],
+    "advanced": true
+  },
+  "device_address": {"ask": "USB device address when more than one Hamilton is connected", "kind": "int", "required": false, "advanced": true},
+  "serial_number": {"ask": "Instrument serial number to select by", "required": false, "advanced": true},
+  "volume_cap": {"ask": "Largest volume (uL) the mounted tips or pipette allow", "kind": "int", "advanced": true}
+}

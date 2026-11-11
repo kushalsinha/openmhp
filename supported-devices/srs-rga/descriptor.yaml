@@ -1,0 +1,128 @@
+device:
+  notes: >
+    SRS RGA100/200/300 head on a vacuum chamber, its ECU on RS-232. Through this package an agent
+    controls the ionizer (filament emission, electron and ion energy, focus), the detector (Faraday
+    cup or electron multiplier), reads the status and error registers and runs the electrometer
+    calibration. It does not read ion currents: those are binary and need a code driver or the
+    vendor software.
+
+physical:
+  automated_load: false
+  notes: >
+    The head is a CF-flanged probe inside the vacuum system; nothing is loaded into it. The ECU
+    clamps to the probe. The only energy the agent controls is the filament (up to 3.5 mA emission,
+    which heats the filament to white heat) and the CDEM bias (up to 2490 V inside the vacuum).
+
+signals:
+  - {name: identity, type: string, notes: "ID? reply: SRSRGA<model>VER<firmware>SN<serial>, e.g. SRSRGA200VER0.24SN12345."}
+  - {name: emission_current, type: number, unit: mA,
+     notes: "FL? reply: the emission current the head actually measures, 0 when the filament is off; within 0.02 mA of the setpoint when on."}
+  - {name: electron_energy, type: number, unit: eV, notes: "EE? reply, 25 to 105 eV (default 70)."}
+  - {name: ion_energy_code, type: integer, unit: "1", notes: "IE? reply: 0 = 8 eV, 1 = 12 eV (default 1)."}
+  - {name: focus_voltage, type: number, unit: V, notes: "VF? reply, magnitude of the focus-plate bias, 0 to 150 V (default 90; the plate is negative)."}
+  - {name: cdem_voltage, type: number, unit: V,
+     notes: "HV? reply: actual electron-multiplier bias magnitude; 0 means the Faraday cup is the detector. Reads close to, not always equal to, the setpoint."}
+  - {name: noise_floor, type: integer, unit: "1", notes: "NF? reply, 0 (slowest, lowest noise) to 7 (fastest); shared by scans, MR and TP. Not settable here: the NF set command sends no reply and would stall the serial timeout."}
+  - {name: cdem_installed, type: boolean, notes: "MO? reply: 1 when the head has the electron multiplier option. HV commands are refused by a head without it."}
+  - {name: status_byte, type: integer, unit: "1",
+     notes: "ER? reply, the STATUS byte: 0 no error; bit 0 (1) communications, bit 1 (2) filament, bit 3 (8) electron multiplier, bit 4 (16) RF supply, bit 5 (32) electrometer, bit 6 (64) 24 V supply. Reading does not clear it."}
+  - {name: filament_error, type: integer, unit: "1",
+     notes: "EF? reply, FIL_ERR: 0 ok; bit 0 (1) single-filament operation, bit 5 (32) chamber pressure too high, bit 6 (64) requested emission not reachable, bit 7 (128) no filament. Cleared only by a later successful filament switch-on."}
+  - {name: filament_ok, type: boolean,
+     notes: "True exactly when EF? answers 0 (no filament error). Also reads EF?; the two are one query."}
+  - {name: comm_error, type: integer, unit: "1",
+     notes: "EC? reply, RS232_ERR: bit 0 bad command, bit 1 bad parameter, bit 2 command too long, bit 3 receive overflow, bit 4 transmit overflow, bit 5 jumper-protected parameter, bit 6 parameter conflict. Reading clears it and STATUS bit 0."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job (calibration) is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: "valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record. The head's own CA/CL calibrations are not dated by the instrument, so the lab's record is the source."}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next sensitivity calibration against a reference gauge is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: Calibrations run from here (the lab's recorded count, or the number of finished jobs when none is recorded). Filament hours are not counted by the head.}
+
+settings:
+  - {name: emission_setpoint, type: number, unit: mA, limits: {min: 0, max: 2.0}, resolution: 0.01, approval: confirm,
+     notes: "FL<x>: filament emission current. 0 switches the filament off; 0.02 to 3.5 mA is the head's range, capped here at 2.0 (1.0 is the normal value; raise the cap in descriptor.yaml if you really need more). Confirm because the head cannot see chamber pressure through this package: a person checks an independent gauge reads below 1e-4 Torr before each switch-on. The ECU replies with its STATUS byte once emission is established (a few seconds)."}
+  - {name: electron_energy_setpoint, type: integer, unit: eV, limits: {min: 25, max: 105}, resolution: 1, approval: auto, during_job: false,
+     notes: "EE<n>: electron impact energy, applied at once if the filament is on, otherwise stored. 70 eV is the standard library value."}
+  - {name: ion_energy_setpoint, type: integer, unit: "1", limits: {min: 0, max: 1}, resolution: 1, approval: auto,
+     notes: "IE<n>: 0 = 8 eV, 1 = 12 eV ion energy."}
+  - {name: focus_setpoint, type: integer, unit: V, limits: {min: 0, max: 150}, resolution: 1, approval: auto,
+     notes: "VF<n>: focus-plate bias magnitude (the plate is negative)."}
+  - {name: cdem_setpoint, type: integer, unit: V, limits: {min: 0, max: 2000}, resolution: 1, approval: confirm,
+     notes: "HV<n>: electron-multiplier bias. 0 switches to the Faraday cup; 10 to 2490 V is the head's range, capped at 2000 here (1400 is the default; the lab sets its own cap from the CDEM's gain calibration). Confirm because the multiplier is damaged above about 5e-6 Torr and the package cannot check pressure. Heads without the option refuse it (comm_error bit 0)."}
+
+actions:
+  - name: filament_off
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "FL0: emission off, repeller and focus plate grounded. Always safe; replies[0] is the STATUS byte."
+  - name: initialize
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "IN0: flushes the ECU's buffers, clears the communications error and re-runs the power-supply, electrometer and RF checks. Does not touch the filament. Send after a communications error."
+  - name: standby
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "IN2: factory defaults (EE 70, IE 1, VF 90, NF 4, mass range reset) and filament and multiplier off. Confirm because it also discards the scan settings somebody may have set from the vendor software."
+  - name: calibrate_all
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "CA: rezeroes the ion detector at the current noise-floor and detector settings and recalibrates the RF scan parameters; up to two minutes, STATUS byte at the end, RF off afterwards. Confirm because it must run with the filament on and the chamber at base pressure, which a person checks. Not cancellable: it is one command the head completes on its own."
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 60
+  notes: >
+    E-stop sends FL0 (filament off) and HV0 (multiplier off): the only two sources of energy the
+    agent controls. The head's own filament protection (shut-off on overpressure or an unreachable
+    emission, with the multiplier switched off as well) stays active regardless and is the primary
+    protection; this package cannot read chamber pressure, so the pressure interlock is a person
+    reading an independent gauge before confirming a switch-on. A silent controller is stopped after
+    60 s: a filament left on with nobody watching the vacuum is the thing to avoid.
+
+serial:
+  port: /dev/ttyUSB0          # placeholder: config.json `port` overrides it
+  baud: 28800                 # fixed by the ECU
+  eol: "\r"                   # commands end in CR; replies end in LF CR
+  timeout: 125                # CA answers with its STATUS byte only when done, up to 120 s
+  read:
+    identity: "ID?"
+    emission_current: "FL?"
+    electron_energy: "EE?"
+    ion_energy_code: "IE?"
+    focus_voltage: "VF?"
+    cdem_voltage: "HV?"
+    noise_floor: "NF?"
+    cdem_installed: "MO?"
+    status_byte: "ER?"
+    filament_error: "EF?"
+    filament_ok: "EF?"
+    comm_error: "EC?"
+  write:
+    emission_setpoint: "FL{value}"
+    electron_energy_setpoint: "EE{value}"
+    ion_energy_setpoint: "IE{value}"
+    focus_setpoint: "VF{value}"
+    cdem_setpoint: "HV{value}"
+  actions:
+    filament_off: ["FL0"]
+    initialize: ["IN0"]
+    standby: ["IN2"]
+    calibrate_all: ["CA"]
+  estop: ["FL0", "HV0"]
+  booleans:
+    cdem_installed: {true: ["1"], false: ["0"]}
+    # FIL_ERR uses bits 0, 5, 6 and 7 only: every non-zero combination of them reads false
+    filament_ok: {true: ["0"], false: ["1", "32", "33", "64", "65", "96", "97", "128", "129", "160", "161", "192", "193", "224", "225"]}

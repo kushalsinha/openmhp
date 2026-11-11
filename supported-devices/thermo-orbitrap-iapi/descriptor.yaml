@@ -1,0 +1,84 @@
+device:
+  notes: >
+    Orbitrap Tribrid mass spectrometer (Fusion, Lumos, Eclipse, Ascend) reached through Thermo's Instrument API
+    on the instrument PC. The instrument keeps running whatever Tune or Xcalibur told it to; this package
+    listens to the scans that arrive and places single custom full scans into the stream. It does not start
+    or stop acquisitions, change the ion source, or touch the LC.
+
+physical:
+  automated_load: false
+  notes: >
+    Samples arrive by the LC or a syringe pump under the instrument's own control; nothing here loads anything.
+    High voltages, heated capillary and the source gases stay under Tune. The instrument PC must stay logged in
+    with Tune running for the IAPI service to answer.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the IAPI service is connected and the instrument access reports Connected.}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while a custom-scan job started here is waiting for its scan.}
+  - {name: instrument_name, type: string, notes: Instrument name as the IAPI reports it.}
+  - {name: instrument_state, type: string, notes: "IAcquisition.State.SystemState as a string: Off, Standby, On, Running (the InstrumentState enum)."}
+  - {name: acquisition_state, type: string, notes: "IAcquisition.State.SystemMode as a string (unverified member): what the acquisition is doing now."}
+  - {name: last_scan_number, type: integer, notes: Scan number of the most recent scan that arrived from the instrument (0 before any arrived).}
+  - {name: tic, type: number, unit: "1", nullable: true, notes: Total ion current of the most recent scan from its header; null before any scan arrived or when the header has no TIC.}
+  - {name: last_custom_scan, type: object, nullable: true, notes: Result of the most recent request_custom_scan from here, same shape as its returns; null before the first.}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); the mass calibration lives in Tune and is not read here."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next calibration is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Custom scans completed from here, unless the lab's record carries its own count. Scans the instrument takes on its own are not counted.}
+
+settings: []
+
+actions:
+  - name: request_custom_scan
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      first_mass: {type: number, unit: "1", limits: {min: 50, max: 2000}, notes: Lower m/z of the scan window. The instrument's full range is wider on some models; 50-2000 is the safe placeholder.}
+      last_mass: {type: number, unit: "1", limits: {min: 50, max: 2000}, notes: Upper m/z; must be above first_mass.}
+      resolution: {type: integer, limits: {enum: [15000, 30000, 60000, 120000, 240000, 500000]}, default: 120000, notes: Orbitrap resolution setting at m/z 200; the enum is the Tribrid list, not every model offers 500000.}
+      agc_target: {type: integer, limits: {min: 1000, max: 1000000}, default: 100000, notes: AGC target (ions).}
+      max_it_ms: {type: number, unit: ms, limits: {min: 1, max: 500}, default: 50, notes: Maximum injection time.}
+      polarity: {type: string, limits: {enum: [positive, negative]}, default: positive, notes: Ion polarity. The encoding sent to the IAPI is unverified; check the first scan's header on hardware.}
+    required: [first_mass, last_mass]
+    limits:
+      first_mass: [50, 2000]
+      last_mass: [50, 2000]
+    returns:
+      type: object
+      required: [scan_number, points, peaks_csv, first_mass, last_mass, resolution, polarity, running_number]
+      properties:
+        scan_number: {type: integer, notes: The instrument's scan number for the delivered scan.}
+        points: {type: integer, notes: Centroids in the scan.}
+        peaks_csv: {type: string, notes: "Path of the centroid list (mz, intensity) under data_dir."}
+        tic: {type: number, unit: "1", nullable: true, notes: TIC from the scan header; null when the header has none.}
+        first_mass: {type: number, unit: "1"}
+        last_mass: {type: number, unit: "1"}
+        resolution: {type: integer}
+        polarity: {type: string}
+        running_number: {type: integer, notes: The RunningNumber given to the custom scan; the scan is matched by its trailer 'Access ID'.}
+        base_peak_mz: {type: number, unit: "1", nullable: true, notes: m/z of the most intense centroid; null for an empty scan.}
+    notes: >
+      Places one full scan (ScanType Full) with the given window into the instrument's scan queue and waits for it
+      to arrive. The instrument must be On and acquiring (Tune running, or a method); a scan that does not arrive
+      within max_it_ms plus scan_timeout_s fails the job and cancels the request.
+    examples:
+      - {first_mass: 350, last_mass: 1500, resolution: 120000, agc_target: 100000, max_it_ms: 50, polarity: positive}
+  - name: cancel_custom_scan
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: "IScans.CancelCustomScan: withdraws any custom scan not yet taken. Harmless when none is pending."
+    examples:
+      - {}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 60
+  notes: >
+    E-stop cancels pending custom scans; nothing else here energises anything. The instrument's own controls
+    (Tune: Standby/Off, the source) stay primary and are not reachable through this package. A controller
+    silent for 60 s while holding the lease has its custom scans cancelled and the lease dropped.

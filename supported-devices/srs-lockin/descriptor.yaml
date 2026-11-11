@@ -1,0 +1,267 @@
+device:
+  notes: >
+    SRS SR830 lock-in amplifier on a bench. It measures the component of its input at the
+    reference frequency and reports X, Y, R and theta; it sources a sine output (0.004 to 5 V
+    rms) and four DC aux outputs (±10.5 V). Sensitivity and time constant are table indices,
+    not values: see references/srs-commands.md.
+
+physical:
+  automated_load: false
+  notes: >
+    Rack-mount bench instrument, about 7 kg. BNC connections wired by a person; nothing is
+    loaded into it. Sources at most 5 V rms (sine out) and ±10.5 V DC (aux out) into the
+    experiment.
+
+signals:
+  - name: x
+    type: number
+    unit: V
+    notes: In-phase component (OUTP? 1), in volts at the input (the instrument scales by sensitivity). Wait several time constants after a change.
+  - name: y
+    type: number
+    unit: V
+    notes: Quadrature component (OUTP? 2).
+  - name: r
+    type: number
+    unit: V
+    notes: Magnitude sqrt(x^2 + y^2) (OUTP? 3). Equal to the sensitivity full scale means overload.
+  - name: theta
+    type: number
+    unit: deg
+    notes: Phase of the signal relative to the reference, -180 to 180 degrees (OUTP? 4).
+  - name: frequency
+    type: number
+    unit: Hz
+    notes: Reference frequency (FREQ?); the internal oscillator's when reference_source is 1, the measured external one when 0.
+  - name: sine_amplitude
+    type: number
+    unit: V
+    notes: Sine output amplitude in V rms as held (SLVL?), 0.004 minimum.
+  - name: sensitivity_index
+    type: integer
+    notes: "Sensitivity table index as held (SENS?): 0 is 2 nV/fA, 26 is 1 V/uA; the table is in references/srs-commands.md."
+  - name: time_constant_index
+    type: integer
+    notes: "Time constant table index as held (OFLT?): 0 is 10 us, 19 is 30 ks."
+  - name: phase
+    type: number
+    unit: deg
+    notes: Reference phase shift as held (PHAS?), -360 to 729.99 degrees.
+  - name: reference_source
+    type: integer
+    notes: 1 internal reference, 0 external (FMOD?).
+  - name: aux_in_1
+    type: number
+    unit: V
+    notes: Aux input 1 (OAUX? 1), ±10 V with 1/3 mV resolution.
+  - name: aux_in_2
+    type: number
+    unit: V
+    notes: Aux input 2 (OAUX? 2).
+  - name: aux_in_3
+    type: number
+    unit: V
+    notes: Aux input 3 (OAUX? 3).
+  - name: aux_in_4
+    type: number
+    unit: V
+    notes: Aux input 4 (OAUX? 4).
+  - name: aux_out_1_actual
+    type: number
+    unit: V
+    notes: Aux output 1 as held (AUXV? 1).
+  - name: aux_out_2_actual
+    type: number
+    unit: V
+    notes: Aux output 2 as held (AUXV? 2).
+  - name: state
+    type: string
+    source: runtime
+    notes: "The driver's state machine: idle, busy, fault, estop; answered by the base."
+  - name: busy
+    type: boolean
+    source: runtime
+    notes: True while a job started here is running; answered by the base.
+  - name: connected
+    type: boolean
+    source: runtime
+    notes: True while the VISA session or serial port is open; interlock of every action.
+  - name: calibration_status
+    type: string
+    source: record
+    notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record.
+  - name: calibration_due
+    type: string
+    nullable: true
+    source: record
+    notes: ISO-8601 date the next calibration is due, from the lab's record; null when none is recorded.
+  - name: qualification_status
+    type: string
+    source: record
+    notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.
+  - name: usage_count
+    type: integer
+    source: record
+    notes: Snapshot jobs completed from here, or the lab's recorded count.
+
+settings:
+  - name: output_interface
+    type: integer
+    limits: {min: 0, max: 1}
+    approval: auto
+    notes: "OUTX: 0 sends replies to RS-232, 1 to GPIB. Write it first in every session; the SR830 answers queries only on the selected interface."
+  - name: frequency
+    type: number
+    unit: Hz
+    limits: {min: 0.001, max: 102000}
+    approval: auto
+    notes: Internal reference frequency (FREQ), 1 mHz to 102 kHz; ignored while the reference is external.
+  - name: sine_amplitude
+    type: number
+    unit: V
+    limits: {min: 0.004, max: 5.0}
+    resolution: 0.002
+    approval: auto
+    notes: Sine output amplitude in V rms (SLVL), 0.004 to 5.000 in 2 mV steps. There is no off; 0.004 is the minimum. Lower max here to what the sample tolerates.
+  - name: sensitivity_index
+    type: integer
+    limits: {min: 0, max: 26}
+    approval: auto
+    notes: "SENS table index, 0 (2 nV) to 26 (1 V); see references/srs-commands.md. Or invoke auto_gain."
+  - name: time_constant_index
+    type: integer
+    limits: {min: 0, max: 19}
+    approval: auto
+    notes: "OFLT table index, 0 (10 us) to 19 (30 ks). Index 8 is 100 ms, 9 is 300 ms."
+  - name: phase
+    type: number
+    unit: deg
+    limits: {min: -360, max: 729.99}
+    resolution: 0.01
+    approval: auto
+    notes: Reference phase shift (PHAS) in degrees; the instrument wraps it to -180..180.
+  - name: reference_source
+    type: integer
+    limits: {min: 0, max: 1}
+    approval: auto
+    notes: FMOD 1 internal (sine output is the reference), 0 external (REF IN).
+  - name: aux_out_1
+    type: number
+    unit: V
+    limits: {min: -10.5, max: 10.5}
+    resolution: 0.001
+    approval: auto
+    notes: Aux output 1 DC voltage (AUXV 1). The instrument's full range is shipped; the lab lowers it to what the output drives (a gate, a coil driver).
+  - name: aux_out_2
+    type: number
+    unit: V
+    limits: {min: -10.5, max: 10.5}
+    resolution: 0.001
+    approval: auto
+    notes: Aux output 2 DC voltage (AUXV 2).
+  - name: aux_out_3
+    type: number
+    unit: V
+    limits: {min: -10.5, max: 10.5}
+    resolution: 0.001
+    approval: auto
+    notes: Aux output 3 DC voltage (AUXV 3).
+  - name: aux_out_4
+    type: number
+    unit: V
+    limits: {min: -10.5, max: 10.5}
+    resolution: 0.001
+    approval: auto
+    notes: Aux output 4 DC voltage (AUXV 4).
+
+actions:
+  - name: auto_gain
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: AGAN; the instrument picks the sensitivity for the present signal. Takes a few time constants; read sensitivity_index afterwards.
+  - name: auto_phase
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: APHS; sets the phase so the signal falls in X and theta reads 0.
+  - name: clear_status
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: "*CLS; clears the status registers (overload and error bits)."
+  - name: snapshot
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: >
+      One SNAP? 1,2,3,4 query. The single reply is "x,y,r,theta" sampled at the same instant,
+      which the separate x/y/r/theta signals cannot guarantee.
+  - name: set_aux_outputs
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      v1: {type: number, unit: V, limits: {min: -10.5, max: 10.5}, resolution: 0.001, default: 0, notes: Aux output 1 in volts.}
+      v2: {type: number, unit: V, limits: {min: -10.5, max: 10.5}, resolution: 0.001, default: 0, notes: Aux output 2 in volts.}
+      v3: {type: number, unit: V, limits: {min: -10.5, max: 10.5}, resolution: 0.001, default: 0, notes: Aux output 3 in volts.}
+      v4: {type: number, unit: V, limits: {min: -10.5, max: 10.5}, resolution: 0.001, default: 0, notes: Aux output 4 in volts.}
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples:
+      - {v1: 1.5, v2: 0, v3: 0, v4: 0}
+      - {v1: 0}
+    notes: Writes AUXV 1..4 in order, each bounded as the aux_out settings are. Omitted outputs go to 0 V. Replies are empty strings.
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 30
+  notes: >
+    The SR830 has no output disable. E-stop sends SLVL 0.004 (sine output to its 4 mV minimum)
+    and AUXV 1..4 to 0 V, which is the least this instrument can source; a person disconnects
+    the sine-out BNC when the sample must see nothing. Measurement continues after the stop.
+    No hardware stop; the power switch is the physical one.
+
+scpi:
+  resource: "GPIB0::8::INSTR"
+  eol: "\n"
+  timeout: 1
+  idn_match: SR830
+  read:
+    x: "OUTP? 1"
+    y: "OUTP? 2"
+    r: "OUTP? 3"
+    theta: "OUTP? 4"
+    frequency: "FREQ?"
+    sine_amplitude: "SLVL?"
+    sensitivity_index: "SENS?"
+    time_constant_index: "OFLT?"
+    phase: "PHAS?"
+    reference_source: "FMOD?"
+    aux_in_1: "OAUX? 1"
+    aux_in_2: "OAUX? 2"
+    aux_in_3: "OAUX? 3"
+    aux_in_4: "OAUX? 4"
+    aux_out_1_actual: "AUXV? 1"
+    aux_out_2_actual: "AUXV? 2"
+  write:
+    output_interface: "OUTX {value}"
+    frequency: "FREQ {value}"
+    sine_amplitude: "SLVL {value}"
+    sensitivity_index: "SENS {value}"
+    time_constant_index: "OFLT {value}"
+    phase: "PHAS {value}"
+    reference_source: "FMOD {value}"
+    aux_out_1: "AUXV 1,{value}"
+    aux_out_2: "AUXV 2,{value}"
+    aux_out_3: "AUXV 3,{value}"
+    aux_out_4: "AUXV 4,{value}"
+  actions:
+    auto_gain: ["AGAN"]
+    auto_phase: ["APHS"]
+    clear_status: ["*CLS"]
+    snapshot: ["SNAP? 1,2,3,4"]
+    set_aux_outputs: ["AUXV 1,{v1}", "AUXV 2,{v2}", "AUXV 3,{v3}", "AUXV 4,{v4}"]
+  estop: ["SLVL 0.004", "AUXV 1,0", "AUXV 2,0", "AUXV 3,0", "AUXV 4,0"]

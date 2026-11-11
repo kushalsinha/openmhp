@@ -1,0 +1,43 @@
+{
+  "vendor": {
+    "ask": "Which acquisition software imports the file?",
+    "kind": "choice",
+    "choices_from": "vendor",
+    "example": "masslynx",
+    "help": "masslynx = Waters MassLynx 4.x sample list (.csv), sciexos = SCIEX OS batch (.txt), masshunter = Agilent MassHunter Acquisition worklist (.csv), xcalibur = Thermo Xcalibur sequence (.csv)."
+  },
+  "output_dir": {
+    "ask": "Folder where worklist files are written (a folder the acquisition PC can open)",
+    "kind": "path",
+    "example": "C:\\MassLynx\\Worklists\\openmhp",
+    "help": "Local to the acquisition PC, or a share it reads. The package only needs write access; the person importing needs read access from the vendor software."
+  },
+  "tune_file": {
+    "ask": "MassLynx MS tune file name (MS_TUNE_FILE column), blank for none",
+    "required": false,
+    "advanced": true
+  },
+  "data_path": {
+    "ask": "Xcalibur data folder written to the Path column, blank for the sequence default",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  },
+  "bracket_type": {
+    "ask": "Xcalibur bracket type (1 Overlapped, 2 None, 3 Non-Overlapped, 4 Open)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "list_separator": {
+    "ask": "Xcalibur list separator: ',' or ';' (must equal the Windows list separator on the acquisition PC)",
+    "required": false,
+    "advanced": true
+  },
+  "max_rows": {
+    "ask": "Most rows one worklist may carry",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}

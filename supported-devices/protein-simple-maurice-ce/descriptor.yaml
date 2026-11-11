@@ -1,0 +1,84 @@
+device:
+  notes: >
+    ProteinSimple (Bio-Techne) Maurice: imaged capillary isoelectric focusing (cIEF) and CE-SDS on one
+    cartridge-based instrument under Compass for iCE. Compass has no public API: a run is queued by a sample
+    table in a watched folder, imported and started in Compass, and read back from the exported peak table.
+
+physical:
+  automated_load: true
+  notes: >
+    Samples sit in a 96-well plate (positions A1..H12) and reagents in the vial rack inside the instrument, so
+    a handling system can load a plate between batches; the cartridge (cIEF or CE-SDS) is fitted by a person.
+    Compass exports no plate-access or cartridge state, so robot_access_ready is not declared: a handling
+    system cannot tell from here whether the plate position is free, and cartridge_present is only what the
+    lab's own status file says. The SCIEX PA 800 Plus under 32 Karat is the usual alternative for the same
+    assays; this package does not drive it.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the batch folder and the results folder in config.json exist and are writable from this host.}
+  - {name: queue_depth, type: integer, unit: "1", notes: Batch files written by this package that nobody has imported into Compass yet.}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent queue_run from here (same shape as its returns); null until one has run.}
+  - {name: cartridge_present, type: boolean, nullable: true, notes: "Compass does not export it. True/false only when the lab's helper writes status.json ({\"cartridge\": true}) in the results folder; null otherwise, which means unknown, not absent."}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a run queued from here waits for its export.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state). Compass's pI-marker and MW-ladder fits are per run and are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next qualification due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Injections queued from here (the lab's recorded count, or the number of finished queue_run jobs when none is recorded). Compass's cartridge injection counter is not read.}
+
+settings: []
+
+actions:
+  - name: queue_run
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      sample_name: {type: string, notes: "Goes into the sample table and the export: letters, digits, space, '_', '.', '-'; at most 64 characters. The job token is appended so the export can be matched."}
+      position: {type: string, notes: "96-well plate position of the sample, A1..H12, as Compass names it."}
+      method: {type: string, notes: Name of the Compass method (cIEF or CE-SDS, with its own injection and separation settings) exactly as saved in Compass; optionally restricted by allowed_methods in config.json.}
+      replicates: {type: integer, limits: {min: 1, max: 3}, default: 1, notes: Injections of the same position; each becomes a row of the sample table.}
+    required: [sample_name, position, method]
+    notes: >
+      Writes mhp_<job>.csv (Sample, Position, Method, Injection) to the watched folder and waits for the peak
+      table *mhp_<job>*.csv in the results folder. Whether the file starts hardware depends on the lab: Compass
+      imports the sample table and a person presses Start, or a helper does. Because it can start a separation
+      on a cartridge, each call is confirmed by a person. Cancelling withdraws the batch if nobody has imported
+      it; a run already started finishes in Compass.
+    returns:
+      type: object
+      required: [sample_name, method, file, peaks, duration_s]
+      properties:
+        sample_name: {type: string}
+        method: {type: string}
+        file: {type: string, notes: Path of the exported peak table.}
+        peaks:
+          type: array
+          notes: One entry per peak in the export for this sample, in file order.
+          items:
+            type: object
+            required: [position, area, area_pct]
+            properties:
+              label: {type: string, nullable: true, notes: Peak name as Compass labelled it; null when unlabelled.}
+              position: {type: number, notes: pI for cIEF, apparent MW in kDa for CE-SDS (the export's position column).}
+              area: {type: number, notes: Peak area as exported (Compass's arbitrary absorbance or fluorescence units).}
+              area_pct: {type: number, unit: "%", notes: Percent of total area.}
+        main_peak_pct: {type: number, unit: "%", nullable: true, notes: "% area of the peak labelled Main (or monomer/intact); the largest peak when none is labelled; null when no peaks were read."}
+        duration_s: {type: number, unit: s, notes: From writing the batch to reading the export.}
+    examples:
+      - {sample_name: "mAb-7 lot 23 charge variants", position: "A1", method: "cIEF_mAb_pH3-10", replicates: 2}
+      - {sample_name: "mAb-7 lot 23 reduced", position: "A2", method: "CE-SDS_reduced_25min"}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 900
+  watchdog_action: release
+  notes: >
+    No stop command reaches the Maurice: Compass for iCE stops a run (Abort in its run window), and the
+    instrument's own cover and cartridge interlocks are its own. An e-stop here withdraws every batch file not
+    yet imported, so nothing further starts; a separation already running finishes in Compass. Fifteen minutes
+    of silence from the controller releases the lease and lets a waiting job finish, since a cartridge mid-run
+    should not be abandoned.

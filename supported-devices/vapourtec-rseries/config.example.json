@@ -1,0 +1,32 @@
+{
+  "url": "opc.tcp://localhost:4840",
+  "username": null,
+  "max_pressure_bar": 20,
+  "nodes": {
+    "object": "ns=2;s=FlowCommander",
+    "pump_a_flow": "ns=2;s=FlowCommander.PumpA.FlowRate",
+    "pump_b_flow": "ns=2;s=FlowCommander.PumpB.FlowRate",
+    "pump_a_flow_setpoint": "ns=2;s=FlowCommander.PumpA.FlowRateSetpoint",
+    "pump_b_flow_setpoint": "ns=2;s=FlowCommander.PumpB.FlowRateSetpoint",
+    "system_pressure": "ns=2;s=FlowCommander.System.Pressure",
+    "system_state": "ns=2;s=FlowCommander.System.State",
+    "collection_valve": "ns=2;s=FlowCommander.CollectionValve.Position",
+    "collection_valve_set": "ns=2;s=FlowCommander.CollectionValve.Collect",
+    "bpr_pressure": "ns=2;s=FlowCommander.BPR.Setpoint",
+    "reactor_1_temperature": "ns=2;s=FlowCommander.R4.Channel1.Temperature",
+    "reactor_2_temperature": "ns=2;s=FlowCommander.R4.Channel2.Temperature",
+    "reactor_3_temperature": null,
+    "reactor_4_temperature": null,
+    "reactor_1_setpoint": "ns=2;s=FlowCommander.R4.Channel1.Setpoint",
+    "reactor_2_setpoint": "ns=2;s=FlowCommander.R4.Channel2.Setpoint",
+    "reactor_3_setpoint": null,
+    "reactor_4_setpoint": null,
+    "reactor_1_enable": "ns=2;s=FlowCommander.R4.Channel1.Enabled",
+    "reactor_2_enable": "ns=2;s=FlowCommander.R4.Channel2.Enabled",
+    "reactor_3_enable": null,
+    "reactor_4_enable": null,
+    "start": null,
+    "stop": null,
+    "prime": null
+  }
+}

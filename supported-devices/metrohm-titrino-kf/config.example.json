@@ -1,0 +1,7 @@
+{
+  "port": "COM4",
+  "dialect": "plus",
+  "baud": 19200,
+  "timeout_s": 2,
+  "titer_mg_ml": 5.0
+}

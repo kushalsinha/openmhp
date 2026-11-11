@@ -1,0 +1,106 @@
+device:
+  notes: >
+    TEMPLATE. Agilent 708-DS eight-vessel dissolution bath with paddles or baskets, a motorised
+    drive head, optional dosage delivery module and optional 850-DS sampler, on RS-232 at 9600 baud
+    with a two-digit Comm ID (01). The capabilities below are the instrument's; the serial frames are
+    placeholders because Agilent has not published the command set. Nothing in the serial block may
+    be sent to a real bath until the frames are confirmed (references/setup.md).
+
+physical:
+  mass_kg: 70
+  automated_load: false
+  notes: >
+    Bench unit: water bath with eight 1 L vessels under a drive head that lowers the spindles into
+    the vessels. Tablets go in by hand or through the dosage delivery module; vessels are filled and
+    emptied by a person. No handling-system boundary is reported by the instrument.
+
+signals:
+  - {name: bath_temperature, type: number, unit: Cel, notes: "PLACEHOLDER frame 01RBAT0000: bath water temperature, reply data ttt.t as four digits."}
+  - {name: vessel_temperature_1, type: number, unit: Cel, notes: "PLACEHOLDER frame 01RVT10000: vessel 1 medium temperature from the AutoTemp probe when the probes are lowered; the 850-DS reports the read takes about 40 s. Add vessel_temperature_2..8 the same way once the codes are known."}
+  - {name: paddle_speed, type: number, unit: "{rev}/min", notes: "PLACEHOLDER frame 01RRPM0000: measured spindle speed."}
+  - {name: run_state, type: integer, unit: "1", notes: "PLACEHOLDER frame 01RRUN0000: 0 idle, 1 running, 2 paused (the real 708-DS states are not known)."}
+  - {name: time_remaining, type: number, unit: min, notes: "PLACEHOLDER frame 01RTIM0000: minutes left on the run timer."}
+  - {name: heater_on, type: boolean, notes: "PLACEHOLDER frame 01RHTR0000: 1 when the bath heater is enabled."}
+  - {name: identity, type: string, notes: "Frame 0152930000: the first frame Agilent's own tester driver sends on connection (captured in its log); the reply is an identity/firmware string. The only frame here taken from a real trace; its meaning is inferred."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record (mechanical qualification per USP <711> / ASTM E2503, temperature and speed verification).}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next mechanical qualification is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown (IQ/OQ/PQ), as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: Dissolution runs started from here (the lab's recorded count, or the number of finished start_run jobs when none is recorded).}
+
+settings:
+  - {name: temperature_setpoint, type: number, unit: Cel, limits: {min: 25, max: 45}, resolution: 0.1, approval: confirm,
+     notes: "PLACEHOLDER frame 01WBAT{value}: bath setpoint. 25 to 45 covers USP media (37.0 typical); the real frame encodes ttt.t as four digits, which this placeholder does not. Confirm because the frame is unverified."}
+  - {name: paddle_speed_setpoint, type: integer, unit: "{rev}/min", limits: {min: 25, max: 250}, resolution: 1, approval: confirm,
+     notes: "PLACEHOLDER frame 01WRPM{value}: spindle speed, 25 to 250 rpm (USP apparatus 1 and 2 range). Confirm because the frame is unverified."}
+  - {name: run_time, type: integer, unit: min, limits: {min: 1, max: 1440}, resolution: 1, approval: confirm,
+     notes: "PLACEHOLDER frame 01WTIM{value}: run duration in minutes. Confirm because the frame is unverified."}
+
+actions:
+  - name: start_run
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "PLACEHOLDER frame 01WRUN0001: lower the drive head and start the spindles and the run timer. Confirm because the drive head moves and the frame is unverified. The job returns when the frame is sent; the run itself is followed through run_state and time_remaining. Methods (medium, speed, sampling times) are not stored here: see DEVICE.md."
+  - name: stop_run
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "PLACEHOLDER frame 01WRUN0000: stop the spindles and the timer; the heater stays on."
+  - name: drop_samples
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "PLACEHOLDER frame 01WDDM0000: fire all eight dosage delivery module positions. Only with the DDM fitted and loaded. Confirm because it is irreversible for the tablets."
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 120
+  watchdog_action: release
+  notes: >
+    TEMPLATE: the e-stop sends the placeholder frames 01WRUN0000 (spindles stop) and 01WHTR0000
+    (heater off), which a real 708-DS will not understand; the real stop frames must be confirmed
+    before use. A silent controller releases the lease after 120 s rather than stopping: a dissolution
+    run interrupted mid-way is a failed GMP test, the bath's own over-temperature cut-out protects it,
+    and 250 rpm paddles in water are not a hazard. Hardware stop: the front-panel STOP on the 708-DS.
+  hardware_stop: "STOP key on the 708-DS front panel stops the spindles; the mains switch cuts the heater."
+
+serial:
+  port: /dev/ttyUSB0          # placeholder: config.json `port` overrides it
+  baud: 9600                  # 9600 is required by all Agilent/VanKel dissolution equipment
+  eol: "\r"                   # UNVERIFIED: the real frames may carry no terminator
+  timeout: 2
+  # EVERY FRAME BELOW IS A PLACEHOLDER (see references/protocol.md). The letters in the code field
+  # are deliberate: a real 708-DS rejects them, so a mistaken use cannot do anything.
+  read:
+    bath_temperature: "01RBAT0000"
+    vessel_temperature_1: "01RVT10000"
+    paddle_speed: "01RRPM0000"
+    run_state: "01RRUN0000"
+    time_remaining: "01RTIM0000"
+    heater_on: "01RHTR0000"
+    identity: "0152930000"
+  write:
+    temperature_setpoint: "01WBAT{value}"
+    paddle_speed_setpoint: "01WRPM{value}"
+    run_time: "01WTIM{value}"
+  actions:
+    start_run: ["01WRUN0001"]
+    stop_run: ["01WRUN0000"]
+    drop_samples: ["01WDDM0000"]
+  estop: ["01WRUN0000", "01WHTR0000"]
+  parse:                      # replies are 10 characters: Comm ID, code, four data digits
+    bath_temperature: {regex: "(\\d{4})$", group: 1, scale: 0.1}
+    vessel_temperature_1: {regex: "(\\d{4})$", group: 1, scale: 0.1}
+    paddle_speed: {regex: "(\\d{4})$", group: 1}
+    run_state: {regex: "(\\d)$", group: 1}
+    time_remaining: {regex: "(\\d{4})$", group: 1}
+    heater_on: {regex: "(\\d)$", group: 1}

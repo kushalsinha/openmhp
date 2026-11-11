@@ -1,0 +1,9 @@
+{
+  "resource": {
+    "ask": "How to reach the supply: tcp://<ip>:5555 (LAN), or its USB VISA resource",
+    "kind": "choice",
+    "choices_from": "resource",
+    "example": "tcp://192.168.1.50:5555",
+    "help": "Rigol's raw-socket port is 5555, so LAN is tcp://192.168.1.50:5555 (the IP is under Utility > I/O > LAN); VISA strings also work: TCPIP0::192.168.1.50::inst0::INSTR, or USB0::0x1AB1::0x0E11::DP8C123456789::INSTR for USB (the serial number is on the rear label). A Siglent SPD3303X uses port 5025 and a different command set (see references). With pyvisa not installed, type the string."
+  }
+}

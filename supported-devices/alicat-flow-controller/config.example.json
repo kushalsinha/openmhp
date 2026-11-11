@@ -1,0 +1,5 @@
+{
+  "port": "/dev/ttyUSB0",
+  "unit_id": "A",
+  "baud": 19200
+}

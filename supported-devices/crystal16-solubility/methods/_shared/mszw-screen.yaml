@@ -1,0 +1,44 @@
+name: mszw-screen
+project: _shared
+action: run_program
+params:
+  program:
+    stirrer_rpm: 700
+    cycles: 2
+    steps:
+    - action: heat
+      temperature_c: 60
+      rate_k_min: 1
+    - action: hold
+      temperature_c: 60
+      hold_min: 10
+    - action: cool
+      temperature_c: 5
+      rate_k_min: 0.5
+    - action: hold
+      temperature_c: 5
+      hold_min: 10
+  blocks:
+  - A
+  - B
+  - C
+  - D
+  name: null
+  timeout_h: 24
+compounds:
+- paracetamol
+version: 1
+hash: 71d50f656356
+created: 1794433587.534988
+updated: 1794433587.534988
+validated:
+  at: 1794433587.534988
+  hash: 71d50f656356
+status: active
+notes: 'Metastable zone width screen: two cycles of heating at 1 K/min to 60 degC
+  (clear point) and cooling at 0.5 K/min to 5 degC (cloud point) on all four blocks,
+  700 rpm.'
+source:
+  kind: person
+  ref: example program written for the package; tune to the compound and solvent
+author: package author

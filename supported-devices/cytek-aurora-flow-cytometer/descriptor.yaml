@@ -1,0 +1,78 @@
+device:
+  notes: >
+    Cytek Aurora (or Northern Lights) full-spectrum flow cytometer under SpectroFlo. SpectroFlo has no public API:
+    an acquisition is queued by a worklist row in a watched folder, run in SpectroFlo by a helper or a person, and
+    read back from the FCS 3.1 file (and optional statistics CSV) SpectroFlo exports.
+
+physical:
+  automated_load: true
+  notes: >
+    Tubes on the sample injection port, or a 96-well plate and 40-tube rack on the Aurora plate loader, which
+    a handling system can load between acquisitions. SpectroFlo exports no loader or sample-port state and no
+    sheath/waste level, so robot_access_ready is not declared and sheath_level_ok is only what the lab's own
+    status file says. Pressurised sheath and waste containers; bleach in the waste. A BD FACSymphony or
+    FACSCanto under FACSDiva is the usual alternative (FACSDiva exports FCS 3.0/3.1 and statistics the same way);
+    this package does not drive it.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the worklist folder and the export folder in config.json exist and are writable from this host.}
+  - {name: queue_depth, type: integer, unit: "1", notes: Worklists written by this package that nobody has acquired yet.}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent queue_acquisition from here (same shape as its returns); null until one has run.}
+  - {name: sheath_level_ok, type: boolean, nullable: true, notes: "SpectroFlo shows sheath and waste indicators on screen (yellow: about 5 minutes of sheath left; red: empty) and exports nothing. True/false only when the lab's helper writes status.json ({\"sheath_ok\": true}) in the export folder; null means unknown."}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while an acquisition queued from here waits for its FCS file.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state). SpectroFlo's daily QC (bead lot, gains, Levey-Jennings) writes CSV reports to its Setup folder and is not read here.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next qualification due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Acquisitions queued from here (the lab's recorded count, or the number of finished queue_acquisition jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: queue_acquisition
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      sample_name: {type: string, notes: "Tube or well name in SpectroFlo and in the FCS keywords: letters, digits, space, '_', '.', '-'; at most 64 characters. The job token is appended so the export can be matched."}
+      position: {type: string, notes: "Plate well A1..H12 on the loader, or tube rack slot T1..T40; a single tube on the sample injection port is 'T1'."}
+      template: {type: string, nullable: true, notes: Experiment template in SpectroFlo's library (the panel, gains, worksheet and reference controls); null uses the experiment already open. Optionally restricted by allowed_templates in config.json.}
+      stop_events: {type: integer, limits: {min: 1000, max: 10000000}, default: 10000, notes: Events to record (SpectroFlo's stopping rule); acquisition stops at the first criterion met.}
+      stop_time_s: {type: number, unit: s, limits: {min: 5, max: 3600}, nullable: true, notes: Stopping time; null means events only.}
+      flow_rate: {type: string, limits: {enum: [low, medium, high]}, default: medium, notes: "SpectroFlo's Low (15 uL/min), Medium (30 uL/min) or High (60 uL/min)."}
+    required: [sample_name, position]
+    notes: >
+      Writes mhp_<job>.csv (position, sample name, template, stop criteria, flow rate, export name) to the watched
+      folder and waits for *mhp_<job>*.fcs in the export folder; a *mhp_<job>*.csv statistics export beside it is
+      reported when present. Whether the row starts hardware depends on the lab: a helper that drives SpectroFlo,
+      or a person who reads the worklist. Because it can start the sample injection tube and the fluidics on a
+      sample, each call is confirmed by a person. Cancelling withdraws the worklist if nobody has taken it; an
+      acquisition already running finishes in SpectroFlo.
+    returns:
+      type: object
+      required: [sample_name, fcs_file, events, parameters, channels, duration_s]
+      properties:
+        sample_name: {type: string}
+        fcs_file: {type: string, notes: Path of the FCS 3.1 file.}
+        events: {type: integer, notes: "$TOT from the FCS TEXT segment; checked against the DATA segment length for float data."}
+        parameters: {type: integer, notes: "$PAR: parameters per event."}
+        channels: {type: array, items: {type: string}, notes: "$PnN short names in order (Time, FSC-A, SSC-A, V1-A, B2-A, ... for raw data; fluorochrome names for unmixed data)."}
+        stats_file: {type: string, nullable: true, notes: Path of the statistics CSV exported beside the FCS file, or null when none was exported.}
+        duration_s: {type: number, unit: s, notes: From writing the worklist to reading the FCS file.}
+    examples:
+      - {sample_name: "lot 42 viability", position: "A1", template: "Viability_7AAD", stop_events: 10000, flow_rate: medium}
+      - {sample_name: "unstained", position: "T1", template: null, stop_events: 5000, stop_time_s: 120, flow_rate: low}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 600
+  watchdog_action: release
+  notes: >
+    No stop command reaches the cytometer: SpectroFlo's Stop ends an acquisition and its Fluidics Shutdown stops
+    the fluidics; lasers are enclosed (CDRH Class I). An e-stop here withdraws every worklist not yet taken, so
+    nothing further starts; an acquisition already running finishes in SpectroFlo. Ten minutes of silence from
+    the controller releases the lease and lets a waiting job finish, since a plate mid-acquisition should not be
+    abandoned.

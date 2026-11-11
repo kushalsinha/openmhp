@@ -1,0 +1,22 @@
+{
+  "port": {
+    "ask": "Serial port the Alicat is cabled to (its USB cable, or the RS-232/RS-485 adapter)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "Linux /dev/ttyUSB0 (or /dev/serial/by-id/...), macOS /dev/tty.usbserial-*, Windows COM3."
+  },
+  "unit_id": {
+    "ask": "Unit ID letter of this device (shown on its display under Setup > Comm; factory default A)",
+    "kind": "text",
+    "example": "A",
+    "required": false,
+    "help": "One letter A to Z. On an RS-485 bus every device needs a different letter; the device answers only to its own."
+  },
+  "baud": {
+    "ask": "Baud rate set on the device (Setup > Comm; factory default 19200)",
+    "kind": "int",
+    "example": 19200,
+    "required": false,
+    "advanced": true
+  }
+}

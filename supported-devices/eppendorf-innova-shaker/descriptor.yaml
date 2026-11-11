@@ -1,0 +1,104 @@
+device:
+  notes: >
+    Innova 44/44R incubator shaker in Slave mode on RS-232. The agent sets the temperature and shaking
+    speed setpoints, reads the measured values, and starts or stops stored profiles. The protocol has no
+    explicit run/stop and does not report whether the chamber is open or any alarm; speed setpoint 0 is
+    "stopped" and the shaker's own safety switch halts the platform when the chamber is opened.
+
+physical:
+  automated_load: false
+  notes: >
+    Floor-standing (or stacked) cabinet, platform with flask clamps or sticky mats. Flasks are loaded by
+    a person through the front of the cabinet; the instrument does not report whether the cabinet is
+    open, so no robot_access_ready is declared and a handling system cannot safely use it.
+
+signals:
+  - {name: speed, type: number, unit: "{rev}/min", notes: "RV field 1: measured platform speed. 0 when stopped or halted by the cabinet safety switch."}
+  - {name: temperature, type: number, unit: Cel, notes: "RV field 2: measured chamber air temperature."}
+  - {name: humidity, type: number, unit: "%", notes: "RV field 3: relative humidity, only meaningful with the optional humidity monitor (otherwise 0). Not present on an Innova 42, whose RV has three fields (speed, temperature, CO2): remove this signal there."}
+  - {name: speed_setpoint, type: number, unit: "{rev}/min", notes: "RS field 1: the speed setpoint the shaker holds, whoever set it."}
+  - {name: temperature_setpoint, type: number, unit: Cel, notes: "RS field 2: the temperature setpoint the shaker holds."}
+  - {name: profile_running, type: boolean, notes: "PM field 1: true while a stored profile runs. Manual operation (a setpoint with no profile) reads false even when shaking."}
+  - {name: firmware, type: string, notes: "RI reply: display and control board firmware revisions, tab separated (the echoed RI precedes them)."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record (temperature and speed verification).}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next temperature/speed verification is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown (IQ/OQ/PQ), as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: Profile starts and stop commands sent from here (the lab's recorded count, or the number of finished jobs when none is recorded).}
+
+settings:
+  - {name: target_speed, type: integer, unit: "{rev}/min", limits: {min: 0, max: 400}, resolution: 1, approval: auto, during_job: true,
+     notes: "CS <rpm>: platform speed setpoint. 0 stops shaking. 400 is the Innova 44's maximum with a 25 mm throw; the lab lowers max to its platform's rating (250 for most clamp platforms, lower with 2 L flasks)."}
+  - {name: target_temperature, type: number, unit: Cel, limits: {min: 4, max: 60}, resolution: 0.1, approval: auto, during_job: true,
+     notes: "CT <temp>: chamber temperature setpoint. 4 to 60 is a placeholder: a non-refrigerated 44 cannot go below ambient plus 5, and an R model reaches 20 below ambient; set min/max to your unit and your organisms (most labs cap at 42)."}
+
+actions:
+  - name: stop_shaking
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "CS 0: speed setpoint zero; the platform coasts to a stop in a few seconds. Heating continues."
+  - name: start_profile
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    params:
+      profile: {type: integer, unit: "1", limits: {min: 1, max: 4}, resolution: 1, notes: "Stored profile (program) number."}
+      step: {type: integer, unit: "1", limits: {min: 1, max: 15}, resolution: 1, default: 1, notes: "Step to start at."}
+    required: [profile]
+    examples: [{profile: 1}, {profile: 2, step: 3}]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "PS <profile> <step>: runs a profile stored on the shaker (temperature, speed, duration per step). The package does not know what the profile does; read it on the front panel or with PR before starting."
+  - name: stop_profile
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "PS with no argument: ends the running profile; the last step's setpoints stay in force."
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 120
+  watchdog_action: release
+  notes: >
+    E-stop sends CS 0 (platform stops) and CT 20.0: the protocol has no heater-off command, so the
+    closest to removing heat is a setpoint at room temperature, at which the heater stays off (an R model
+    would cool to 20). The cabinet's own safety switch halts the platform when it is opened. A controller
+    that goes silent releases the lease after 120 s rather than stopping: a culture is harmed more by a
+    halted, cooling shaker than by one that keeps the last setpoints, and nothing here moves fast or
+    heats beyond 60 degC.
+
+serial:
+  port: /dev/ttyUSB0          # placeholder: config.json `port` overrides it
+  baud: 19200                 # Innova default (9600 / 19200 / 38400 on the COMM screen)
+  eol: "\r"
+  timeout: 1                  # set commands reply with the echo only, so a write returns after this timeout
+  read:
+    speed: RV
+    temperature: RV
+    humidity: RV
+    speed_setpoint: RS
+    temperature_setpoint: RS
+    profile_running: PM
+    firmware: RI
+  write:
+    target_speed: "CS {value}"
+    target_temperature: "CT {value}"
+  actions:
+    stop_shaking: ["CS 0"]
+    start_profile: ["PS {profile} {step}"]
+    stop_profile: ["PS"]
+  estop: ["CS 0", "CT 20.0"]
+  parse:
+    speed: {field: 1}
+    temperature: {field: 2}
+    humidity: {field: 3}
+    speed_setpoint: {field: 1}
+    temperature_setpoint: {field: 2}
+    profile_running: {field: 1}

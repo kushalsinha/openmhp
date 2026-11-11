@@ -1,0 +1,14 @@
+{
+  "program_dir": {
+    "ask": "Folder on the CrystalClear PC (as a share) where program files are placed for import",
+    "kind": "path",
+    "example": "//crystal16-pc/CrystalClear/Programs",
+    "help": "Any folder the person running CrystalClear can import from; writable by the account that runs mhp."
+  },
+  "export_dir": {
+    "ask": "Folder where CrystalClear exports the data report CSV files",
+    "kind": "path",
+    "example": "//crystal16-pc/CrystalClear/Exports",
+    "help": "Set CrystalClear's export (or auto-export) to this folder; one CSV per block, named after the program."
+  }
+}

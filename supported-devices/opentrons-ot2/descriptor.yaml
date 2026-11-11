@@ -1,0 +1,86 @@
+device:
+  notes: >
+    Opentrons OT-2 benchtop liquid handler (two pipette mounts: single or 8-channel P20/P300/P1000 GEN2)
+    driven through PyLabRobot's OT-2 backend over the robot's HTTP API. PyLabRobot owns the deck model:
+    labware in the 11 slots is named in the deck layout file and this package names it as strings
+    ("tips_300/A1", "src_plate/A1", "trash"). The Opentrons App must not be running a protocol at the same time.
+
+physical:
+  automated_load: true
+  notes: Open frame with a hinged front window and a door switch the robot reports. A handling robot may
+    place or remove labware in the deck slots only when the door is open and no action runs, which is what
+    robot_access_ready reports. No gripper on the OT-2, so plates are moved by the external robot, not by this device.
+
+signals:
+  - {name: connected, type: boolean, notes: True once PyLabRobot has set the OT-2 up (HTTP run created, pipettes found, homed). False with connect_error saying why.}
+  - {name: connect_error, type: string, nullable: true, notes: Why connected is false (library missing, robot unreachable, no pipettes); null when connected.}
+  - {name: setup_finished, type: boolean, notes: PyLabRobot's own flag; the same as connected on this package.}
+  - {name: door_open, type: boolean, nullable: true, notes: "The door switch, read from the robot's HTTP API (GET /robot/door/status). Null when the robot does not answer."}
+  - {name: door_closed, type: boolean, notes: True when the door switch reads closed. Every action needs it; the OT-2 enforces the same when its 'pause on door open' setting is on, this package always.}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: True exactly when the door reads open and no action from here is running; a handling robot reads this before reaching into the deck. The OT-2 itself refuses to move with the door open when that setting is on.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a pipetting action runs from here.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); pipette and deck calibration live in the Opentrons App and are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next pipette calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Actions completed from here (the lab's recorded count, or finished jobs when none is recorded).}
+
+settings:
+  - {name: volume_cap, type: number, unit: uL, limits: {min: 1, max: 1000}, approval: auto,
+     notes: "Largest volume any aspirate or dispense may ask for: set it to the tip or pipette mounted (P20 20, P300 300, P1000 1000). Starts from config.json volume_cap; the descriptor range is the instrument's widest. Refused while a job runs."}
+
+actions:
+  - name: pick_up_tips
+    duration: long
+    approval: auto
+    interlocks: [connected, door_closed]
+    params:
+      tip_spots: {type: array, items: {type: string}, notes: "Tip spots as 'rack/A1'. One spot for a single-channel pipette; eight (a column, A1..H1) for the 8-channel."}
+    required: [tip_spots]
+    notes: Picks up tips. The mount is chosen by PyLabRobot from the number of channels requested.
+    returns: {type: object, nullable: true, notes: PyLabRobot returns nothing; null.}
+    examples:
+      - {tip_spots: ["tips_300/A1"]}
+  - name: drop_tips
+    duration: long
+    approval: auto
+    interlocks: [connected, door_closed]
+    params:
+      tip_spots: {type: array, items: {type: string}, notes: "'trash' (the fixed trash in slot 12) or rack spots to return to."}
+    required: [tip_spots]
+    notes: Drops the mounted tips.
+    returns: {type: object, nullable: true}
+    examples:
+      - {tip_spots: ["trash"]}
+  - name: aspirate
+    duration: long
+    approval: auto
+    interlocks: [connected, door_closed]
+    params:
+      resources: {type: array, items: {type: string}, notes: "Wells as 'plate/A1', one per channel."}
+      vols: {type: array, items: {type: number, unit: uL, limits: {min: 1, max: 1000}}, notes: "Per channel. 1-1000 uL spans the GEN2 pipettes together; each one is narrower (P20 1-20, P300 20-300, P1000 100-1000) and the lab sets max here to the pipette mounted."}
+      flow_rate: {type: number, unit: uL/s, limits: {min: 1, max: 300}, nullable: true, default: null, notes: Applied to every channel; null uses the liquid class / pipette default.}
+    required: [resources, vols]
+    notes: Aspirates with the mounted tips at the pipette's default speed unless flow_rate is given.
+    returns: {type: object, nullable: true}
+    examples:
+      - {resources: ["src_plate/A1"], vols: [100]}
+  - name: dispense
+    duration: long
+    approval: auto
+    interlocks: [connected, door_closed]
+    params:
+      resources: {type: array, items: {type: string}}
+      vols: {type: array, items: {type: number, unit: uL, limits: {min: 1, max: 1000}}}
+      flow_rate: {type: number, unit: uL/s, limits: {min: 1, max: 300}, nullable: true, default: null, notes: Applied to every channel; null uses the liquid class / pipette default.}
+    required: [resources, vols]
+    notes: Dispenses from the mounted tips.
+    returns: {type: object, nullable: true}
+    examples:
+      - {resources: ["dst_plate/A1"], vols: [100]}
+
+safety:
+  estop: true
+  interlocks: [connected, door_closed, robot_access_ready]
+  watchdog_s: 30
+  notes: E-stop calls PyLabRobot stop(), which cancels the robot's HTTP-API run so the gantry halts; the OT-2 has no physical stop button (pull the power if needed). Actions cannot be cancelled mid-move; stop them with safety/estop. A controller silent for 30 s stops the robot.

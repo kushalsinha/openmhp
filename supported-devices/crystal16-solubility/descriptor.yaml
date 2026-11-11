@@ -1,0 +1,111 @@
+device:
+  notes: >
+    Technobis Crystal16: four Peltier blocks of four 1.5 mL vials each, with a turbidity (transmission) probe
+    per vial and magnetic or overhead stirring, run by CrystalClear on its PC. The package writes a temperature
+    program file for the software to import and parses the data report CSVs it exports into clear and cloud
+    points per reactor. No API exists; a person imports and starts the program in CrystalClear.
+
+physical:
+  automated_load: false
+  notes: >
+    Sixteen standard HPLC vials (11.5 mm, 1.5 mL, 0.5 to 1.0 mL working volume) with stirrer bars are placed in
+    the four blocks by a person; nothing here is loaded by a handling system. Blocks run -20 to 150 degC (to
+    -25 with the optional chiller); sealed vials of solvent are heated above their boiling points under
+    pressure.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the program and export folders are reachable.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a run_program job from here is waiting for its export; same moment as running.}
+  - {name: running, type: boolean, notes: True while a run_program job from here is waiting for its export.}
+  - {name: block_a_temperature, type: number, unit: Cel, nullable: true, notes: "Last 'Temperature Actual' row of block A's newest export, when CrystalClear writes exports during a run (unverified; it may only write at the end); null otherwise."}
+  - {name: block_b_temperature, type: number, unit: Cel, nullable: true, notes: As block_a_temperature, block B.}
+  - {name: block_c_temperature, type: number, unit: Cel, nullable: true, notes: As block_a_temperature, block C.}
+  - {name: block_d_temperature, type: number, unit: Cel, nullable: true, notes: As block_a_temperature, block D.}
+  - {name: stirrer_rpm, type: number, unit: "{rev}/min", nullable: true, notes: "The 'Stirring Rate' column of the newest export when one exists (public exports show 0 there even when the program stirs), else the stirrer_rpm setting written here; null before either."}
+  - {name: last_result, type: object, notes: Result of the most recent run_program from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the blocks' temperature calibration in CrystalClear is not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Programs run from here (the lab's recorded count, or the number of finished run_program jobs when none is recorded).}
+
+settings:
+  - name: stirrer_rpm
+    type: number
+    unit: "{rev}/min"
+    limits: {min: 0, max: 1250}
+    resolution: 1
+    approval: auto
+    notes: "Stirring rate written into the next program file whose program gives none (Technobis advises 600 to 800). Not a live setpoint: CrystalClear has no route for one."
+
+actions:
+  - name: run_program
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      name: {type: string, nullable: true, notes: Program file name; omitted or null names it mhp_<date>_<job>.}
+      blocks: {type: array, items: {type: string, limits: {enum: [A, B, C, D]}}, notes: Blocks the program runs on (A to D); each gets its own export.}
+      program:
+        type: object
+        required: [steps, cycles]
+        properties:
+          stirrer_rpm: {type: number, unit: "{rev}/min", limits: {min: 0, max: 1250}, resolution: 1, nullable: true, notes: Omitted or null uses the stirrer_rpm setting.}
+          cycles: {type: integer, limits: {min: 1, max: 10}, notes: Times the step list is repeated (heat/cool cycles for clear and cloud points).}
+          steps:
+            type: array
+            items:
+              type: object
+              required: [action, temperature_c]
+              properties:
+                action: {type: string, limits: {enum: [heat, cool, hold]}}
+                temperature_c: {type: number, unit: Cel, limits: {min: -20, max: 150}, resolution: 0.1}
+                rate_k_min: {type: number, unit: K/min, limits: {min: 0.1, max: 20}, resolution: 0.1, nullable: true, notes: Required for heat and cool; ignored for hold.}
+                hold_min: {type: number, unit: min, limits: {min: 0, max: 1440}, nullable: true, notes: Required for hold; ignored for heat and cool.}
+      timeout_h: {type: number, unit: h, limits: {min: 0.5, max: 72}, default: 24, notes: How long to wait for the exports before the job fails.}
+    required: [program, blocks]
+    notes: >
+      Writes the program file into program_dir (a person imports and starts it in CrystalClear), then waits
+      for one data report per block to appear in export_dir and parses each reactor's transmission trace:
+      clear point where it reaches 90 percent on heating, cloud point where it falls below 80 percent on
+      cooling, averaged over cycles. A method is one compound's heat/cool program.
+    returns:
+      type: object
+      required: [program_file, duration_s, blocks, reactors, csv]
+      properties:
+        program_file: {type: string}
+        duration_s: {type: number, unit: s}
+        blocks: {type: array, items: {type: string}}
+        reactors:
+          type: array
+          items:
+            type: object
+            properties:
+              reactor: {type: integer, notes: 1 to 16 (block A is 1 to 4, B 5 to 8, C 9 to 12, D 13 to 16).}
+              block: {type: string}
+              clear_point_c: {type: number, unit: Cel, nullable: true, notes: null when the reactor never cleared.}
+              cloud_point_c: {type: number, unit: Cel, nullable: true, notes: null when the reactor never clouded.}
+              cycles: {type: integer}
+              description: {type: string, nullable: true, notes: The reactor's description from the export header (what was in the vial), null when empty.}
+        csv: {type: array, items: {type: string}, notes: The export files parsed.}
+    examples:
+      - program:
+          stirrer_rpm: 700
+          cycles: 2
+          steps: [{action: heat, temperature_c: 60, rate_k_min: 1}, {action: hold, temperature_c: 60, hold_min: 10},
+                  {action: cool, temperature_c: 5, rate_k_min: 0.5}, {action: hold, temperature_c: 5, hold_min: 10}]
+        blocks: [A, B, C, D]
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 600
+  watchdog_action: release
+  notes: >
+    No remote stop: CrystalClear has no interface, so a person stops the program in the software (or at the
+    instrument's power switch). The blocks are Peltier elements with the software's own temperature limits;
+    sealed vials above a solvent's boiling point are the hazard, and the program limits here (-20 to 150)
+    should be lowered in descriptor.yaml for volatile solvents. A controller silent for 10 minutes loses its
+    lease; the program keeps running in CrystalClear.

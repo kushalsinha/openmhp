@@ -1,0 +1,129 @@
+device:
+  notes: >
+    One Atlas Scientific EZO circuit in UART mode (9600 8N1, commands and replies end in CR). The same
+    grammar serves EZO-pH, EZO-ORP, EZO-DO, EZO-EC and EZO-RTD; R returns the reading in that circuit's
+    unit. Response codes (*OK after every reply) and continuous mode must be off for the one-line reads
+    this driver does, which the configure_for_polling action does once and the circuit remembers.
+
+physical:
+  automated_load: false
+  notes: >
+    A probe in a liquid, wired to the EZO circuit on a carrier board (USB or a serial adapter). Nothing
+    moves and nothing is loaded by a handling system. Use an electrically isolated carrier when the probe
+    shares liquid with pumps, heaters or other electrodes, or readings drift.
+
+signals:
+  - {name: ph, type: number, unit: "[pH]", notes: Reading (R) of an EZO-pH circuit, three decimals. Meaningless on any other circuit (R returns that circuit's quantity).}
+  - {name: orp, type: number, unit: mV, notes: Reading (R) of an EZO-ORP circuit in millivolts. Meaningless on any other circuit.}
+  - {name: dissolved_oxygen, type: number, unit: mg/L, notes: Reading (R) of an EZO-DO circuit in mg/L (the first number; percent saturation follows after a comma when enabled on the circuit). Meaningless on any other circuit.}
+  - {name: conductivity, type: number, unit: uS/cm, notes: Reading (R) of an EZO-EC circuit in microsiemens per cm (the first number; TDS, salinity and specific gravity follow after commas when enabled). Meaningless on any other circuit.}
+  - {name: temperature, type: number, unit: Cel, notes: Reading (R) of an EZO-RTD circuit in degrees Celsius (its default scale). -1023.000 means no probe is connected. Meaningless on any other circuit.}
+  - {name: calibrated, type: boolean, notes: "True when Cal,? answers ?Cal,1, 2 or 3 (one, two or three calibration points stored), false on ?Cal,0. The number of points that counts as a full calibration depends on the circuit (RTD one, DO one or two, pH up to three)."}
+  - {name: temperature_compensation_actual, type: number, unit: Cel, notes: "The temperature the circuit currently compensates for (T,?). 20 degC from power-on on the DO circuit (25 on pH and EC per their datasheets, unverified here)."}
+  - {name: circuit_info, type: string, notes: "Device information (i): ?i,<circuit>,<firmware>, e.g. ?i,pH,1.98. The authority on which reading signal to use."}
+  - {name: status_text, type: string, notes: "Status (Status): ?Status,<restart reason>,<Vcc>. Restart reasons P powered off, S software reset, B brown-out, W watchdog, U unknown; a brown-out or watchdog restart with unstable supply explains drifting readings."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: "valid, due, overdue or unknown, from calibration_due in the lab's config.json self_state record. The circuit itself answers whether a calibration is stored (signal calibrated), but not when it was done or whether it is still good, and the serial grammar cannot map ?Cal,n onto these four words, so the dated record stays the source here."}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next probe calibration is due, from the lab's record; null when none is recorded. Probes drift in weeks, so keep it.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: calibration and configuration jobs completed here (from this device's job records unless the lab records its own count); readings are not counted.}
+
+settings:
+  - name: temperature_compensation
+    type: number
+    unit: Cel
+    limits: {min: -5, max: 125}
+    resolution: 0.1
+    approval: auto
+    during_job: true
+    notes: Temperature the circuit compensates its reading for (T,<temp>), pH, DO and EC circuits. Not retained at power-off. The RTD circuit has no compensation; writing it there answers *ER.
+
+actions:
+  - {name: configure_for_polling, duration: short, approval: auto, interlocks: [connected], notes: "Turns off continuous readings (C,0) and the *OK response codes (*OK,0) so every command answers exactly one line. Both are retained at power-off; run it once per circuit. The second command gets no reply once response codes are off."}
+  - {name: led_on, duration: short, approval: auto, interlocks: [connected], notes: Turns the circuit's status LED on (L,1); useful to find the right board. No reply once response codes are off.}
+  - {name: led_off, duration: short, approval: auto, interlocks: [connected], notes: Turns the status LED off (L,0).}
+  - name: calibrate_ph
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    params:
+      point: {type: string, limits: {enum: [mid, low, high]}, default: mid, notes: "Which point: mid first (it clears low and high), then low, then high. EZO-pH only."}
+      value: {type: number, unit: "[pH]", limits: {min: 0, max: 14}, resolution: 0.01, default: 7.00, notes: pH of the buffer the probe sits in (mid 6-8, low 0-6.5, high 7.5-14 per the datasheet).}
+    examples: [{point: mid, value: 7.00}, {point: low, value: 4.00}, {point: high, value: 10.00}]
+    notes: "Cal,<point>,<value> on an EZO-pH with the probe in the buffer. Confirmed by a person because a wrong buffer silently miscalibrates every later reading. Unverified: the pH datasheet was not readable when this package was written; the command form follows the DO/RTD datasheets and the LabMCP README."
+  - name: calibrate_orp
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    params:
+      value: {type: number, unit: mV, limits: {min: -1020, max: 1020}, default: 225, notes: ORP of the calibration solution in mV (225 mV is the common Atlas standard).}
+    examples: [{value: 225}]
+    notes: "Cal,<value> on an EZO-ORP with the probe in the solution. Confirmed by a person. Unverified: the ORP datasheet was not readable; the form follows the RTD datasheet's single-point Cal,<t>."
+  - {name: calibrate_do_atmospheric, duration: short, approval: confirm, interlocks: [connected], notes: "Cal on an EZO-DO: calibrates to atmospheric oxygen with the probe in air (DO datasheet). The first of one or two points. Confirmed by a person."}
+  - {name: calibrate_do_zero, duration: short, approval: confirm, interlocks: [connected], notes: "Cal,0 on an EZO-DO: zero-oxygen point with the probe in zero-oxygen solution (DO datasheet). Confirmed by a person."}
+  - name: calibrate_ec
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    params:
+      point: {type: string, limits: {enum: [dry, one, low, high]}, default: dry, notes: "dry first (probe in air), then one (single point) or low then high. EZO-EC only."}
+      value: {type: number, unit: uS/cm, limits: {min: 0, max: 500000}, resolution: 1, default: 0, notes: Conductivity of the standard; ignored for dry (send 0).}
+    examples: [{point: dry, value: 0}, {point: one, value: 1413}, {point: low, value: 12880}, {point: high, value: 80000}]
+    notes: "Cal,<point>,<value> on an EZO-EC with the probe in the standard. For dry the value is ignored by the circuit per the LabMCP README, but this action sends Cal,dry,<value> rather than a bare Cal,dry (unverified: the EC datasheet was not readable; if the circuit answers *ER, send Cal,dry from a terminal once). Confirmed by a person."
+  - name: calibrate_rtd
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    params:
+      value: {type: number, unit: Cel, limits: {min: -126, max: 1254}, resolution: 0.01, default: 100.00, notes: Known temperature the probe is at (boiling water 100.00 at sea level).}
+    examples: [{value: 100.00}]
+    notes: "Cal,<t> on an EZO-RTD, single point (RTD datasheet). Confirmed by a person."
+  - {name: clear_calibration, duration: short, approval: confirm, interlocks: [connected], notes: "Cal,clear: deletes the stored calibration on any circuit. Confirmed by a person; calibrated then reads false."}
+
+safety:
+  estop: false
+  interlocks: []
+  watchdog_s: 60
+  watchdog_action: release
+  notes: >
+    A sensor circuit has no motion or energy to remove, so estop is false and no stop command is declared.
+    A controller silent for 60 s while holding the lease loses the lease (watchdog_action release) so
+    another controller can read the probe; nothing needs stopping. The hazards are elsewhere: a wrong
+    calibration or compensation value, which is why those are confirm-gated.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600
+  eol: "\r"
+  read:
+    ph: R
+    orp: R
+    dissolved_oxygen: R
+    conductivity: R
+    temperature: R
+    calibrated: "Cal,?"
+    temperature_compensation_actual: "T,?"
+    circuit_info: i
+    status_text: Status
+  write:
+    temperature_compensation: "T,{value}"
+  actions:
+    configure_for_polling: ["C,0", "*OK,0"]
+    led_on: ["L,1"]
+    led_off: ["L,0"]
+    calibrate_ph: ["Cal,{point},{value}"]
+    calibrate_orp: ["Cal,{value}"]
+    calibrate_do_atmospheric: ["Cal"]
+    calibrate_do_zero: ["Cal,0"]
+    calibrate_ec: ["Cal,{point},{value}"]
+    calibrate_rtd: ["Cal,{value}"]
+    clear_calibration: ["Cal,clear"]
+  parse:
+    calibrated: {regex: "\\?Cal,(\\d)", group: 1}
+    temperature_compensation_actual: {regex: "\\?T,([-+0-9.]+)", group: 1}
+  booleans:
+    calibrated: {true: ["1", "2", "3"], false: ["0"]}

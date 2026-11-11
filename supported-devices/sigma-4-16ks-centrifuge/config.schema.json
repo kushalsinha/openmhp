@@ -1,0 +1,8 @@
+{
+  "port": {
+    "ask": "Serial port the centrifuge's 9-pin RS-232 socket is cabled to",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "A straight (1:1) DB-9 cable, not a null-modem, to a PC port or USB-to-RS-232 adapter: /dev/ttyUSB0, /dev/tty.usbserial-* or COM3. The baud rate is fixed at 9600."
+  }
+}

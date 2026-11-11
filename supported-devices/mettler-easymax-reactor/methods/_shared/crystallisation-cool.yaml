@@ -1,0 +1,34 @@
+name: crystallisation-cool
+project: _shared
+action: start_experiment
+params:
+  steps:
+  - tr_c: 60
+    hold_min: 30
+    ramp_k_min: 2
+    stirrer_rpm: 400
+  - tr_c: 5
+    hold_min: 60
+    ramp_k_min: 0.5
+    stirrer_rpm: 300
+  tolerance_k: 1.0
+  end_tr_c: 20
+  end_stirrer_rpm: 100
+  end_experiment: false
+compounds:
+- paracetamol
+version: 1
+hash: 3b92c56f8253
+created: 1794432571.722928
+updated: 1794432571.722928
+validated:
+  at: 1794432571.722928
+  hash: 3b92c56f8253
+status: active
+notes: 'Cooling crystallisation of paracetamol from isopropanol in a 100 mL reactor:
+  dissolve at 60 degC for 30 min at 400 rpm, cool at 0.5 K/min to 5 degC and hold
+  60 min, then warm to 20 degC for filtration.'
+source:
+  kind: person
+  ref: example recipe written for the package; tune to the compound
+author: package author

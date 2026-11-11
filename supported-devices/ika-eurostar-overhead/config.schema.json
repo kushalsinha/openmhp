@@ -1,0 +1,15 @@
+{
+  "port": {
+    "ask": "Serial port the EUROSTAR station or its Wireless Controller appears on (COM3, /dev/ttyUSB0, /dev/tty.usbserial-*)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "USB: install the IKA USB driver first; the station then shows up as a virtual COM port. RS-232: the port of the PC 1.1 cable."
+  },
+  "baud": {
+    "ask": "Baud rate (the station is fixed at 9600)",
+    "kind": "int",
+    "example": 9600,
+    "required": false,
+    "advanced": true
+  }
+}

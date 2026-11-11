@@ -1,0 +1,171 @@
+device:
+  notes: >
+    Vapourtec R-Series flow chemistry system: an R2 pump module (pumps A and B), an R4 reactor heater/cooler with
+    four channels, a back-pressure regulator and a collection valve, run by Flow Commander on a Windows PC.
+    Reached through Flow Commander's optional OPC UA server; the node ids are the lab's (config.json nodes).
+
+physical:
+  automated_load: false
+  notes: >
+    Reagent bottles, reactor coils and the collection vessel are connected by a person; nothing here is loaded
+    by a handling system. The R4 channels reach 250 degC (channels 2 and 4) and 150 degC (1 and 3), cooled coils
+    go to -70 degC, and the flow path runs at up to 42 bar (R2 and R2+ pumps). Hot and pressurised tubing and
+    flammable solvents.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the OPC UA server answers.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, notes: True while a run_experiment or prime job from here is running.}
+  - {name: pump_a_flow, type: number, unit: mL/min, notes: Pump A measured (reported) flow.}
+  - {name: pump_b_flow, type: number, unit: mL/min, notes: Pump B measured (reported) flow.}
+  - {name: reactor_1_temperature, type: number, unit: Cel, nullable: true, notes: R4 channel 1 actual temperature; null when the channel's node is not mapped (no reactor fitted).}
+  - {name: reactor_2_temperature, type: number, unit: Cel, nullable: true, notes: R4 channel 2; null when unmapped.}
+  - {name: reactor_3_temperature, type: number, unit: Cel, nullable: true, notes: R4 channel 3; null when unmapped.}
+  - {name: reactor_4_temperature, type: number, unit: Cel, nullable: true, notes: R4 channel 4; null when unmapped.}
+  - {name: system_pressure, type: number, unit: bar, notes: Pressure at the pump outlet (the R2 reports pressure in mbar; the node mapped here must read bar, or the lab scales it).}
+  - {name: pressure_ok, type: boolean, notes: True while system_pressure is below config.json max_pressure_bar. Interlock for starting flow.}
+  - {name: system_state, type: string, notes: "Flow Commander's run state: Idle, Initialising, RunningReaction, CleaningReaction, FinalCleaning (the integer codes 0 to 4 as the open-source VapourtecAgent maps FCRemote.GetState), or the raw value for others. The R2's own states (Off, Running, System overpressure, Pump A/B overpressure or pressure loss) appear here when the mapped node is the pump module's."}
+  - {name: collection_valve, type: string, notes: "collect or waste: where the reactor outlet goes."}
+  - {name: last_result, type: object, notes: Result of the most recent run_experiment from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the pumps' flow calibration in Flow Commander is not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Experiments run from here (the lab's recorded count, or the number of finished run_experiment jobs when none is recorded).}
+
+settings:
+  - name: pump_a_flow_setpoint
+    type: number
+    unit: mL/min
+    limits: {min: 0, max: 10}
+    resolution: 0.01
+    approval: auto
+    during_job: true
+    notes: "Pump A flow. 0 stops the pump. The R2 and R2+ run 0.05 to 10 mL/min (R2 S 0.02 to 10, R2 HF 0.2 to 50): set max to your pump head; below 0.05 the piston pumps do not meter."
+  - name: pump_b_flow_setpoint
+    type: number
+    unit: mL/min
+    limits: {min: 0, max: 10}
+    resolution: 0.01
+    approval: auto
+    during_job: true
+    notes: Pump B flow; as pump_a_flow_setpoint.
+  - name: reactor_1_setpoint
+    type: number
+    unit: Cel
+    limits: {min: -70, max: 150}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: "R4 channel 1 (ambient to 150 degC with a glass coil; -70 with a cooled coil). Writing it enables the channel. Placeholder range; set it to the reactor fitted on this channel."
+  - name: reactor_2_setpoint
+    type: number
+    unit: Cel
+    limits: {min: -70, max: 250}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: "R4 channel 2 (ambient to 250 degC with a stainless or Hastelloy coil). Placeholder range; set it to the reactor fitted."
+  - name: reactor_3_setpoint
+    type: number
+    unit: Cel
+    limits: {min: -70, max: 150}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: R4 channel 3; as reactor_1_setpoint.
+  - name: reactor_4_setpoint
+    type: number
+    unit: Cel
+    limits: {min: -70, max: 250}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: R4 channel 4; as reactor_2_setpoint.
+  - name: bpr_pressure
+    type: number
+    unit: bar
+    limits: {min: 0, max: 20}
+    resolution: 0.1
+    approval: auto
+    during_job: true
+    notes: "Back-pressure regulator setpoint (an electronic BPR; a manual cartridge BPR ignores this). Placeholder 0 to 20 bar: the brochure's pump limits are 42 bar (R2/R2+), 10 bar (R2 S) and 200 bar (R2 HP); set max to the weakest part of this flow path."
+
+actions:
+  - name: run_experiment
+    duration: long
+    approval: auto
+    interlocks: [connected, pressure_ok]
+    methods: true
+    cancellable: true
+    pausable: true
+    params:
+      name: {type: string, nullable: true, notes: Experiment name passed to the start method node; omitted or null names it after the job.}
+      pump_a_ml_min: {type: number, unit: mL/min, limits: {min: 0, max: 10}, resolution: 0.01}
+      pump_b_ml_min: {type: number, unit: mL/min, limits: {min: 0, max: 10}, resolution: 0.01, default: 0}
+      reactors:
+        type: array
+        notes: Channels to heat or cool before flow starts; channels not listed are left as they are.
+        items:
+          type: object
+          required: [channel, temperature_c]
+          properties:
+            channel: {type: integer, limits: {min: 1, max: 4}}
+            temperature_c: {type: number, unit: Cel, limits: {min: -70, max: 250}, resolution: 1}
+      bpr_bar: {type: number, unit: bar, limits: {min: 0, max: 20}, resolution: 0.1, default: 5}
+      residence_time_min: {type: number, unit: min, limits: {min: 0.1, max: 600}, notes: Reactor volume divided by total flow; the run waits this long (plus lead_in_min) before collecting.}
+      lead_in_min: {type: number, unit: min, limits: {min: 0, max: 120}, default: 2, notes: Extra time to waste after one residence time, for the concentration front to pass.}
+      collect_ml: {type: number, unit: mL, limits: {min: 0, max: 500}, resolution: 0.1, default: 0, notes: Volume to send to the collection vessel; 0 collects nothing (a steady-state check only).}
+      flush_min: {type: number, unit: min, limits: {min: 0, max: 120}, default: 0, notes: Keep pumping to waste after collection (solvent flush) before the pumps stop.}
+      tolerance_k: {type: number, unit: K, limits: {min: 0.5, max: 20}, default: 2}
+      keep_heaters_on: {type: boolean, default: false}
+    required: [pump_a_ml_min, reactors, residence_time_min]
+    notes: >
+      One flow experiment: heats the listed reactors to temperature, sets the BPR, starts the pumps, waits one
+      residence time plus the lead-in to waste, switches the collection valve for collect_ml, then flushes and
+      stops. Pressure above config.json max_pressure_bar or a pressure fault state fails the run with the
+      pumps off. Cancelling stops pumps and heaters and sends the valve to waste.
+    returns:
+      type: object
+      required: [experiment, duration_s, collected_ml, final]
+      properties:
+        experiment: {type: string}
+        duration_s: {type: number, unit: s}
+        collected_ml: {type: number, unit: mL, notes: Volume sent to the collection vessel, from flow times time (the valve has no flow meter).}
+        final: {type: object, notes: "Snapshot at the end: pump_a_flow, pump_b_flow, system_pressure, system_state, collection_valve, reactors {channel: temperature}."}
+    examples:
+      - {pump_a_ml_min: 0.5, pump_b_ml_min: 0.5, reactors: [{channel: 2, temperature_c: 120}], bpr_bar: 8, residence_time_min: 10, collect_ml: 15}
+  - name: stop
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Pumps to 0, heaters off, collection valve to waste, and the stop method node when mapped. Not an e-stop; the same calls, from a lease holder.
+  - name: prime
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    cancellable: true
+    params:
+      pump: {type: string, limits: {enum: [A, B]}}
+      volume_ml: {type: number, unit: mL, limits: {min: 0.5, max: 50}, resolution: 0.1, default: 5}
+      rate_ml_min: {type: number, unit: mL/min, limits: {min: 0.1, max: 10}, resolution: 0.01, default: 2}
+    required: [pump]
+    notes: Pumps volume_ml to waste at rate_ml_min to fill the inlet line. Needs confirmation because the inlet must be in the right bottle and the outlet in waste before a reagent is pushed through.
+    returns:
+      type: object
+      required: [pump, volume_ml, duration_s]
+      properties:
+        pump: {type: string}
+        volume_ml: {type: number, unit: mL}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {pump: A, volume_ml: 5, rate_ml_min: 2}
+
+safety:
+  estop: true
+  interlocks: [connected, pressure_ok]
+  watchdog_s: 60
+  hardware_stop: "No public Vapourtec document describes a hardware emergency-stop button on the R-Series; the pumps shut down on their own on a leak or blockage (the brochure's fail-safe monitoring) and Flow Commander reports pressure faults as system states. If your installation has an external stop, record it here; the package latches nothing from it."
+  notes: >
+    E-stop writes both pump setpoints to 0, disables every mapped reactor channel, sends the collection valve
+    to waste and calls the stop method node when mapped. Pressure is relieved through the BPR as the pumps
+    stop; the reactors cool passively. A controller silent for 60 s while holding the lease triggers the same.

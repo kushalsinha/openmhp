@@ -1,0 +1,28 @@
+{
+  "port": {
+    "ask": "Serial port the pump's RS-232 connector is cabled to (COM9, /dev/ttyUSB0, /dev/tty.usbserial-*)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "The pump's RS-232 ribbon/DB-9 connector to a PC serial port or USB-serial adapter; RS-485 needs an adapter."
+  },
+  "syringe_ul": {
+    "ask": "Volume of the fitted syringe in microlitres (printed on the syringe barrel)",
+    "kind": "int",
+    "example": 1000,
+    "help": "The driver converts every volume_ul to plunger increments from this number; a wrong value moves the wrong volume."
+  },
+  "steps_full_stroke": {
+    "ask": "Plunger increments per full stroke: 6000 for an XLP 6000 in standard mode (48000 in fine mode), 3000 for an XCalibur",
+    "kind": "int",
+    "example": 6000,
+    "required": false,
+    "advanced": true
+  },
+  "baud": {
+    "ask": "Baud rate (9600 default; 38400 if set on the pump with U47)",
+    "kind": "int",
+    "example": 9600,
+    "required": false,
+    "advanced": true
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "import_dir": {
+    "ask": "Folder watched for sample-table batch files (on the Compass PC, or a share of it)",
+    "kind": "path",
+    "example": "C:\\OpenMHP\\maurice\\batches",
+    "help": "The package writes one mhp_<job>.csv per run here (Sample, Position, Method, Injection). A helper script, or the person at the Compass PC, imports it into a batch and starts the run."
+  },
+  "results_dir": {
+    "ask": "Folder where Compass's peak-table CSV exports land",
+    "kind": "path",
+    "example": "C:\\OpenMHP\\maurice\\results",
+    "help": "Export the run's peak table as CSV into this folder; the sample names carry the mhp_<job> token, so the file name is free but the token in it helps."
+  },
+  "software": {
+    "ask": "Compass for iCE version on the instrument PC (for the record)",
+    "example": "Compass for iCE 6.3",
+    "required": false
+  },
+  "allowed_methods": {
+    "ask": "Compass method names an agent may queue (JSON list; empty allows any)",
+    "advanced": true,
+    "required": false
+  },
+  "result_wait_s": {
+    "ask": "Seconds to wait for the peak-table export before the job fails",
+    "kind": "int",
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between looks at the results folder",
+    "kind": "int",
+    "advanced": true
+  }
+}

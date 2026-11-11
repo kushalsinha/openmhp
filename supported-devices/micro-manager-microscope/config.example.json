@@ -1,0 +1,11 @@
+{
+  "config_dir": "C:/Program Files/Micro-Manager-2.0",
+  "config_file": "C:/Program Files/Micro-Manager-2.0/MMConfig_scope1.cfg",
+  "data_dir": "C:/lab/data/microscope",
+  "channel_group": "Channel",
+  "soft_limits_um": {
+    "x": [-50000, 50000],
+    "y": [-37000, 37000],
+    "z": [-100, 9000]
+  }
+}

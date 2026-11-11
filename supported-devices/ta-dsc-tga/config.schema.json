@@ -1,0 +1,55 @@
+{
+  "run_dir": {
+    "ask": "Folder TRIOS' automation reads run-list files from",
+    "kind": "path",
+    "example": "C:\\ProgramData\\TA Instruments\\TRIOS\\RunLists\\openmhp",
+    "help": "The folder the lab's TRIOS Auto / autoloader run queue import (or the person importing run lists) watches; see references/trios_files.md. Must exist and be writable by the account running mhp on the TRIOS PC."
+  },
+  "export_dir": {
+    "ask": "Folder TRIOS exports finished runs into (text export)",
+    "kind": "path",
+    "example": "C:\\ProgramData\\TA Instruments\\TRIOS\\Export\\openmhp",
+    "help": "Set TRIOS' post-run export (File > Export, or the procedure's end-of-run export) to write a text file named as the run list's Export File column into this folder."
+  },
+  "live_export_file": {
+    "ask": "Live export file TRIOS keeps writing during a run (blank for none)",
+    "kind": "path",
+    "required": false,
+    "help": "Optional: when the lab's automation re-exports the running curve to one file, name it here and sample_temperature follows its last row."
+  },
+  "pan_positions": {
+    "ask": "Number of positions on the autoloader rack",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "max_temperature_c": {
+    "ask": "Highest to_c an agent may program, per instrument ({\"dsc\": 600, \"tga\": 1000})",
+    "required": false,
+    "advanced": true
+  },
+  "max_run_hours": {
+    "ask": "Longest program an agent may queue (hours)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "load_equilibrate_s": {
+    "ask": "Seconds the pan robot and equilibration typically take (for progress and the wait)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between checks of the export folder",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "result_wait_s": {
+    "ask": "Longest wait for an export before the job fails (seconds)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}

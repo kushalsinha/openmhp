@@ -1,0 +1,87 @@
+device:
+  notes: >
+    A Bruker D8 Advance or D8 Discover powder diffractometer run by DIFFRAC.SUITE
+    (DIFFRAC.MEASUREMENT CENTER with its job controller) on its Windows PC, with a sample changer.
+    The package queues one scan per request by writing a job file into the folder the measurement
+    centre imports jobs from, waits for the raw .brml result in the results folder (and the .xy
+    text export where one is configured), and reports the pattern's size and range. DIFFRAC.SUITE
+    moves the changer, opens the shutter and measures; the package never touches the instrument.
+
+physical:
+  automated_load: true
+  notes: >
+    Samples are in holders at numbered positions of the changer (nine on the standard D8 Advance
+    changer; larger on the 90-position one). A handling robot can place a holder at a free
+    position while the changer is idle, but DIFFRAC.SUITE writes the changer's state to no file,
+    so no robot_access_ready signal is declared: coordinate loading with the person at the
+    instrument. X-rays: the enclosure interlocks and the shutter are hardware, outside this package.
+
+signals:
+  - {name: connected, type: boolean, notes: True when config.json names the job folder (writable) and the results folder (exists).}
+  - {name: queue_depth, type: integer, unit: 1, notes: Job files (*.xml) still waiting in the job folder, from this package or anyone else; the measurement centre removes a file once imported.}
+  - {name: sample_changer_position, type: integer, unit: 1, nullable: true, notes: "Position of the scan this package is waiting on once its job was imported; null when idle or when the scan was queued without a position. It is the position requested, not a readback from the changer."}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent queue_scan from here (same shape as its returns); null before the first.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True from writing the job file until the .brml appears or the wait times out.}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state): the alignment and the corundum/LaB6 standard checks live in DIFFRAC.SUITE and are not read here."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next alignment check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Scans queued from here (the lab's recorded count, or the number of finished queue_scan jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: queue_scan
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    notes: >
+      Writes one job file (sample id, changer position, scan range, step, time per step, optional
+      .bsml method file) and waits for <sample_id>_<token>.brml in the results folder. Confirm-gated
+      because the measurement centre starts the changer and the X-ray shutter as soon as it imports
+      the job. A saved method is the scan program per form screen (range, step, time per step, the
+      .bsml it is based on); the caller passes the sample id and position. Cancelling before the
+      job was imported removes the file; afterwards the scan is stopped in DIFFRAC.MEASUREMENT CENTER.
+    params:
+      sample_id: {type: string, notes: Names the result file (<sample_id>_<token>.brml); letters, digits, underscore, hyphen, dot.}
+      position: {type: integer, unit: 1, limits: {min: 1, max: 9}, nullable: true, notes: Changer position the holder sits in; null measures the holder already on the stage (no changer move). Also bounded by changer_positions in config.json.}
+      program:
+        type: object
+        required: [start_2theta, end_2theta, step, time_per_step_s]
+        notes: The scan program; a saved method carries one per form screen.
+        properties:
+          start_2theta: {type: number, unit: deg, limits: {min: 2, max: 70}, notes: Coupled 2theta start; below 2 deg the direct beam reaches the detector.}
+          end_2theta: {type: number, unit: deg, limits: {min: 2, max: 70}, notes: Must be above start_2theta.}
+          step: {type: number, unit: deg, limits: {min: 0.01, max: 0.1}, notes: 2theta increment; 0.02 deg is the usual form screen.}
+          time_per_step_s: {type: number, unit: s, limits: {min: 0.1, max: 10}, notes: Counting time per step; the whole scan is bounded by max_scan_hours in config.json.}
+          method_file: {type: string, nullable: true, notes: A .bsml measurement method in DIFFRAC's method folder that carries optics, generator and detector settings; null lets the measurement centre use its default for the job. Name only, no path.}
+    required: [sample_id, program]
+    returns:
+      type: object
+      required: [sample_id, file, points, two_theta_range, duration_s]
+      properties:
+        sample_id: {type: string}
+        file: {type: string, notes: Full path of the .brml raw file.}
+        xy_file: {type: string, nullable: true, notes: Full path of the .xy export when one was found beside the result; null otherwise.}
+        points: {type: integer, notes: Data points read from the .brml (or the .xy when the .brml held none).}
+        two_theta_range: {type: array, items: {type: number, unit: deg}, notes: "[first, last] 2theta of the data read."}
+        duration_s: {type: number, unit: s, notes: From writing the job file to the result file appearing.}
+    examples:
+      - sample_id: "batch12_formA"
+        position: 2
+        program: {start_2theta: 3, end_2theta: 40, step: 0.02, time_per_step_s: 0.5, method_file: null}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 900
+  watchdog_action: release
+  notes: >
+    X-ray safety is hardware: the enclosure interlocks and the shutter are outside any software,
+    and DIFFRAC.MEASUREMENT CENTER's own Stop ends a scan. An e-stop here removes job files this
+    package queued that the measurement centre has not imported yet and fails the waiting job; a
+    scan already started continues in DIFFRAC.SUITE. A controller silent for 15 minutes loses its
+    lease and the scan finishes: interrupting it is worse than completing it, and the window must
+    outlast the changer cycle and a slow scan segment.

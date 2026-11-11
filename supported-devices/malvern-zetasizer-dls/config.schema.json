@@ -1,0 +1,20 @@
+{
+  "sop_dir": {
+    "ask": "Folder holding the ZS Xplorer SOPs (.zsop) agents may run",
+    "kind": "path",
+    "example": "C:/ZSXplorer/SOPs",
+    "help": "Save each SOP from ZS Xplorer into one folder; nothing outside it can be loaded."
+  },
+  "export_dir": {
+    "ask": "Folder the measurement records are exported to",
+    "kind": "path",
+    "example": "C:/lab/data/zetasizer"
+  },
+  "allowed_sops": {"ask": "SOP file names an agent may run (JSON list; empty = any in the folder)", "advanced": true},
+  "max_minutes": {"ask": "Longest measurement before the job is failed", "kind": "int", "advanced": true},
+  "sdk": {
+    "ask": "SDK assembly and member names (JSON object), from Malvern Panalytical's SDK documentation",
+    "advanced": true,
+    "help": "The shipped names are placeholders; correct them from the ZS Xplorer SDK reference before the first hardware test."
+  }
+}

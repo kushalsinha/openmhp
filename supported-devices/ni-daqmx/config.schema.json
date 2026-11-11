@@ -1,0 +1,14 @@
+{
+  "device": {
+    "ask": "NI-DAQmx device name of the DAQ (as NI MAX shows it)",
+    "kind": "choice",
+    "choices_from": "devices",
+    "example": "Dev1",
+    "help": "NI MAX > Devices and Interfaces lists each DAQ with its name (Dev1, Dev2 ...) and product type; the name can be changed there."
+  },
+  "data_dir": {
+    "ask": "Folder where sample records are saved as CSV",
+    "kind": "path",
+    "example": "C:/lab/data/nidaq"
+  }
+}
