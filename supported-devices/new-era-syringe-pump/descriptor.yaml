@@ -1,0 +1,126 @@
+device:
+  notes: >
+    Programmable syringe pump (NE-1000 series: NE-1000, NE-1002X, NE-1010, NE-4000 two-channel, NE-500 OEM)
+    with an RS-232 pump network: 19200 baud 8N1 by default, commands end with CR, replies are STX, two-digit
+    address, status letter, data, ETX. The pump computes its own motor rate from the syringe inside diameter,
+    so the diameter must be set before any rate means anything. Basic communications mode only.
+
+physical:
+  automated_load: false
+  notes: >
+    Bench pump with a syringe clamped in a holder and a pusher block on a lead screw. A person fits and
+    refills the syringe; nothing is loaded by a handling system. The pusher can exert enough force to break
+    a glass syringe against a blocked line; the pump reports a stall but has no pressure sensor.
+
+signals:
+  - {name: pump_status, type: string, notes: "Status-only reply to an empty command: <STX>nnX<ETX> where nn is the address and X is I infusing, W withdrawing, S stopped, P paused, T timed pause, U waiting for trigger, X purging, or A?R / A?S / A?T / A?E / A?O for the reset, stall, timeout, program-error and phase-out-of-range alarms."}
+  - {name: diameter_actual, type: number, unit: mm, notes: Syringe inside diameter the pump is using (DIA query).}
+  - {name: rate_actual, type: number, unit: mL/min, notes: "Pumping rate as the pump reports it (RAT query). The number only; the reply's unit suffix (UM, MM, UH, MH) is not checked, so this is mL/min only after rate_ml_min or infuse/withdraw set the rate in MM."}
+  - {name: target_volume, type: number, unit: mL, notes: "Volume to be dispensed in the current phase (VOL query), in the units of volume_units; mL after infuse/withdraw, which set VOL ML first."}
+  - {name: volume_units, type: string, notes: "VOL query reply, e.g. 5.000 ML: the number and the current volume units (UL or ML). Setting diameter_mm resets them (uL at or below 14 mm, mL above); infuse and withdraw force ML."}
+  - {name: infused_volume, type: number, unit: mL, notes: Total volume infused since the last clear (DIS reply, the I field), in the units of volume_units.}
+  - {name: withdrawn_volume, type: number, unit: mL, notes: Total volume withdrawn since the last clear (DIS reply, the W field), in the units of volume_units.}
+  - {name: firmware_version, type: string, notes: "VER reply, e.g. NE1000V3.923."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while infuse or withdraw is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, from calibration_due in the lab's config.json self_state record. The pump reports no calibration of its own; a gravimetric check of a dispensed volume is the lab's record.}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next volumetric check is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: infuse and withdraw jobs completed here (from this device's job records unless the lab records its own count).}
+
+settings:
+  - name: diameter_mm
+    type: number
+    unit: mm
+    limits: {min: 0.1, max: 50}
+    resolution: 0.01
+    approval: auto
+    notes: Syringe inside diameter (DIA). Four significant digits at most. Only accepted while the pump is stopped. Resets the volume units (uL at or below 14 mm, mL above). The pump's own accepted range depends on the model; 0.1-50 mm is a placeholder covering the manual's syringe table.
+  - name: rate_ml_min
+    type: number
+    unit: mL/min
+    limits: {min: 0.01, max: 50}
+    resolution: 0.01
+    approval: auto
+    during_job: true
+    notes: Pumping rate in mL/min (RAT <value> MM). Four significant digits at most, so the resolution is 0.01 and the max 50; the pump refuses rates outside what the diameter allows with ?OOR. May be changed while pumping (RAT while running keeps the units).
+  - name: volume_ml
+    type: number
+    unit: mL
+    limits: {min: 0.01, max: 60}
+    resolution: 0.01
+    approval: auto
+    notes: Volume to be dispensed (VOL <value>) in the current volume units; write it after infuse/withdraw have set ML, or read volume_units first. 60 mL is the largest syringe the NE-1000 takes; set max to your syringe.
+
+actions:
+  - name: infuse
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      volume_ml: {type: number, unit: mL, limits: {min: 0.01, max: 60}, resolution: 0.01, notes: Volume to infuse. Set max to the syringe in the clamp.}
+      rate_ml_min: {type: number, unit: mL/min, limits: {min: 0.01, max: 50}, resolution: 0.01, default: 1.0, notes: "Rate in mL/min; refused by the pump (?OOR) when the diameter cannot reach it."}
+    required: [volume_ml]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples: [{volume_ml: 5.0, rate_ml_min: 1.5}]
+    notes: "Sends VOL ML, RAT <rate> MM, VOL <volume>, DIR INF, RUN, then polls DIS until the status letter is no longer I. A ? error in any reply before RUN fails the job with nothing moved. Returns every reply, the last ones being the DIS packets with the running totals. Cancel sends STP."
+  - name: withdraw
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      volume_ml: {type: number, unit: mL, limits: {min: 0.01, max: 60}, resolution: 0.01, notes: Volume to withdraw into the syringe.}
+      rate_ml_min: {type: number, unit: mL/min, limits: {min: 0.01, max: 50}, resolution: 0.01, default: 1.0, notes: Rate in mL/min.}
+    required: [volume_ml]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples: [{volume_ml: 2.0, rate_ml_min: 1.0}]
+    notes: As infuse with DIR WDR; polls DIS until the status letter is no longer W.
+  - {name: stop, duration: short, approval: auto, interlocks: [connected], notes: STP. Stops and pauses a running program; a second STP resets it to phase 1.}
+  - {name: clear_dispensed, duration: short, approval: auto, interlocks: [connected], notes: CLD INF and CLD WDR. Zeroes the infused and withdrawn totals; only while stopped.}
+  - {name: basic_mode, duration: short, approval: confirm, interlocks: [connected], notes: SAF 0. Leaves Safe communications mode for Basic mode, which this package needs; retained at power-off. Confirmed by a person because a production setup may rely on Safe mode's timeout.}
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 30
+  notes: >
+    E-stop sends STP (pump stopped, program paused). A controller silent for 30 s while holding the lease
+    triggers the same stop: a syringe pump left running empties or overfills a vessel in minutes. The
+    pump's own stall detection (A?S) stops the motor against a blocked line. Hardware stop: the Start/Stop
+    key on the front panel pauses the program; there is no separate emergency switch.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 19200
+  eol: "\r"
+  read:
+    pump_status: ""
+    diameter_actual: DIA
+    rate_actual: RAT
+    target_volume: VOL
+    volume_units: VOL
+    infused_volume: DIS
+    withdrawn_volume: DIS
+    firmware_version: VER
+  write:
+    diameter_mm: "DIA {value}"
+    rate_ml_min: "RAT {value} MM"
+    volume_ml: "VOL {value}"
+  actions:
+    infuse: ["VOL ML", "RAT {rate_ml_min} MM", "VOL {volume_ml}", "DIR INF", "RUN"]
+    withdraw: ["VOL ML", "RAT {rate_ml_min} MM", "VOL {volume_ml}", "DIR WDR", "RUN"]
+    stop: [STP]
+    clear_dispensed: ["CLD INF", "CLD WDR"]
+    basic_mode: ["SAF 0"]
+  estop: [STP]
+  parse:
+    diameter_actual: {regex: "\\d\\d[A-Z?]+([0-9.]+)", group: 1}
+    rate_actual: {regex: "\\d\\d[A-Z?]+([0-9.]+)", group: 1}
+    target_volume: {regex: "\\d\\d[A-Z?]+([0-9.]+)", group: 1}
+    infused_volume: {regex: "I([0-9.]+)W", group: 1}
+    withdrawn_volume: {regex: "W([0-9.]+)", group: 1}

@@ -1,0 +1,62 @@
+{
+  "job_dir": {
+    "ask": "Folder DIFFRAC.MEASUREMENT CENTER imports job files from",
+    "kind": "path",
+    "example": "C:\\ProgramData\\Bruker AXS\\DIFFRAC.SUITE\\Jobs\\openmhp",
+    "help": "The folder the lab's job template / DIFFRAC.COMMANDER script / LIMS import watches (see references/diffrac_files.md). Must exist and be writable by the account running mhp on the DIFFRAC PC."
+  },
+  "results_dir": {
+    "ask": "Folder where the .brml raw files of the queued scans are written",
+    "kind": "path",
+    "example": "C:\\ProgramData\\Bruker AXS\\DIFFRAC.SUITE\\Results\\openmhp",
+    "help": "The result folder of the job template; the package waits for <sample_id>_<token>.brml there."
+  },
+  "xy_dir": {
+    "ask": "Folder where the .xy text export is written (blank if it is the results folder or there is none)",
+    "kind": "path",
+    "required": false,
+    "help": "DIFFRAC's Result Manager or a post-processing script can export each result as a two-column .xy text file; the package reads it when the .brml cannot be parsed."
+  },
+  "methods_dir": {
+    "ask": "DIFFRAC.SUITE method folder holding the .bsml measurement methods",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  },
+  "changer_positions": {
+    "ask": "Number of positions on the sample changer",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "changer_s": {
+    "ask": "Seconds a changer cycle takes (for progress and the wait)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "max_points": {
+    "ask": "Most data points a queued scan may have",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "max_scan_hours": {
+    "ask": "Longest scan an agent may queue (hours)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between checks of the results folder",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "result_wait_s": {
+    "ask": "Longest wait for a result before the job fails (seconds)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}

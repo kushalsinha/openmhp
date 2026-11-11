@@ -1,0 +1,99 @@
+device:
+  notes: >
+    Analytical HPLC/UHPLC (Vanquish or UltiMate 3000) under Chromeleon 7.x. Creates a sequence in a data
+    vault folder from a sample list, queues it on the instrument through the Chromeleon SDK, waits for every
+    injection to end and reads the peak table. Chromeleon keeps methods, audit trail and raw data.
+
+physical:
+  automated_load: true
+  notes: >
+    The autosampler's vial positions (as Chromeleon names them, e.g. RA1, GA1, or 1 to 120 on a carousel) can be
+    loaded by a handling system between sequences. Solvent delivery up to the pump's pressure limit set in the
+    instrument method. Flammable and toxic mobile phases.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Chromeleon SDK scope opens and the logon succeeds on this (32-bit) Python.}
+  - {name: instrument_status, type: object, notes: "instrument (name), state (the instrument's state as the SDK reports it; 'unknown' when the SDK exposes none), injections_ended (in the sequence running from here)."}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, notes: True while a sequence started here is in the queue.}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: "True exactly when no sequence from here is running (not busy): a handling system may then load or unload vials in the autosampler. The sampler's own door sensor is not read through the SDK; a sequence started from Chromeleon itself is not seen, so check instrument_status too."}
+  - {name: last_result, type: object, notes: Result of the most recent run_samples from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); Chromeleon's system suitability results are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Sequences run from here (the lab's recorded count, or the number of finished run_samples jobs when none is recorded); Chromeleon's injection counter is not read.}
+
+settings: []
+
+actions:
+  - name: list_methods
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Lists the instrument methods and processing methods in the configured data vault folder.
+  - name: run_samples
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    params:
+      samples:
+        type: array
+        notes: One entry per sample; a sample with injections > 1 becomes that many injections named name, name_2, ...
+        items:
+          type: object
+          required: [name, vial, injection_volume_ul, method]
+          properties:
+            name: {type: string}
+            vial: {type: string, notes: "Autosampler position as Chromeleon names it, e.g. 'RA1'."}
+            injection_volume_ul: {type: number, unit: uL, limits: {min: 0.1, max: 100}, notes: Also checked against this sampler's range in config.json.}
+            method: {type: string, notes: Instrument method in the data vault folder.}
+            processing_method: {type: string, nullable: true, notes: Omitted or null uses the action's processing_method, then config.json's.}
+            injections: {type: integer, limits: {min: 1, max: 10}, default: 1}
+      processing_method: {type: string, nullable: true, notes: Processing method for every injection that names none; omitted or null uses config.json processing_method.}
+      channel: {type: string, default: UV_VIS_1, notes: Signal channel the peak table is evaluated on.}
+      sequence_name: {type: string, nullable: true, notes: Omitted or null names it mhp_<date>_<job>; the result reports the name.}
+    required: [samples]
+    notes: >
+      Creates the sequence in the data vault folder with the methods copied in, takes control of the instrument,
+      adds the sequence to its queue and starts the queue; waits until the SDK reports every injection ended,
+      then evaluates peak name, retention time, area and height for each injection on the channel.
+    returns:
+      type: object
+      required: [sequence_name, sequence_url, injections, samples, final_status, elapsed_s, results]
+      properties:
+        sequence_name: {type: string}
+        sequence_url: {type: string, notes: "chrom:// URL of the sequence in the data vault."}
+        injections: {type: integer}
+        samples: {type: integer}
+        final_status: {type: object, notes: instrument_status when the sequence ended.}
+        elapsed_s: {type: number, unit: s}
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              injection: {type: string}
+              peaks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name: {type: string}
+                    retention_min: {type: number, unit: min}
+                    area: {type: number}
+                    height: {type: number}
+    examples:
+      - samples: [{name: "std_1", vial: "RA1", injection_volume_ul: 5, method: "Assay_C18_15min"},
+                  {name: "batch12_t30", vial: "RA2", injection_volume_ul: 5, method: "Assay_C18_15min", injections: 2}]
+        processing_method: "Assay_C18_proc"
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 300
+  watchdog_action: release
+  notes: >
+    No remote stop: the public SDK surface shows a queue start (ForceQueueStart) but no abort or stop member, so
+    a person stops a sequence in the Chromeleon console (Instrument > Stop). The instrument method's own pressure
+    limits protect the column. A controller silent for 5 minutes loses its lease; the sequence keeps running.

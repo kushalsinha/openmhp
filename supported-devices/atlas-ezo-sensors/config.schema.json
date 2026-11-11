@@ -1,0 +1,15 @@
+{
+  "port": {
+    "ask": "Serial port of the carrier board the EZO circuit sits on (COM7, /dev/ttyUSB0, /dev/tty.usbserial-*)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "An Atlas USB carrier or any 3.3/5 V USB-serial adapter wired to the circuit's TX/RX. The circuit must be in UART mode (green LED at rest)."
+  },
+  "circuit": {
+    "ask": "Which EZO circuit is on this port",
+    "kind": "choice",
+    "choices": ["pH", "ORP", "DO", "EC", "RTD"],
+    "example": "pH",
+    "help": "Recorded so the person installing knows which reading signal (ph, orp, dissolved_oxygen, conductivity, temperature) is the real one; the driver does not switch on it. The circuit_info signal (command i) confirms it."
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "resource": {
+    "ask": "VISA resource of the power meter (USBTMC; the serial number is on the label on the back)",
+    "kind": "choice",
+    "choices_from": "resource",
+    "example": "USB0::0x1313::0x8078::P0012345::INSTR",
+    "help": "Thorlabs vendor id is 0x1313; product ids: 0x8078 PM100D, 0x8079 PM100A, 0x8072 PM100USB, 0x8075 PM400 (unverified for the PM400). pyvisa with pyvisa-py and pyusb lists it as USB0::0x1313::0x8078::<serial>::INSTR. TCPIP0::<ip>::inst0::INSTR works only on meters with a LAN port (PM5020); tcp://host:5025 likewise. With pyvisa not installed, type the string."
+  }
+}

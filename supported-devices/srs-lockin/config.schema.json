@@ -1,0 +1,9 @@
+{
+  "resource": {
+    "ask": "VISA resource of the lock-in (GPIB address 8 is the factory default) or its RS-232 serial port",
+    "kind": "choice",
+    "choices_from": "resource",
+    "example": "GPIB0::8::INSTR",
+    "help": "Examples: GPIB0::8::INSTR (GPIB), /dev/ttyUSB0 or COM3 (RS-232 at 9600 baud through a USB-serial adapter), TCPIP0::192.168.1.40::inst0::INSTR or tcp://192.168.1.40:5025 (SR860/SR865A over LAN, or an SR830 behind a LAN-GPIB gateway). `pyvisa` lists what it can see; with none installed, type the string."
+  }
+}

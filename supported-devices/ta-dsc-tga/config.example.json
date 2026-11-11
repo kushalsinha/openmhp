@@ -1,0 +1,11 @@
+{
+  "run_dir": "C:\\ProgramData\\TA Instruments\\TRIOS\\RunLists\\openmhp",
+  "export_dir": "C:\\ProgramData\\TA Instruments\\TRIOS\\Export\\openmhp",
+  "live_export_file": "",
+  "pan_positions": 50,
+  "max_temperature_c": {"dsc": 600, "tga": 1000},
+  "max_run_hours": 12,
+  "load_equilibrate_s": 300,
+  "poll_s": 10,
+  "result_wait_s": 14400
+}

@@ -1,0 +1,15 @@
+{
+  "port": {
+    "ask": "Serial port the shaker's RS-232 socket (right side of the control panel) is cabled to",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "Linux /dev/ttyUSB0 (or /dev/serial/by-id/...), macOS /dev/tty.usbserial-*, Windows COM3. Use a straight DB-9 cable or a USB-to-RS-232 adapter."
+  },
+  "baud": {
+    "ask": "Baud rate selected on the shaker's RS232/COMM screen (9600, 19200 or 38400; factory 19200)",
+    "kind": "int",
+    "example": 19200,
+    "required": false,
+    "advanced": true
+  }
+}

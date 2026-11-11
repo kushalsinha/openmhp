@@ -1,0 +1,32 @@
+{
+  "url": {
+    "ask": "OPC UA endpoint of the Biobrain (or DCU OPC UA) server",
+    "kind": "url",
+    "example": "opc.tcp://biobrain-01.lab.local:4840",
+    "help": "Biobrain serves OPC UA on port 4840 of the controller's IP (Sartorius application note on Biobrain Supervise, Aug 2023). UaExpert must connect with Sign and Encrypt / Basic256Sha256 before this package will."
+  },
+  "user": {
+    "ask": "Biobrain device user the agent connects as",
+    "example": "openmhp",
+    "help": "A Biobrain user with the Remote operation permission (Administrators have it by default). Make a dedicated one rather than sharing the administrator account."
+  },
+  "password": {
+    "ask": "Password for {user}",
+    "kind": "secret",
+    "keyring": ["Biobrain", "{user}"]
+  },
+  "unit": {
+    "ask": "Unit (vessel) name as Biobrain shows it",
+    "example": "Unit1",
+    "help": "Each vessel on a twin or multi-unit tower is a unit; its node ids start with this name."
+  },
+  "nodes": {
+    "ask": "Node ids per signal, setpoint and recipe method (from the site's OPC UA interface report)",
+    "kind": "text",
+    "advanced": true,
+    "help": "Keep the keys of config.example.json and replace every id with the one UaExpert shows for your unit. The shipped ids are placeholders."
+  },
+  "poll_s": {"ask": "Seconds between phase polls during a batch", "kind": "int", "advanced": true},
+  "max_batch_hours": {"ask": "Longest a recipe may run before the job is failed", "kind": "int", "advanced": true},
+  "max_feed_hours": {"ask": "Longest a single add_feed may take", "kind": "int", "advanced": true}
+}

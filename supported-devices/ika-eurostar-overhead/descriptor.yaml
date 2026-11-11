@@ -1,0 +1,99 @@
+device:
+  notes: >
+    Overhead stirrer on a stand: a motor station with a chuck for a stirring shaft, a Wireless Controller
+    (WiCo) with the knob and display, and a NAMUR serial command set on RS-232 or USB. No heater. The
+    EUROSTAR 60 control runs 30-2000 rpm at up to 60 Ncm; the EUROSTAR 100 control runs 30-1300 rpm at
+    up to 100 Ncm. This package addresses one station.
+
+physical:
+  automated_load: false
+  notes: >
+    Vessel is clamped by a person under the shaft on the stand; nothing here is loaded by a handling system.
+    The shaft and chuck rotate in the open; keep cables, sleeves and hair clear. The station is heavy
+    (several kg on the stand) and must not be moved while running.
+
+signals:
+  - {name: stir_rpm_actual, type: number, unit: "{rev}/min", notes: Measured shaft speed (NAMUR IN_PV_4). 0 when the motor is stopped.}
+  - {name: torque, type: number, unit: cN.m, notes: Current torque trend at the shaft (IN_PV_5). The instrument reports Ncm; cN.m is the UCUM spelling of the same quantity. Relative to the last torque reset on the controller, so compare readings within one run.}
+  - {name: stir_rpm_setpoint_actual, type: number, unit: "{rev}/min", notes: Rated (set) speed the station holds (IN_SP_4).}
+  - {name: speed_limit, type: number, unit: "{rev}/min", notes: The station's own upper speed limit as set in its menu (IN_SP_6). A setpoint above it is clipped by the station.}
+  - {name: torque_limit, type: number, unit: cN.m, notes: The station's own maximum deliverable torque (IN_SP_5). It can be overloaded for about 10 s before the station reduces speed.}
+  - {name: safety_speed, type: number, unit: "{rev}/min", notes: Speed the station falls back to if the Wireless Controller loses contact (IN_SP_8); 100 rpm from the factory.}
+  - {name: device_name, type: string, notes: The station's name string (IN_NAME); useful to confirm which instrument answers on a port.}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from calibration_due in the lab's config.json self_state record. The station reports no calibration of its own over the interface.}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next speed or torque check is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: start_stirring and stop_stirring jobs completed here (from this device's job records unless the lab records its own count).}
+
+settings:
+  - name: stir_rpm
+    type: number
+    unit: "{rev}/min"
+    limits: {min: 0, max: 1200}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: >
+      Rated speed (OUT_SP_4). The EUROSTAR 60 control accepts up to 2000 rpm and the 100 control up to 1300,
+      but an overhead stirrer at full speed can throw an unclamped vessel, and the descriptor cannot gate only
+      the high values behind a confirmation, so this package caps the setting at 1200 rpm for every call. Raise
+      the cap in this file, for one installation, after the clamping and the vessel have been checked. Below 30 rpm
+      the motor does not turn (its range starts at 30); 0 is accepted and means stand still.
+  - name: speed_limit
+    type: number
+    unit: "{rev}/min"
+    limits: {min: 30, max: 2000}
+    resolution: 1
+    approval: confirm
+    notes: The station's own speed ceiling (OUT_SP_6). A person confirms each change because it loosens what the station itself will allow; the stir_rpm cap above still applies to this package.
+  - name: torque_limit
+    type: number
+    unit: cN.m
+    limits: {min: 0, max: 100}
+    resolution: 1
+    approval: confirm
+    notes: Maximum deliverable torque (OUT_SP_5), in the instrument's Ncm. 60 is the EUROSTAR 60 control's ceiling, 100 the 100 control's. Confirmed by a person because a higher limit lets the shaft push harder against a blocked vessel.
+
+actions:
+  - {name: start_stirring, duration: short, approval: auto, interlocks: [connected], notes: Starts the motor at the current stir_rpm setpoint (START_4). Write stir_rpm first; a setpoint of 0 starts nothing.}
+  - {name: stop_stirring, duration: short, approval: auto, interlocks: [connected], notes: Stops the motor (STOP_4). The shaft coasts to rest within a few seconds.}
+  - {name: release_to_local, duration: short, approval: confirm, interlocks: [connected], notes: Sends RESET, which switches the station back to normal (knob) operation and leaves remote mode. A person confirms it because the next command from here will take control again without warning the operator at the bench.}
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 30
+  notes: >
+    E-stop sends STOP_4 (motor off); the shaft coasts to rest. A controller silent for 30 s while holding the
+    lease triggers the same stop, because a stirrer left running on a thickening medium can break glassware.
+    The station has its own fallback: if the Wireless Controller loses contact it drops to safety_speed. There
+    is no physical stop button on the station beyond the mains switch.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600
+  bytesize: 7                   # the EUROSTAR manual: 7 data bits, even parity
+  parity: E
+  eol: "\r\n"
+  read:
+    stir_rpm_actual: IN_PV_4
+    torque: IN_PV_5
+    stir_rpm_setpoint_actual: IN_SP_4
+    speed_limit: IN_SP_6
+    torque_limit: IN_SP_5
+    safety_speed: IN_SP_8
+    device_name: IN_NAME
+  write:
+    stir_rpm: "OUT_SP_4 {value}"
+    speed_limit: "OUT_SP_6 {value}"
+    torque_limit: "OUT_SP_5 {value}"
+  actions:
+    start_stirring: [START_4]
+    stop_stirring: [STOP_4]
+    release_to_local: [RESET]
+  estop: [STOP_4]

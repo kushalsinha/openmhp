@@ -1,0 +1,12 @@
+{
+  "sdk_dir": "C:/Program Files (x86)/Thermo/Chromeleon/bin",
+  "data_vault": "chrom://cm-server/ChromeleonLocal/Projects/MHP",
+  "instrument": "chrom://cm-server/Instruments/Vanquish_1",
+  "username": "svc_openmhp",
+  "processing_method": "Assay_C18_proc",
+  "injection_volume_ul": [0.1, 100],
+  "max_lines": 96,
+  "allowed_methods": [],
+  "poll_s": 10,
+  "max_run_hours": 24
+}

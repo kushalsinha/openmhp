@@ -1,0 +1,28 @@
+name: viability-7aad
+project: _shared
+action: queue_acquisition
+params:
+  sample_name: viability
+  position: A1
+  template: Viability_7AAD
+  stop_events: 10000
+  stop_time_s: 120
+  flow_rate: medium
+compounds:
+- 7-aad
+- cho cells
+- viability
+version: 1
+hash: bc089329cad9
+created: 1794432301.765609
+updated: 1794432301.765609
+validated:
+  at: 1794432301.765609
+  hash: bc089329cad9
+status: active
+notes: '7-AAD viability panel from the Viability_7AAD experiment template: 10,000
+  events or 120 s at medium flow rate. Override sample_name and position per sample.'
+source:
+  kind: vendor_file
+  ref: Viability_7AAD experiment template in SpectroFlo's library (lab's template)
+author: client-7c11d940ea

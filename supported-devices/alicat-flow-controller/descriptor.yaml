@@ -1,0 +1,104 @@
+device:
+  notes: >
+    Alicat MC-series mass flow controller in a gas line, polled over RS-232/RS-485/USB as unit A
+    (config.json `unit_id` changes the letter). Flow and setpoint are in the device's configured
+    engineering unit; this package declares L/min and the lab confirms it in setup. Nothing here
+    changes the gas, the units or the valve tuning.
+
+physical:
+  automated_load: false
+  notes: >
+    Inline device with gas fittings on both sides; nothing is loaded into it and it has no boundary
+    a handling system meets. The valve closes when de-energised on standard MC units (normally closed).
+
+signals:
+  - {name: pressure, type: number, unit: "[psi]",
+     notes: "Field 1 of the data frame: absolute pressure in PSIA (the device default; if your device was ordered in another pressure unit, change this unit)."}
+  - {name: temperature, type: number, unit: Cel, notes: "Field 2 of the data frame: gas temperature in the flow body, degC."}
+  - {name: volumetric_flow, type: number, unit: L/min,
+     notes: "Field 3 of the data frame: volumetric flow at line conditions, in the device's volumetric unit (CCM or LPM; L/min declared, confirm in setup)."}
+  - {name: mass_flow, type: number, unit: L/min,
+     notes: "Field 4 of the data frame: standard mass flow in the device's unit (SCCM or SLPM referenced to 25 degC and 14.696 psia by Alicat default; L/min declared, confirm in setup)."}
+  - {name: setpoint_actual, type: number, unit: L/min,
+     notes: "Field 5 of the data frame: the setpoint the controller is holding, same unit as mass_flow (a flow controller controls on mass flow unless its loop variable was changed)."}
+  - {name: frame, type: string,
+     notes: "The whole data frame, e.g. 'A +014.70 +025.00 +01.234 +01.234 +01.234 Air'. The gas is the last word before any status codes; status codes follow it: ADC error, OPL overpressure limit, POV/TOV/VOV/MOV pressure/temperature/volumetric/mass over range, TMF totalizer missed flow, OVR totalizer rollover, COM comm idle, HLD valve hold, EXH exhaust, GTA autotune, LCK display locked."}
+  - {name: firmware, type: string, notes: "AVE reply: unit id and firmware version, e.g. 'A   10v20.0-R24 ...'. Older GP firmware answers 'A GP'."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: "valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record. The device's own calibration date is printed by A??M* (line M07) but not read here."}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next flow calibration is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: Stop/hold/tare jobs completed from here (the lab's recorded count, or the number of finished jobs when none is recorded). Setpoint writes are not counted.}
+
+settings:
+  - {name: setpoint, type: number, unit: L/min, limits: {min: 0, max: 10}, resolution: 0.01, approval: auto, during_job: true,
+     notes: "AS<x>: flow setpoint in the device's engineering unit (SLPM here; if the device reads SCCM, 10 means 10 SCCM). The 0 to 10 bound is a placeholder: set max to your device's full scale (printed on the label, e.g. MC-10SLPM-D) or lower, to what the downstream line can take. 0 closes the valve. Replies with the full data frame."}
+
+actions:
+  - name: stop
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "AS0: setpoint zero, valve closed on a normally-closed controller. The class convention's stop; same as writing setpoint 0."
+  - name: hold_closed
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "AHC: hold the valve closed regardless of setpoint (frame shows HLD) until cancel_hold. Confirm because a forgotten hold looks like a dead controller to the next user and, on a dual-valve pressure controller, closes both valves."
+  - name: cancel_hold
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "AC: cancel a valve hold and resume control at the current setpoint."
+  - name: tare_flow
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "AV: zero the flow reading. Only with no flow and the valve closed (setpoint 0); a tare under flow offsets every later reading. Confirm for that reason."
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 30
+  notes: >
+    E-stop sends AS0: setpoint zero, which closes a normally-closed controller's valve and stops the
+    gas. A controller with a normally-open valve (ordered as such) or an exhaust-type pressure controller
+    does not stop gas on AS0: add AHC to the estop list for a normally-open unit. The watchdog stops the
+    gas 30 s after the controller goes silent, because unattended gas flow into a vessel is the hazard.
+    The device itself has no stop button; the gas supply valve upstream is the hardware stop.
+
+serial:
+  port: /dev/ttyUSB0          # placeholder: config.json `port` overrides it
+  baud: 19200                 # Alicat default; config.json `baud` overrides it
+  eol: "\r"
+  timeout: 1
+  read:
+    pressure: "A"
+    temperature: "A"
+    volumetric_flow: "A"
+    mass_flow: "A"
+    setpoint_actual: "A"
+    frame: "A"
+    firmware: "AVE"
+  write:
+    setpoint: "AS{value}"
+  actions:
+    stop: ["AS0"]
+    hold_closed: ["AHC"]
+    cancel_hold: ["AC"]
+    tare_flow: ["AV"]
+  estop: ["AS0"]
+  parse:
+    pressure: {field: 1}
+    temperature: {field: 2}
+    volumetric_flow: {field: 3}
+    mass_flow: {field: 4}
+    setpoint_actual: {field: 5}

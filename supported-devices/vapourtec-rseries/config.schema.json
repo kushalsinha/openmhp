@@ -1,0 +1,28 @@
+{
+  "url": {
+    "ask": "OPC UA endpoint of Flow Commander's OPC UA server on the Flow Commander PC",
+    "kind": "url",
+    "example": "opc.tcp://localhost:4840",
+    "help": "Enable the OPC UA server in Flow Commander (an optional feature; Vapourtec supplies it with Python examples). The port is not published; 4840 is the OPC UA default and a placeholder."
+  },
+  "username": {
+    "ask": "OPC UA user name, if the server requires one (Enter for anonymous)",
+    "required": false
+  },
+  "password": {
+    "ask": "Password for {username}",
+    "kind": "secret",
+    "keyring": ["FlowCommanderOPC", "{username}"]
+  },
+  "max_pressure_bar": {
+    "ask": "Pressure (bar) above which a run is stopped by this package",
+    "kind": "int",
+    "example": "20",
+    "help": "Below the weakest part of the flow path (glass coils, the BPR cartridge, the pumps' own limit of 42 bar on an R2/R2+)."
+  },
+  "nodes": {
+    "ask": "Node ids (edit config.json after browsing the server; see references/opcua_nodes.md)",
+    "required": false,
+    "advanced": true
+  }
+}

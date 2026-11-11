@@ -1,0 +1,15 @@
+{
+  "host": {
+    "ask": "IP address or host name of the incubator's Modbus TCP interface (or gateway)",
+    "kind": "text",
+    "example": "192.168.1.50",
+    "help": "Shown on the incubator's touchscreen under Settings / Setup / network when the Modbus option is fitted, or the address of the serial-to-Modbus-TCP gateway in front of its RS-232/USB data interface. Port 502 is assumed; put `port` in config.json if yours differs. For Modbus RTU over a serial port use `serial_port` and `baud` instead of `host`."
+  },
+  "unit": {
+    "ask": "Modbus unit (slave) id",
+    "kind": "int",
+    "example": 1,
+    "advanced": true,
+    "help": "1 unless the controller or gateway was configured otherwise."
+  }
+}

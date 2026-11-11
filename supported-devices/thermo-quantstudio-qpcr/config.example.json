@@ -1,0 +1,11 @@
+{
+  "import_dir": "\\\\QS5-PC\\OpenMHP\\plates",
+  "results_dir": "\\\\QS5-PC\\OpenMHP\\results",
+  "software": "QuantStudio Design & Analysis Software 2.8",
+  "wells": 96,
+  "reporter": "FAM",
+  "quencher": "NFQ-MGB",
+  "allowed_templates": [],
+  "result_wait_s": 14400,
+  "poll_s": 30
+}

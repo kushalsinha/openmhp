@@ -1,0 +1,92 @@
+device:
+  notes: >
+    Heracell VIOS 160i/250i CO2 incubator (the Steri-Cycle i160/i250 share the controller) for
+    cell culture: 37 degC, 5 % CO2, humidified, optional O2 control. The register map below is a
+    TEMPLATE: no Thermo Modbus document was available when it was written, so every address is a
+    placeholder marked unverified in references/registers.md. Confirm each one against the
+    controller's Modbus document (or the Modbus gateway's map) before the first hardware use.
+
+physical:
+  mass_kg: 95
+  footprint_mm: [637, 782, 867]
+  power_w: 400
+  automated_load: true
+  notes: >
+    Front-loading chamber with a heated outer door and an inner glass door (gas-tight screen
+    optional). Plate-handling robots load SBS plates through the opened doors on automation
+    installations; the automatic-door variant (VIOS 250i AxD) opens the door itself. The door
+    contact only reports open or closed, not that an automatic door is parked open with nothing
+    moving, so robot_access_ready is not declared; the cell's door drive must supply it. Gas
+    supply: CO2 (and N2 or O2 on O2-control units) at the regulated inlet pressure; the
+    cylinder changeover and the water reservoir are not reachable through this package.
+
+signals:
+  - {name: temperature, type: number, unit: Cel,
+     notes: Chamber air temperature measured by the control sensor; the reference sensor and plate temperature lag it after a door opening.}
+  - {name: co2, type: number, unit: "%",
+     notes: Measured CO2 concentration (IR sensor). Recovers within minutes after a door opening.}
+  - {name: o2, type: number, unit: "%", nullable: true,
+     notes: Measured O2 concentration where an O2 sensor is fitted; on a unit without one the register answers a constant that means nothing. Treat as absent on such units.}
+  - {name: humidity, type: number, unit: "%", nullable: true,
+     notes: Relative humidity in the chamber from the optional rH sensor; units without one report only the low-humidity indicator, so treat the value as absent there.}
+  - {name: temperature_setpoint_actual, type: number, unit: Cel, notes: Setpoint the controller currently holds, read back from the controller.}
+  - {name: co2_setpoint_actual, type: number, unit: "%", notes: CO2 setpoint the controller currently holds; 0 means the CO2 loop is switched off.}
+  - {name: o2_setpoint_actual, type: number, unit: "%", nullable: true, notes: O2 setpoint the controller holds on O2-control units; meaningless without an O2 sensor.}
+  - {name: door_closed, type: boolean,
+     notes: True when the door contact is closed. Opening the glass door suspends gas supply and chamber heating; an alarm sounds after 30 s open.}
+  - {name: alarm_active, type: boolean,
+     notes: True while the controller raises any alarm (temperature, CO2, O2, humidity, door open too long, water level). The alarm text is only at the touchscreen.}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while any job is running; answered by the base. This package has no jobs, so it reads false.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the Modbus connection is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record (temperature and CO2 sensor calibration).}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next temperature/CO2 calibration is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record,
+     notes: qualified, unqualified or unknown (IQ/OQ/PQ), as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record,
+     notes: Setpoint changes made through this package (the lab's recorded count, or the number of finished jobs here when none is recorded); this incubator has no run counter of its own.}
+
+settings:
+  - {name: temperature_setpoint, type: number, unit: Cel, limits: {min: 20, max: 50}, resolution: 0.1, approval: auto, during_job: true,
+     notes: Chamber temperature setpoint. The instrument controls from room temperature + 3 degC to 55 degC; 20-50 is a placeholder band for cell culture and the lab must set its own. Changing it while a job runs is allowed because the controller ramps gently.}
+  - {name: co2_setpoint, type: number, unit: "%", limits: {min: 0, max: 20}, resolution: 0.1, approval: auto, during_job: true,
+     notes: CO2 setpoint, 0-20 % as the instrument allows. Writing 0 switches the CO2 control loop off (the gas monitor stays active); 5 % is the usual culture value.}
+  - {name: o2_setpoint, type: number, unit: "%", limits: {min: 1, max: 21}, resolution: 0.1, approval: auto, during_job: true,
+     notes: O2 setpoint for units with O2 control, 1-21 % on control range I (the 5-90 % range II sensor needs these limits raised). Skip it on units without an O2 sensor; the write succeeds at the register but controls nothing.}
+
+actions: []
+
+safety:
+  estop: false
+  interlocks: []
+  watchdog_s: 300
+  watchdog_action: release
+  notes: >
+    No software stop: the incubator has no motion and no documented standby or heater-off
+    register, and its own controller (over-temperature cut-out to DIN 12880 class 3.1, door
+    switch that suspends gas and heating) protects the culture. Cutting it would harm the cells
+    it holds, so a controller silent for 5 minutes loses its lease and the incubator keeps its
+    conditions (watchdog_action release). The mains switch is the hardware stop.
+
+modbus:
+  host: 192.168.1.50          # placeholder; config.json overrides host, port and unit
+  port: 502
+  unit: 1
+  read:
+    # UNVERIFIED placeholder addresses: see references/registers.md
+    temperature:                 {reg: 0,   kind: input,    type: int16, scale: 0.01}
+    co2:                         {reg: 1,   kind: input,    type: int16, scale: 0.01}
+    o2:                          {reg: 2,   kind: input,    type: int16, scale: 0.01}
+    humidity:                    {reg: 3,   kind: input,    type: int16, scale: 0.01}
+    temperature_setpoint_actual: {reg: 100, kind: holding,  type: int16, scale: 0.01}
+    co2_setpoint_actual:         {reg: 101, kind: holding,  type: int16, scale: 0.01}
+    o2_setpoint_actual:          {reg: 102, kind: holding,  type: int16, scale: 0.01}
+    door_closed:                 {reg: 0,   kind: discrete}
+    alarm_active:                {reg: 1,   kind: discrete}
+  write:
+    temperature_setpoint:        {reg: 100, kind: holding,  type: int16, scale: 0.01}
+    co2_setpoint:                {reg: 101, kind: holding,  type: int16, scale: 0.01}
+    o2_setpoint:                 {reg: 102, kind: holding,  type: int16, scale: 0.01}
+  actions: {}

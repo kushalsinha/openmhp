@@ -1,0 +1,9 @@
+{
+  "resource": {
+    "ask": "How to reach the oscilloscope: tcp://<ip>:5555 (LAN), or its USB VISA resource",
+    "kind": "choice",
+    "choices_from": "resource",
+    "example": "tcp://192.168.1.60:5555",
+    "help": "Rigol's raw-socket port is 5555, so LAN is tcp://192.168.1.60:5555 (Utility > IO Setting > LAN shows the IP); VISA strings also work: TCPIP0::192.168.1.60::inst0::INSTR, or USB0::0x1AB1::0x04CE::DS1ZA123456789::INSTR for USB (the serial number is on the rear label; 0x04CE is the DS1000Z product id, the MSO5000 and DHO800 differ). With pyvisa not installed, type the string."
+  }
+}

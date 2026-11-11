@@ -1,0 +1,15 @@
+{
+  "port": {
+    "ask": "Serial port the circulator appears on (COM4, /dev/ttyACM0, /dev/tty.usbmodem*)",
+    "kind": "com_port",
+    "example": "/dev/ttyACM0",
+    "help": "USB-B: install the JULABO USB driver (STMicroelectronics Virtual COM Port on Windows); the unit then shows as a COM port. RS-232: the port of the null-modem cable."
+  },
+  "baud": {
+    "ask": "Baud rate: 9600 on the USB virtual COM port; 4800 is the RS-232 factory default on older units",
+    "kind": "int",
+    "example": 9600,
+    "required": false,
+    "advanced": true
+  }
+}

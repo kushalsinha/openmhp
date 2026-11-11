@@ -1,0 +1,89 @@
+device:
+  notes: >
+    Analytical HPLC/UHPLC (1260 or 1290 Infinity II) under OpenLab CDS 2.x with Sample Scheduler for OpenLab.
+    Submits a sample list as a Sample Scheduler command file in the watched command folder, follows the file
+    (accepted, rejected) and waits for the report that "Review for LIMS" copies to the result folder.
+    OpenLab keeps methods, audit trail and raw data.
+
+physical:
+  automated_load: true
+  notes: >
+    The multisampler's vial positions (as OpenLab names them, e.g. P1-A1, or Vial 1 to 100 on a tray) can be
+    loaded by a handling system between sequences. Solvent delivery up to the pump's pressure limit set in the
+    acquisition method. Flammable and toxic mobile phases.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Sample Scheduler command folder is reachable and writable (and the result folder reachable).}
+  - {name: instrument_status, type: object, notes: "command (none, waiting in the folder, accepted by the scheduler, rejected to trash), sequence_name, result_files seen so far. Sample Scheduler's own analysis states (Submitted, In Progress, Ended) are not exposed through files."}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, notes: True while a sequence started here has not yet returned a result.}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: "True exactly when no sequence from here is running (not busy): a handling system may then load or unload vials in the multisampler. The sampler's tray sensors are not read; a sequence started from OpenLab itself is not seen, so check instrument_status too."}
+  - {name: last_result, type: object, notes: Result of the most recent run_samples from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); OpenLab's system suitability results are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Sequences run from here (the lab's recorded count, or the number of finished run_samples jobs when none is recorded); OpenLab's injection counter is not read.}
+
+settings: []
+
+actions:
+  - name: list_methods
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Lists acquisition (.amx) and processing (.pmx) method files under config.json methods_dir when the project's method folder is shared; otherwise answers empty with a note, and the names come from the OpenLab project.
+  - name: run_samples
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    params:
+      samples:
+        type: array
+        notes: One entry per sample; injections > 1 becomes InjectionsPerSample on that line.
+        items:
+          type: object
+          required: [name, vial, injection_volume_ul, method]
+          properties:
+            name: {type: string}
+            vial: {type: string, notes: "Sampler position as OpenLab names it, e.g. 'P1-A1'."}
+            injection_volume_ul: {type: number, unit: uL, limits: {min: 0.1, max: 100}, notes: Also checked against this sampler's range in config.json.}
+            method: {type: string, notes: Acquisition method name in the project (sub-folder path relative to the project's method root if any).}
+            processing_method: {type: string, nullable: true, notes: Omitted or null uses the action's processing_method, then config.json's, then none.}
+            injections: {type: integer, limits: {min: 1, max: 10}, default: 1}
+            sample_type: {type: string, limits: {enum: [Sample, Cal.Std., Blank, Double Blank, QC Check, Spike, Sys. Suit.]}, default: Sample}
+      processing_method: {type: string, nullable: true, notes: Processing method for lines that name none; omitted or null uses config.json processing_method.}
+      sequence_name: {type: string, nullable: true, notes: Used as the command file name and the ResultName; omitted or null names it mhp_<date>_<job>.}
+      expected_run_min: {type: number, unit: min, limits: {min: 1, max: 600}, nullable: true, notes: Run time per injection. When given, the job ends after that long per injection once the command is accepted even if no result file appears; omitted or null waits for the result file up to max_run_hours.}
+    required: [samples]
+    notes: >
+      Writes one Sample Scheduler command file with one Analysis per sample, waits for the scheduler to take it
+      (rejected commands land in trash and fail the job with the reason), then waits for the report file named
+      after the sequence to appear in the result folder and returns its rows.
+    returns:
+      type: object
+      required: [sequence_name, command_file, injections, samples, final_status, elapsed_s, results]
+      properties:
+        sequence_name: {type: string, notes: The ResultName and command file name.}
+        command_file: {type: string, notes: Path of the command file written.}
+        injections: {type: integer}
+        samples: {type: integer}
+        final_status: {type: object, notes: instrument_status when the job ended.}
+        elapsed_s: {type: number, unit: s}
+        results: {type: array, items: {type: object}, notes: Rows of the report files copied to result_dir (columns as the report template names them, plus file); empty when none appeared.}
+        warning: {type: string, nullable: true, notes: Present only when the job ended on expected_run_min without a result file.}
+    examples:
+      - samples: [{name: "std_1", vial: "P1-A1", injection_volume_ul: 5, method: "Assay_C18"},
+                  {name: "batch12_t30", vial: "P1-A2", injection_volume_ul: 5, method: "Assay_C18", injections: 2}]
+        expected_run_min: 15
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 300
+  watchdog_action: release
+  notes: >
+    No remote stop: Sample Scheduler's cancel is a UI action (Stop, Stop instrument) and its XML cancel command
+    is mentioned in Agilent's whitepaper without a published schema, so none is sent. A person stops a run in
+    Sample Scheduler or the OpenLab run queue; the acquisition method's pressure limits protect the column.
+    A controller silent for 5 minutes loses its lease; the sequence keeps running.

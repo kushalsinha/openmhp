@@ -1,0 +1,32 @@
+{
+  "backend": {
+    "ask": "Which vendor route drives this reader?",
+    "kind": "choice",
+    "choices": ["bmg", "softmax", "spark"],
+    "help": "bmg: BMG CLARIOstar/PHERAstar/Omega through Reader Control's ActiveX on the reader PC. softmax: Molecular Devices SpectraMax through SoftMax Pro's Automation API. spark: Tecan Spark through its SiLA 2 server."
+  },
+  "host": {
+    "ask": "PC running SoftMax Pro (softmax) or the Spark SiLA 2 server (spark); Enter for this one",
+    "example": "localhost",
+    "required": false,
+    "help": "The BMG route is local COM and ignores this."
+  },
+  "protocol_dir": {
+    "ask": "Folder holding the read protocols agents may run",
+    "kind": "path",
+    "example": "C:/Program Files (x86)/BMG/CLARIOstar/User/Definit",
+    "help": "BMG: the Definit database folder of the Reader Control user. SoftMax: a folder of .spr protocol files. Spark: unused (methods live in SparkControl)."
+  },
+  "export_dir": {
+    "ask": "Folder the plate tables are exported to",
+    "kind": "path",
+    "example": "C:/lab/data/platereader"
+  },
+  "port": {"ask": "Port of the SoftMax Pro automation server (9000) or the Spark SiLA 2 server", "kind": "int", "advanced": true},
+  "control": {"ask": "BMG Reader Control name (CLARIOstar, PHERAstar, Omega)", "advanced": true},
+  "data_dir": {"ask": "BMG data folder passed to Run", "kind": "path", "advanced": true},
+  "allowed_protocols": {"ask": "Protocol names an agent may run (JSON list; empty = any)", "advanced": true},
+  "max_read_minutes": {"ask": "Longest read before the job is failed", "kind": "int", "advanced": true},
+  "client_dll": {"ask": "SoftMax Pro automation client assembly", "advanced": true},
+  "feature": {"ask": "Spark SiLA 2 feature holding the door and method commands", "advanced": true}
+}

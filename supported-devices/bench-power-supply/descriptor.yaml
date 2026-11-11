@@ -1,0 +1,294 @@
+device:
+  notes: >
+    Rigol DP832 three-channel bench DC supply on a bench, wired by a person to a device under
+    test. Each channel has a voltage setpoint, a current limit, OVP and OCP values; the shipped
+    limits are the DP832's channel ratings (30 V/3 A, 30 V/3 A, 5 V/3 A), and the lab lowers
+    them to the DUT. Outputs are enabled only through confirm-gated actions.
+
+physical:
+  automated_load: false
+  notes: >
+    Bench instrument, about 11 kg, with front banana terminals. The DUT is wired by hand;
+    nothing is loaded into it. Up to 30 V and 3 A per channel, 195 W total (DP832).
+
+signals:
+  - name: voltage_ch1
+    type: number
+    unit: V
+    notes: Measured output voltage of CH1 (:MEAS:VOLT? CH1). Below the setpoint with current at the limit means constant-current mode.
+  - name: current_ch1
+    type: number
+    unit: A
+    notes: Measured output current of CH1 (:MEAS:CURR? CH1).
+  - name: power_ch1
+    type: number
+    unit: W
+    notes: Measured output power of CH1 (:MEAS:POWE? CH1).
+  - name: output_ch1
+    type: boolean
+    notes: True when CH1's output is on (:OUTP? CH1 answers ON). False after you enabled it means the protection tripped; read last_error.
+  - name: voltage_ch2
+    type: number
+    unit: V
+    notes: Measured output voltage of CH2 (:MEAS:VOLT? CH2).
+  - name: current_ch2
+    type: number
+    unit: A
+    notes: Measured output current of CH2 (:MEAS:CURR? CH2).
+  - name: power_ch2
+    type: number
+    unit: W
+    notes: Measured output power of CH2 (:MEAS:POWE? CH2).
+  - name: output_ch2
+    type: boolean
+    notes: True when CH2's output is on (:OUTP? CH2).
+  - name: voltage_ch3
+    type: number
+    unit: V
+    notes: Measured output voltage of CH3 (:MEAS:VOLT? CH3); CH3 is the 5 V channel on a DP832.
+  - name: current_ch3
+    type: number
+    unit: A
+    notes: Measured output current of CH3 (:MEAS:CURR? CH3).
+  - name: power_ch3
+    type: number
+    unit: W
+    notes: Measured output power of CH3 (:MEAS:POWE? CH3).
+  - name: output_ch3
+    type: boolean
+    notes: True when CH3's output is on (:OUTP? CH3).
+  - name: last_error
+    type: string
+    notes: "Oldest entry of the error queue (:SYST:ERR?), '0,\"No error\"' when empty. A refused setpoint or a protection trip lands here."
+  - name: state
+    type: string
+    source: runtime
+    notes: "The driver's state machine: idle, busy, fault, estop; answered by the base."
+  - name: busy
+    type: boolean
+    source: runtime
+    notes: True while a job started here is running; answered by the base.
+  - name: connected
+    type: boolean
+    source: runtime
+    notes: True while the socket or VISA session is open; interlock of every action.
+  - name: calibration_status
+    type: string
+    source: record
+    notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record.
+  - name: calibration_due
+    type: string
+    nullable: true
+    source: record
+    notes: ISO-8601 date the next calibration is due, from the lab's record; null when none is recorded.
+  - name: qualification_status
+    type: string
+    source: record
+    notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.
+  - name: usage_count
+    type: integer
+    source: record
+    notes: Output-enable and configure jobs completed from here, or the lab's recorded count.
+
+settings:
+  - name: voltage_setpoint_ch1
+    type: number
+    unit: V
+    limits: {min: 0, max: 30}
+    resolution: 0.01
+    approval: auto
+    notes: CH1 voltage setpoint (:SOUR1:VOLT), 0 to 30 V on a DP832 in 10 mV steps (1 mV on the DP832A). Applied at once if the output is on. Lower max to the DUT's rating.
+  - name: voltage_setpoint_ch2
+    type: number
+    unit: V
+    limits: {min: 0, max: 30}
+    resolution: 0.01
+    approval: auto
+    notes: CH2 voltage setpoint (:SOUR2:VOLT), 0 to 30 V (DP832). On a DP831 CH2 is also 30 V; CH3 is the negative 30 V channel.
+  - name: voltage_setpoint_ch3
+    type: number
+    unit: V
+    limits: {min: 0, max: 5}
+    resolution: 0.01
+    approval: auto
+    notes: CH3 voltage setpoint (:SOUR3:VOLT), 0 to 5 V on a DP832 (8 V on the DP831 CH1 layout; edit for your model).
+  - name: current_limit_ch1
+    type: number
+    unit: A
+    limits: {min: 0, max: 3}
+    resolution: 0.01
+    approval: auto
+    notes: CH1 current limit (:SOUR1:CURR); the supply drops into constant-current mode at this value. Set it to the DUT's expected draw plus margin.
+  - name: current_limit_ch2
+    type: number
+    unit: A
+    limits: {min: 0, max: 3}
+    resolution: 0.01
+    approval: auto
+    notes: CH2 current limit (:SOUR2:CURR).
+  - name: current_limit_ch3
+    type: number
+    unit: A
+    limits: {min: 0, max: 3}
+    resolution: 0.01
+    approval: auto
+    notes: CH3 current limit (:SOUR3:CURR).
+  - name: ovp_ch1
+    type: number
+    unit: V
+    limits: {min: 0.01, max: 33}
+    resolution: 0.01
+    approval: auto
+    notes: CH1 over-voltage protection value (:OUTP:OVP:VAL CH1); the output trips off above it. enable_ch1 turns OVP on.
+  - name: ovp_ch2
+    type: number
+    unit: V
+    limits: {min: 0.01, max: 33}
+    resolution: 0.01
+    approval: auto
+    notes: CH2 over-voltage protection value (:OUTP:OVP:VAL CH2).
+  - name: ovp_ch3
+    type: number
+    unit: V
+    limits: {min: 0.01, max: 5.5}
+    resolution: 0.01
+    approval: auto
+    notes: CH3 over-voltage protection value (:OUTP:OVP:VAL CH3), 5.5 V max on a DP832.
+  - name: ocp_ch1
+    type: number
+    unit: A
+    limits: {min: 0.001, max: 3.3}
+    resolution: 0.001
+    approval: auto
+    notes: CH1 over-current protection value (:OUTP:OCP:VAL CH1); the output trips off above it. enable_ch1 turns OCP on.
+  - name: ocp_ch2
+    type: number
+    unit: A
+    limits: {min: 0.001, max: 3.3}
+    resolution: 0.001
+    approval: auto
+    notes: CH2 over-current protection value (:OUTP:OCP:VAL CH2).
+  - name: ocp_ch3
+    type: number
+    unit: A
+    limits: {min: 0.001, max: 3.3}
+    resolution: 0.001
+    approval: auto
+    notes: CH3 over-current protection value (:OUTP:OCP:VAL CH3).
+
+actions:
+  - name: enable_ch1
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    notes: >
+      Turns OVP and OCP on for CH1, then the output (:OUTP CH1,ON). Confirm-gated: enabling an
+      output is when a wiring mistake becomes a fault and the DUT is not visible from here; a
+      person at the bench says yes. The output enable is an action rather than a boolean
+      setting because the DP800 accepts only ON|OFF, which the setting grammar cannot send.
+  - name: disable_ch1
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: ":OUTP CH1,OFF. Always allowed."
+  - name: enable_ch2
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    notes: Same as enable_ch1 for CH2; a person confirms.
+  - name: disable_ch2
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: ":OUTP CH2,OFF."
+  - name: enable_ch3
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    notes: Same as enable_ch1 for CH3; a person confirms.
+  - name: disable_ch3
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: ":OUTP CH3,OFF."
+  - name: all_off
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: All three outputs off, the same commands as the e-stop, without latching the e-stop state.
+  - name: configure_ch1
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      voltage: {type: number, unit: V, limits: {min: 0, max: 30}, resolution: 0.01, notes: CH1 voltage setpoint; same limits as voltage_setpoint_ch1.}
+      current_limit: {type: number, unit: A, limits: {min: 0, max: 3}, resolution: 0.01, notes: CH1 current limit.}
+      ovp: {type: number, unit: V, limits: {min: 0.01, max: 33}, resolution: 0.01, default: 31, notes: OVP value; default 31 V (the DP832 default). Set it just above the setpoint.}
+      ocp: {type: number, unit: A, limits: {min: 0.001, max: 3.3}, resolution: 0.001, default: 3.1, notes: OCP value; default 3.1 A. Set it just above the expected draw.}
+    required: [voltage, current_limit]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples:
+      - {voltage: 3.3, current_limit: 0.5, ovp: 3.6, ocp: 0.6}
+      - {voltage: 12.0, current_limit: 1.0}
+    notes: >
+      Writes the CH1 setpoint, current limit, OVP and OCP values in that order. Does not enable
+      the output: invoke enable_ch1 afterwards. Replies are empty strings because SCPI writes do
+      not answer. CH2 and CH3 are configured through their settings.
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 30
+  notes: >
+    E-stop sends :OUTP CH1,OFF, :OUTP CH2,OFF and :OUTP CH3,OFF: every output off. Setpoints
+    are kept, so after safety/reset a confirmed enable_chN resumes. Energy stored in the DUT is
+    the DUT's. No hardware stop on the DP800; the front-panel All On/Off key and the power
+    switch are the physical ones.
+
+scpi:
+  resource: "TCPIP0::192.168.1.50::inst0::INSTR"
+  eol: "\n"
+  timeout: 1
+  idn_match: RIGOL
+  read:
+    voltage_ch1: ":MEAS:VOLT? CH1"
+    current_ch1: ":MEAS:CURR? CH1"
+    power_ch1: ":MEAS:POWE? CH1"
+    output_ch1: ":OUTP? CH1"
+    voltage_ch2: ":MEAS:VOLT? CH2"
+    current_ch2: ":MEAS:CURR? CH2"
+    power_ch2: ":MEAS:POWE? CH2"
+    output_ch2: ":OUTP? CH2"
+    voltage_ch3: ":MEAS:VOLT? CH3"
+    current_ch3: ":MEAS:CURR? CH3"
+    power_ch3: ":MEAS:POWE? CH3"
+    output_ch3: ":OUTP? CH3"
+    last_error: ":SYST:ERR?"
+  write:
+    voltage_setpoint_ch1: ":SOUR1:VOLT {value}"
+    voltage_setpoint_ch2: ":SOUR2:VOLT {value}"
+    voltage_setpoint_ch3: ":SOUR3:VOLT {value}"
+    current_limit_ch1: ":SOUR1:CURR {value}"
+    current_limit_ch2: ":SOUR2:CURR {value}"
+    current_limit_ch3: ":SOUR3:CURR {value}"
+    ovp_ch1: ":OUTP:OVP:VAL CH1,{value}"
+    ovp_ch2: ":OUTP:OVP:VAL CH2,{value}"
+    ovp_ch3: ":OUTP:OVP:VAL CH3,{value}"
+    ocp_ch1: ":OUTP:OCP:VAL CH1,{value}"
+    ocp_ch2: ":OUTP:OCP:VAL CH2,{value}"
+    ocp_ch3: ":OUTP:OCP:VAL CH3,{value}"
+  actions:
+    enable_ch1: [":OUTP:OVP CH1,ON", ":OUTP:OCP CH1,ON", ":OUTP CH1,ON"]
+    disable_ch1: [":OUTP CH1,OFF"]
+    enable_ch2: [":OUTP:OVP CH2,ON", ":OUTP:OCP CH2,ON", ":OUTP CH2,ON"]
+    disable_ch2: [":OUTP CH2,OFF"]
+    enable_ch3: [":OUTP:OVP CH3,ON", ":OUTP:OCP CH3,ON", ":OUTP CH3,ON"]
+    disable_ch3: [":OUTP CH3,OFF"]
+    all_off: [":OUTP CH1,OFF", ":OUTP CH2,OFF", ":OUTP CH3,OFF"]
+    configure_ch1: [":SOUR1:VOLT {voltage}", ":SOUR1:CURR {current_limit}", ":OUTP:OVP:VAL CH1,{ovp}", ":OUTP:OCP:VAL CH1,{ocp}"]
+  estop: [":OUTP CH1,OFF", ":OUTP CH2,OFF", ":OUTP CH3,OFF"]
+  booleans:
+    output_ch1: {true: ["ON"], false: ["OFF"]}
+    output_ch2: {true: ["ON"], false: ["OFF"]}
+    output_ch3: {true: ["ON"], false: ["OFF"]}

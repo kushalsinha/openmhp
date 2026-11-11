@@ -1,0 +1,8 @@
+{
+  "import_dir": "C:\\OpenMHP\\maurice\\batches",
+  "results_dir": "C:\\OpenMHP\\maurice\\results",
+  "software": "Compass for iCE 6.x",
+  "allowed_methods": [],
+  "result_wait_s": 7200,
+  "poll_s": 15
+}

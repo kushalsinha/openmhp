@@ -1,0 +1,15 @@
+{
+  "port": {
+    "ask": "Serial port the balance is on (COM6, /dev/ttyUSB0, /dev/tty.usbserial-*)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "RS-232 socket on the balance (9-pin) with a Sartorius data cable to a USB-serial adapter, or the balance's USB port set to SBI (a virtual COM port)."
+  },
+  "baud": {
+    "ask": "Baud rate as set in the balance's interface menu (factory 9600)",
+    "kind": "int",
+    "example": 9600,
+    "required": false,
+    "advanced": true
+  }
+}

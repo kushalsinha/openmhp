@@ -1,0 +1,107 @@
+device:
+  notes: >
+    Pfeiffer TPG 36x/26x gauge controller on the bench or in the rack, reading up to two gauge
+    heads through this package (channels 3 to 6 of a TPG 366 are reachable through read_all).
+    It only reads pressure and switches gauge heads on and off; nothing here moves, heats or pumps.
+
+physical:
+  automated_load: false
+  notes: >
+    Half-rack controller (TPG 36x) or bench unit (TPG 26x), gauge heads on cables to the chamber.
+    Nothing is loaded into it; it has no boundary a handling system meets.
+
+signals:
+  - {name: pressure_1, type: number, unit: mbar,
+     notes: "Channel 1 pressure in the controller's unit (set it to mbar, see setup.md). Only a measurement when status_1 is 0; otherwise it is the last or a dummy value."}
+  - {name: pressure_2, type: number, unit: mbar,
+     notes: "Channel 2 pressure, same rules as pressure_1. A TPG 361 has one channel and answers status 5 (no sensor) here."}
+  - {name: status_1, type: integer, unit: "1",
+     notes: "Channel 1 status from the PR1 reply: 0 measurement ok, 1 underrange, 2 overrange, 3 sensor error, 4 sensor off, 5 no sensor, 6 identification error."}
+  - {name: status_2, type: integer, unit: "1", notes: "Channel 2 status, same codes as status_1."}
+  - {name: gauge_types, type: string,
+     notes: "TID reply: comma-separated gauge head type per channel. 36x tokens TPR/PCR, IKR, PKR, PBR, IMR, CMR/APR, noSENSOR, noIDENT; 26x tokens TPR, IKR9, IKR11, PKR, PBR, IMR, CMR, noSEn, noid."}
+  - {name: unit_code, type: integer, unit: "1",
+     notes: "UNI reply: 0 mbar/bar, 1 Torr, 2 Pa, 3 micron, 4 hPa (36x default, numerically mbar), 5 V. This package declares mbar: anything but 0 or 4 means the pressure signals are mislabelled."}
+  - {name: sensor_states, type: string,
+     notes: "SEN query: per channel 0 = cannot be switched, 1 = off, 2 = on. Example '2,1'."}
+  - {name: error_word, type: string,
+     notes: "ERR reply, four digits: 0000 none, 1000 controller error, 0100 hardware not installed, 0010 inadmissible parameter, 0001 syntax error. Reading it clears it."}
+  - {name: identity, type: string,
+     notes: "AYT reply on the 36x: type, article number, serial number, firmware, hardware version. A 26x answers NAK (no AYT); its ENQ then returns the error word 0001."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record. The gauge heads are what gets calibrated, not the controller.}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next gauge-head calibration is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: Gauge switch-on commands sent from here (the lab's recorded count, or the number of finished jobs when none is recorded).}
+
+settings:
+  - {name: sensor_1_on, type: boolean, approval: confirm,
+     notes: "Switches gauge head 1 on (true) or off (false) with SEN. Confirm because switching a hot-cathode head (PBR, IMR) on above about 1e-3 mbar burns its filament, and a cold-cathode head on at atmosphere sputters. The controller's own SCx switch-on control remains the primary interlock; this package cannot read the pressure before a person confirms, so read pressure_1 first."}
+  - {name: sensor_2_on, type: boolean, approval: confirm,
+     notes: "Same as sensor_1_on for channel 2."}
+
+actions:
+  - name: read_all
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "Sends PRX: one line with status,value pairs for every channel (2 pairs on a 362/26x, 6 on a 366). The pairs come back raw in replies[0]."
+  - name: sensors_off
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "SEN,1,1: switches channels 1 and 2 off. Always safe. On a TPG 366 the command must carry six values; edit the serial block (see setup.md)."
+  - name: degas_1
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "DGS,1,0: starts the three-minute degas of a hot-cathode head on channel 1. Confirm because it heats the head; only do it below 1e-5 mbar and only on a PBR/IMR head."
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 60
+  watchdog_action: release
+  notes: >
+    E-stop sends SEN,1,1, which switches both gauge heads off: that removes the only energy
+    this controller puts into the chamber (a filament or a cold-cathode discharge). A pressure
+    reading needs no lease holder to stay safe, so a silent controller releases the lease
+    after 60 s rather than switching the gauges off; a chamber without a pressure reading is
+    worse than one with an idle agent. Nothing moves.
+
+serial:
+  port: /dev/ttyUSB0          # placeholder: config.json `port` overrides it
+  baud: 9600                  # TPG default; USB 36x up to 115200 via BAU
+  eol: "\r\n"
+  enq: "\\x05"                # mnemonic protocol: command, ACK, ENQ, data
+  timeout: 2
+  read:
+    pressure_1: PR1
+    pressure_2: PR2
+    status_1: PR1
+    status_2: PR2
+    gauge_types: TID
+    unit_code: UNI
+    sensor_states: SEN
+    error_word: ERR
+    identity: AYT
+  write:
+    sensor_1_on: "SEN,{value},0"      # driver.py maps true -> 2 (on), false -> 1 (off)
+    sensor_2_on: "SEN,0,{value}"
+  actions:
+    read_all: [PRX]
+    sensors_off: ["SEN,1,1"]
+    degas_1: ["DGS,1,0"]
+  estop: ["SEN,1,1"]
+  parse:
+    pressure_1: {field: 2}
+    pressure_2: {field: 2}
+    status_1: {field: 1}
+    status_2: {field: 1}

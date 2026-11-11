@@ -1,0 +1,15 @@
+{
+  "host": {
+    "ask": "IP address or host name of the chamber's MB2 controller (Ethernet port)",
+    "kind": "text",
+    "example": "192.168.1.60",
+    "help": "Shown on the MB2 touchscreen under Settings / Ethernet (DHCP or the fixed address your IT gave it). Port 502 is assumed; put `port` in config.json if BINDER's document says otherwise."
+  },
+  "unit": {
+    "ask": "Modbus unit (slave) id",
+    "kind": "int",
+    "example": 1,
+    "advanced": true,
+    "help": "1 unless the controller's Modbus address was changed in its settings."
+  }
+}

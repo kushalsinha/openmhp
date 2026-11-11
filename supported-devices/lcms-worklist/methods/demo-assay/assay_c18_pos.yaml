@@ -1,0 +1,23 @@
+name: assay_c18_pos
+project: demo-assay
+action: build_worklist
+params:
+  ms_method: Assay_C18_pos
+  lc_method: Assay_C18_grad
+  samples: []
+compounds:
+- demo compound
+version: 1
+hash: 30ea6ab35fb9
+created: 1794431363.058864
+updated: 1794431363.058864
+validated:
+  at: 1794431363.058864
+  hash: 30ea6ab35fb9
+status: active
+author: package author
+notes: 'Example only: the project''s MS and LC method names as the acquisition PC
+  lists them; the caller passes samples.'
+source:
+  kind: person
+  ref: shipped example

@@ -1,0 +1,23 @@
+name: mab_kinetics_proa
+project: _shared
+action: run_experiment
+params:
+  method: mAb_kinetics_ProA.fmf
+compounds:
+- mab
+- igg
+version: 1
+hash: 0eb4bd47bada
+created: 1794432876
+updated: 1794432876
+validated:
+  at: 1794432876
+  hash: 0eb4bd47bada
+status: active
+author: package example
+notes: Protein A biosensor kinetics for a monoclonal antibody against its antigen
+  titration, as the Octet method file defines it; plate and sensor tray barcodes are
+  given per run.
+source:
+  kind: manual
+  ref: example record shipped with the package; replace with the lab's own

@@ -1,0 +1,87 @@
+device:
+  notes: >
+    JULABO circulator (heating or refrigerated/heating) with a bath, a pump and a working-temperature
+    sensor; CORIO CP, MAGIO and DYNEO add an external Pt100 input and a compressor. The JULABO interface
+    command set is the same across these families: in_ commands read, out_ commands write (remote mode
+    only), status and version report text. One package instance addresses one circulator.
+
+physical:
+  automated_load: false
+  notes: >
+    Floor- or bench-standing bath with hoses to an external loop; nothing is loaded by a handling system.
+    Hot bath fluid and hoses; a refrigerated unit can hold the bath far below room temperature. Keep the
+    fluid level above the minimum mark or the unit alarms (-01).
+
+signals:
+  - {name: bath_temperature, type: number, unit: Cel, notes: Actual bath (working) temperature at the internal sensor (in_pv_00).}
+  - {name: heating_power, type: number, unit: "%", notes: Current heating (positive) or cooling (negative) power as a percentage of the unit's capacity (in_pv_01, the current variable).}
+  - {name: external_temperature, type: number, unit: Cel, notes: Temperature at the external Pt100 probe (in_pv_02). Only CORIO CP, MAGIO and DYNEO have the input and the command; a CORIO CD answers it with an error, which this read reports as a failure. Unverified against a CP/MAGIO/DYNEO manual.}
+  - {name: safety_sensor_temperature, type: number, unit: Cel, notes: Temperature at the high-temperature protection sensor (in_pv_03).}
+  - {name: protective_temperature_setting, type: number, unit: Cel, notes: Current setting of the high-temperature safety function (in_pv_04), set on the unit; setpoints above it are refused by the circulator.}
+  - {name: temperature_setpoint_actual, type: number, unit: Cel, notes: Working setpoint the circulator holds (in_sp_00).}
+  - {name: circulating, type: boolean, notes: True when tempering is started (in_mode_05 reads 1), false when stopped (0).}
+  - {name: status_text, type: string, notes: "The unit's status line (status): 00 MANUAL STOP, 01 MANUAL START, 02 REMOTE STOP, 03 REMOTE START, or a negative alarm/warning code with text such as -01 ... (low fluid level)."}
+  - {name: firmware_version, type: string, notes: The unit's firmware string (version).}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from calibration_due in the lab's config.json self_state record. The circulator does not report a sensor calibration over the interface.}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next temperature-sensor check is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: start_circulation and stop_circulation jobs completed here (from this device's job records unless the lab records its own count).}
+
+settings:
+  - name: target_temperature
+    type: number
+    unit: Cel
+    limits: {min: -20, max: 100}
+    resolution: 0.01
+    approval: auto
+    during_job: true
+    notes: >
+      Working setpoint (out_sp_00). The -20..100 degC range is a placeholder for a general bath fluid; the lab
+      must set min and max to what its fluid, hoses and vessel take (water 5..90, silicone oil higher, glycol
+      mixtures lower) and keep max below the unit's protective temperature. The unit itself refuses values
+      outside its own limits (-10, -11, -13 in status_text). Resolution 0.01 degC as the unit displays it.
+
+actions:
+  - {name: start_circulation, duration: short, approval: auto, interlocks: [connected], notes: "Starts tempering: pump, heater and (on refrigerated units) compressor (out_mode_05 1). Works only in remote mode; check status_text reads 03 REMOTE START afterwards."}
+  - {name: stop_circulation, duration: short, approval: auto, interlocks: [connected], notes: Stops tempering and the pump (out_mode_05 0). The bath drifts toward room temperature.}
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 60
+  notes: >
+    E-stop sends out_mode_05 0, which stops the heater, compressor and pump; the bath then cools or warms
+    passively. A controller silent for 60 s while holding the lease triggers the same stop: an unattended
+    heater on a flammable oil bath is the hazard, and 60 s is long enough for a slow poll. The unit's own
+    high-temperature protection (adjustable on the unit) is independent of this package. No physical stop
+    beyond the mains switch.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600                    # USB virtual COM ignores it; RS-232 on older units is 4800 7E1 (config.json `baud`)
+  bytesize: 7
+  parity: E
+  eol: "\r"
+  read:
+    bath_temperature: in_pv_00
+    heating_power: in_pv_01
+    external_temperature: in_pv_02
+    safety_sensor_temperature: in_pv_03
+    protective_temperature_setting: in_pv_04
+    temperature_setpoint_actual: in_sp_00
+    circulating: in_mode_05
+    status_text: status
+    firmware_version: version
+  write:
+    target_temperature: "out_sp_00 {value}"
+  actions:
+    start_circulation: ["out_mode_05 1"]
+    stop_circulation: ["out_mode_05 0"]
+  estop: ["out_mode_05 0"]
+  booleans:
+    circulating: {true: ["1"], false: ["0"]}

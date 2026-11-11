@@ -1,0 +1,7 @@
+{
+  "assembly_dir": "C:/Thermo/IAPI",
+  "data_dir": "C:/lab/data/orbitrap",
+  "instrument_index": 1,
+  "connect_timeout_s": 30,
+  "scan_timeout_s": 30
+}

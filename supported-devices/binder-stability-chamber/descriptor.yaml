@@ -1,0 +1,83 @@
+device:
+  notes: >
+    BINDER KBF / KBF P / KMF ICH stability chamber with the MB2 touchscreen controller, 0-70
+    degC and 10-80 % rH, holding ICH long-term, intermediate and accelerated conditions for
+    months. Modbus TCP through the controller's Ethernet port. The register map is a TEMPLATE:
+    every address is an unverified placeholder (references/registers.md); confirm against
+    BINDER's Interface Technical Specifications 7001-0242 before first use.
+
+physical:
+  mass_kg: 190
+  footprint_mm: [925, 800, 1460]
+  power_w: 2000
+  automated_load: false
+  notes: >
+    Floor-standing chamber with a glass inner door and an insulated outer door, loaded by
+    people with trays and racks of sample containers; no handling robot meets it, so
+    robot_access_ready is not declared. The door contact reports only open or closed. Needs a
+    fresh-water supply and a waste-water line for the humidity system; a water-system fault
+    stops humidity control but not temperature control.
+
+signals:
+  - {name: temperature, type: number, unit: Cel,
+     notes: Chamber air temperature actual value from the MB2 (Pt 100). Study tolerance is usually +-2 degC.}
+  - {name: humidity, type: number, unit: "%",
+     notes: Relative humidity actual value from the capacitive sensor. Usually +-5 % rH tolerance; recovers within minutes after a door opening.}
+  - {name: temperature_setpoint_actual, type: number, unit: Cel, notes: Temperature setpoint the controller currently holds (fixed-value operation), read back.}
+  - {name: humidity_setpoint_actual, type: number, unit: "%", notes: Humidity setpoint the controller currently holds, read back.}
+  - {name: door_closed, type: boolean,
+     notes: True when the door contact is closed. An open door during a study is an excursion to record with its duration.}
+  - {name: alarm_active, type: boolean,
+     notes: True while the MB2 raises a collective alarm (temperature or humidity tolerance band, water system, sensor fault, door open too long). The text is at the touchscreen and in the controller's event list.}
+  - {name: light_on, type: boolean,
+     notes: True while the interior light (ICH light option on KBF P) is switched on, if the controller maps it; otherwise remove this signal.}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while any job runs; this package has no jobs, so it reads false. Answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the Modbus TCP connection is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record (temperature and humidity sensor calibration, usually yearly).}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next sensor calibration is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record,
+     notes: qualified, unqualified or unknown (IQ/OQ/PQ with mapping), as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record,
+     notes: Setpoint changes made through this package (the lab's recorded count, or the number of finished jobs here when none is recorded); the chamber has no cycle counter of its own.}
+
+settings:
+  - {name: temperature_setpoint, type: number, unit: Cel, limits: {min: 0, max: 70}, resolution: 0.1, approval: confirm,
+     notes: Temperature setpoint in fixed-value operation. 0-70 degC is the KBF range (a placeholder; the lab sets its study band). approval confirm because an unplanned setpoint change during a stability study is a GxP deviation that invalidates the time points; a person must confirm each change.}
+  - {name: humidity_setpoint, type: number, unit: "%", limits: {min: 10, max: 80}, resolution: 0.1, approval: confirm,
+     notes: Relative humidity setpoint, 10-80 % rH (KBF; placeholder, and the attainable band depends on the temperature per the climatic diagram). approval confirm for the same GxP reason as temperature_setpoint.}
+
+actions: []
+
+safety:
+  estop: false
+  interlocks: []
+  watchdog_s: 600
+  watchdog_action: release
+  notes: >
+    No software stop: the chamber has no motion and nothing dangerous to stop, and no standby
+    register was verified. Its own controller (independent over-temperature protection to DIN
+    12880 class 3.1, tolerance-band alarms) keeps the study conditions; cutting them would ruin
+    months of stability samples. A controller silent for 10 minutes therefore loses its lease
+    and the chamber carries on (watchdog_action release). The mains switch is the hardware stop.
+
+modbus:
+  host: 192.168.1.60          # placeholder; config.json overrides host, port and unit
+  port: 502
+  unit: 1
+  word_order: big
+  read:
+    # UNVERIFIED placeholder addresses: see references/registers.md
+    temperature:                 {reg: 4096, kind: holding,  type: float32}
+    humidity:                    {reg: 4106, kind: holding,  type: float32}
+    temperature_setpoint_actual: {reg: 4270, kind: holding,  type: float32}
+    humidity_setpoint_actual:    {reg: 4276, kind: holding,  type: float32}
+    door_closed:                 {reg: 0,    kind: discrete}
+    alarm_active:                {reg: 1,    kind: discrete}
+    light_on:                    {reg: 2,    kind: discrete}
+  write:
+    temperature_setpoint:        {reg: 4270, kind: holding,  type: float32}
+    humidity_setpoint:           {reg: 4276, kind: holding,  type: float32}
+  actions: {}
