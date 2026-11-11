@@ -664,6 +664,12 @@ def check(folder: str | Path, repo: str | Path | None = None) -> dict:
     _submission_tier(rep, folder, Path(repo).resolve() if repo else _find_repo(folder))
     out = rep.result()
     out["_package"] = {"folder": folder.name, "path": str(folder)}
+    try:
+        from .rubric import score
+        out["_rubric"] = score(folder)
+    except Exception as e:                                                        # noqa: BLE001  a score never fails the gate
+        out["_rubric"] = None
+        out["_rubric_error"] = f"{type(e).__name__}: {e}"
     return out
 
 
@@ -680,6 +686,12 @@ def report(result: dict) -> str:
         lines.append("")
     lines.append("READY" if result["ok"] else f"{len(result['failures'])} check(s) to fix")
     lines.append("[-] is skipped: not applicable here, and not evidence either way.")
+    rub = result.get("_rubric")
+    if rub:
+        short = ", ".join(f"{c['id']} {c['grade']}" for c in rub["criteria"] if c["grade"] in ("Partial", "Fail"))
+        lines.append(f"Rubric (device-level criteria, self-assessed): {rub['score']} / {rub['max']}"
+                     + (f"; to raise: {short}" if short else "; every applicable criterion passes")
+                     + "   -- mhp rubric <folder> for the evidence")
     return "\n".join(lines)
 
 

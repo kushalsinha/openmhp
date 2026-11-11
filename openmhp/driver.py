@@ -655,6 +655,118 @@ class Driver:
         self.notify("methods/retired", {"method": card(rec), "by": client})
         return {"retired": True, "method": card(rec), "note": "kept for provenance; save it again to reactivate"}
 
+    # ---- signals the base answers: instrument self-state (C12) and runtime state ---- #
+    #
+    # A device's calibration, qualification and usage are the questions a procurement
+    # officer and an orchestrator both ask, and until now the protocol had no place for
+    # them, so no two drivers answered them alike. These are the reserved names (SPEC 4.6).
+    # A driver whose instrument reports them declares `source: instrument` on the signal and
+    # answers in on_read; otherwise the base answers from the lab's own record: the
+    # `self_state` block of config.json (dates a person enters once) and the job records.
+    SELF_STATE: dict[str, str] = {
+        "calibration_status": "string",      # valid | due | overdue | unknown
+        "calibration_last": "string",        # ISO-8601 date, nullable
+        "calibration_due": "string",         # ISO-8601 date, nullable
+        "qualification_status": "string",    # qualified | unqualified | unknown
+        "usage_count": "integer",            # jobs completed on this device, unless the instrument counts itself
+        "out_of_spec": "boolean",            # a vendor self-check or limit the instrument reports
+    }
+    RUNTIME_SIGNALS = ("state", "busy", "active_jobs", "connected")   # answered from the driver's own state machine
+
+    def is_connected(self) -> bool:
+        """Runtime answer for a `connected` signal the driver does not read itself: setup() succeeded.
+        Declarative drivers refine it (an open port); SDK drivers answer it in on_read."""
+        return True
+
+    def config(self) -> dict:
+        """The lab's config.json beside the package, or {} (cached; drivers may read their own copy too)."""
+        cached = getattr(self, "_config_cache", None)
+        if cached is not None:
+            return cached
+        cfg: dict = {}
+        if self.package is not None:
+            p = Path(self.package.dir) / "config.json"
+            if p.is_file():
+                try:
+                    cfg = json.loads(p.read_text(encoding="utf-8")) or {}
+                except (OSError, ValueError):
+                    cfg = {}
+        self._config_cache = cfg
+        return cfg
+
+    def self_state_record(self) -> dict:
+        """What the lab recorded about this instrument: config.json `self_state`, else descriptor `self_state`."""
+        cfg = self.config()
+        rec = dict(self.descriptor.get("self_state") or {}) if isinstance(self.descriptor.get("self_state"), dict) else {}
+        rec.update({k: v for k, v in cfg.items()                     # the flat keys `mhp node setup --all` writes
+                    if k in ("calibration_last", "calibration_due", "calibration_status", "qualified",
+                             "qualification_status", "usage_count", "out_of_spec", "calibration_warn_days") and v not in (None, "")})
+        if isinstance(cfg.get("self_state"), dict):
+            rec.update(cfg["self_state"])
+        return rec
+
+    def read_self_state(self, name: str) -> Any:
+        """Answer a reserved self-state signal from the record. Drivers with an instrument source override on_read."""
+        rec = self.self_state_record()
+        if name == "calibration_last":
+            return rec.get("calibration_last")
+        if name == "calibration_due":
+            return rec.get("calibration_due")
+        if name == "qualification_status":
+            q = rec.get("qualification_status")
+            if q in ("qualified", "unqualified", "unknown"):
+                return q
+            if "qualified" in rec:
+                return "qualified" if rec["qualified"] else "unqualified"
+            return "unknown"
+        if name == "out_of_spec":
+            return bool(rec.get("out_of_spec", False))
+        if name == "usage_count":
+            if "usage_count" in rec:
+                return int(rec["usage_count"])
+            with self._state_lock:
+                return sum(1 for j in self.jobs.values() if j.state == "done")
+        if name == "calibration_status":
+            if rec.get("calibration_status") in ("valid", "due", "overdue", "unknown"):
+                return rec["calibration_status"]
+            due = rec.get("calibration_due")
+            if not due:
+                return "unknown"
+            try:
+                import datetime
+                d = datetime.date.fromisoformat(str(due)[:10])
+            except ValueError:
+                return "unknown"
+            today = datetime.date.today()
+            if d < today:
+                return "overdue"
+            return "due" if (d - today).days <= int(rec.get("calibration_warn_days", 30)) else "valid"
+        raise UnknownName(f"'{name}' is not a self-state signal")
+
+    def read_runtime(self, name: str) -> Any:
+        if name == "state":
+            return self.state
+        if name == "busy":
+            return bool(self._active)
+        if name == "active_jobs":
+            return sorted(self._active)
+        if name == "connected":
+            return bool(self.is_connected())
+        raise UnknownName(f"'{name}' is not a runtime signal")
+
+    def _read_signal(self, name: str) -> Any:
+        """Route a declared signal to its source: the record, the runtime, or the vendor hook."""
+        spec = self._index["signals"].get(name) or {}
+        source = spec.get("source")
+        if source == "record" or (source is None and name in self.SELF_STATE):
+            return self.read_self_state(name)
+        if source == "runtime" or (source is None and name in self.RUNTIME_SIGNALS):
+            try:
+                return self.on_read(name)                       # a driver may still answer these itself
+            except (NotImplementedError, UnknownName, InvalidValue, KeyError):
+                return self.read_runtime(name)
+        return self.on_read(name)
+
     # ---- vendor hooks -------------------------------------------------- #
     def setup(self) -> None:                       # open serial port, etc.
         pass
@@ -701,7 +813,7 @@ class Driver:
         """Called by safety/reset. Default: every signal must be readable."""
         for name in self._index["signals"]:
             try:
-                self.on_read(name)
+                self._read_signal(name)
             except Exception as e:                 # noqa: BLE001
                 return False, f"signal '{name}' unreadable: {type(e).__name__}: {e}"
         return True, "all signals readable"
@@ -826,7 +938,7 @@ class Driver:
     def _check_interlocks(self, spec: dict) -> None:
         for interlock in spec.get("interlocks", []) or []:
             try:
-                v = self.on_read(interlock)
+                v = self._read_signal(interlock)
             except Exception as e:                 # noqa: BLE001  unreadable counts as open
                 raise InterlockOpen(f"interlock '{interlock}' could not be read ({type(e).__name__}: {e}); treated as open",
                                     {"interlock": interlock})
@@ -1042,7 +1154,7 @@ class Driver:
         d = copy.deepcopy(self._enforced["device"])
         notes = d.get("notes", "")
         description = d.get("description") or (notes.split(". ")[0].rstrip(".") + ("." if notes else ""))
-        return {
+        out = {
             "id": d["id"], "class": d["class"], "make": d.get("make"), "model": d.get("model"),
             "location": d.get("location"), "tags": d.get("tags", []),
             "description": description,
@@ -1050,6 +1162,13 @@ class Driver:
             "signals": list(self._index["signals"]), "settings": list(self._index["settings"]),
             "actions": list(self._index["actions"]),
         }
+        # C12: the record-sourced self-state is cheap (no vendor I/O), so the card carries it and a
+        # directory can filter on "calibration overdue" without opening a session on the device.
+        recorded = [n for n in ("calibration_status", "qualification_status")
+                    if n in self._index["signals"] and self._index["signals"][n].get("source", "record") == "record"]
+        if recorded:
+            out["self_state"] = {n: self.read_self_state(n) for n in recorded}
+        return out
 
     def summary(self) -> dict:
         """Level 2. Card + operating instructions + a slim capability table."""
@@ -1095,7 +1214,7 @@ class Driver:
                 raise UnknownName(f"unknown signal '{n}'")
             self._sim_trip("read", pre=True)
             self._sim_trip("read")
-            out[n] = self.on_read(n)
+            out[n] = self._read_signal(n)
         return {"values": out, "ts": time.time(), "id": reading_id()}
 
     def rpc_signals_subscribe(self, p, client):

@@ -163,8 +163,29 @@ def fallback_schema(folder: Path) -> list[Question]:
     return out
 
 
+SELF_STATE_QUESTIONS = [
+    Question(key="calibration_last", ask="Date of the instrument's last calibration (YYYY-MM-DD)", kind="text",
+             example="2026-01-15", required=False, advanced=True,
+             help="Written to config.json `self_state`; the instrument then answers calibration_last and derives "
+                  "calibration_status from the due date (SPEC 4.6). Enter for none."),
+    Question(key="calibration_due", ask="Date the next calibration is due (YYYY-MM-DD)", kind="text",
+             example="2027-01-15", required=False, advanced=True,
+             help="calibration_status reads `due` within 30 days of this date and `overdue` past it."),
+    Question(key="qualified", ask="Is this instrument qualified for use (IQ/OQ/PQ signed off)?", kind="bool",
+             example="y", required=False, advanced=True,
+             help="Answers qualification_status. Leave it unanswered and the instrument says `unknown`."),
+]
+
+
 def questions_for(folder: Path) -> list[Question]:
-    return load_schema(folder) or fallback_schema(folder)
+    """The package's questions, then the lab's record about the instrument (advanced: `--all` asks them)."""
+    qs = list(load_schema(folder) or fallback_schema(folder))
+    driver = folder / "driver.py"
+    manual = driver.is_file() and "drivers.manual" in driver.read_text(encoding="utf-8", errors="replace")
+    if manual:
+        return qs
+    have = {q.key for q in qs}
+    return qs + [q for q in SELF_STATE_QUESTIONS if q.key not in have]
 
 
 # ---- the machine ---------------------------------------------------------------------------------

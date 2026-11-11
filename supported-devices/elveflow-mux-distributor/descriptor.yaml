@@ -2,12 +2,19 @@ device:
   notes: Rotary selector valve; exactly one port is connected to the common line at any time.
 
 physical:
+  automated_load: false
   notes: Rotor seal wears if switched under pressure.
 
 signals:
   - {name: connected, type: boolean, notes: True when the SDK session to the valve is open.}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while a switch or home started here is still in progress.}
   - {name: valve_position, type: integer, notes: The port currently connected to the common line.}
   - {name: port_map, type: object, notes: "What is plumbed to each port, from config.json, e.g. {1: catholyte, 2: DI water}."}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); a selector valve has no calibration of its own, so most labs record unknown."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next calibration is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Port switches and homes (select_port and home jobs) completed here, unless the lab's record carries its own count.}
 
 settings: []
 
@@ -17,12 +24,17 @@ actions:
     approval: auto
     interlocks: [connected]
     params:
-      port: "integer: the port to connect to the common line"
-      rotation: "string (optional): shortest (default), clockwise or counterclockwise, to avoid passing over a port"
+      port: {type: integer, notes: The port to connect to the common line.}
+      rotation: {type: string, default: shortest, notes: "shortest, clockwise or counterclockwise: choose a direction to avoid passing over a port."}
     required: [port]
     limits:
       port: [1, 12]
       rotation: {enum: [shortest, clockwise, counterclockwise]}
+    returns:
+      type: object
+      properties:
+        valve_position: {type: integer, notes: The port now connected, read back from the valve.}
+        connected_to: {type: string, nullable: true, notes: What config.json's port_map says is plumbed to that port; null if unmapped.}
     notes: Vent the feeding OB1 first. Ports beyond the valve's own count (config.json) are refused.
     examples:
       - {port: 2}
@@ -31,6 +43,11 @@ actions:
     duration: short
     approval: auto
     interlocks: [connected]
+    returns:
+      type: object
+      properties:
+        homed: {type: boolean}
+        valve_position: {type: integer, notes: The port connected after homing.}
     notes: Re-references the rotor. Use after a power cycle or a position mismatch.
 
 safety:

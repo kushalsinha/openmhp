@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: sri-8610c-gc-01
-class: gas_chromatograph
+class: chromatograph
 make: SRI Instruments
 model: 8610C (PeakSimple)
 location: ""
