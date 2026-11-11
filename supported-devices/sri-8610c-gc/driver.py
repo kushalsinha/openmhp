@@ -247,3 +247,14 @@ class SRI8610C(Driver):
         except Exception:                             # noqa: BLE001  must not raise
             pass
         self.is_running = False
+
+    # ---- setup-time check (`mhp node setup`) ---------------------------------------------- #
+    @classmethod
+    def probe(cls, cfg: dict) -> str:
+        dll, control = pathlib.Path(cfg.get("connector_dll") or ""), pathlib.Path(cfg.get("control_dir") or "")
+        if not dll.is_file():
+            raise DeviceFault(f"{dll} not found; it ships in the PeakSimple install folder")
+        if not control.is_dir():
+            raise DeviceFault(f"control folder {control} not found")
+        n = len(list(control.glob("*.con")) + list(control.glob("*.CON")))
+        return f"connector found; {n} control file(s) in {control}. PeakSimple must be running when the GC is used"

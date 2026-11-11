@@ -1,0 +1,16 @@
+{
+  "address": {
+    "ask": "How the SP-300 is connected: USB0, or its IP address on Ethernet",
+    "example": "USB0"
+  },
+  "channel": {
+    "ask": "Channel (0 is the first)",
+    "kind": "int",
+    "advanced": true
+  },
+  "data_dir": {
+    "ask": "Folder for the CSV traces",
+    "kind": "path",
+    "example": "C:/lab/data/sp300"
+  }
+}

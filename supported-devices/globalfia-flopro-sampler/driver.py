@@ -209,3 +209,17 @@ class FloProSampler(Driver):
         self.last_sample = sample
         self.emit_signal("last_sample", sample)
         return sample
+
+    # ---- setup-time check (`mhp node setup`) ---------------------------------------------- #
+    @classmethod
+    def probe(cls, cfg: dict) -> str:
+        try:
+            import serial
+        except ImportError:
+            raise DeviceFault("pyserial is not installed (pip install pyserial)") from None
+        try:
+            with serial.Serial(cfg["port"], int(cfg.get("baud", 9600)), timeout=0.5):
+                pass
+        except Exception as e:                               # noqa: BLE001
+            raise DeviceFault(f"{cfg.get('port')} cannot be opened: {e}") from None
+        return f"{cfg['port']} opens; FloZF answers once its mhp_server sequence is running"

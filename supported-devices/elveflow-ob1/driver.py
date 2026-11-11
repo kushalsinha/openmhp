@@ -208,3 +208,23 @@ class OB1(Driver):
                 self._all_zero(self.hw)
         except Exception:                             # noqa: BLE001  must not raise
             pass
+
+    # ---- setup-time checks (`mhp node setup`) --------------------------------------------- #
+    @classmethod
+    def discover(cls, cfg: dict, what: str) -> list:
+        if what != "devices":
+            return []
+        try:
+            import nidaqmx                                   # NI MAX's device names, when NI-DAQmx is installed
+            return [d.name for d in nidaqmx.system.System.local().devices]
+        except ImportError:
+            return []
+
+    @classmethod
+    def probe(cls, cfg: dict) -> str:
+        py, dll = pathlib.Path(cfg.get("sdk_python_dir") or ""), pathlib.Path(cfg.get("sdk_dll_dir") or "")
+        if not (py / "Elveflow64.py").is_file():
+            raise DeviceFault(f"Elveflow64.py not found in {py}")
+        if not (dll / "Elveflow64.dll").is_file():
+            raise DeviceFault(f"Elveflow64.dll not found in {dll}")
+        return f"Elveflow SDK found; OB1 {cfg.get('device_name')} is contacted on the first `mhp node` run (close ESI first)"

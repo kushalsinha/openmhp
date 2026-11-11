@@ -307,12 +307,36 @@ To serve packages from the bench computer attached to the instruments:
 npx openmhp-node setup
 ```
 
-Or use Python directly:
+Or use Python directly. The person at the bench knows which instrument they are standing next
+to, so they name it; the package carries the vendor route and the node serves whatever packages
+are in its folder:
 
 ```bash
-mhp node ~/instruments --http 18900
-mhp node ~/instruments --http 18900 --install-service
+pip install openmhp
+mhp node add                      # lists the ready-made packages
+mhp node add waters-empower-hplc  # fetches it, then asks the questions and leaves the node running
 ```
+
+`add` downloads the package from this repository over HTTPS (no git on the lab PC), installs the
+vendor client, and asks only what a person knows, with an example beside each question: the
+Empower address, the user (its password goes to the OS keyring, never into a file), the project,
+the node and system picked from a list the server gives. It writes `config.json`, proves the answers
+against the instrument where the driver can (`Empower reachable, Arc_HPLC_1 idle`), asks for the
+gateway pairing line if the lab has one, and either installs the background service or serves in
+that window. Numbers and limits keep their defaults; the file is still plain JSON to edit.
+
+```bash
+mhp node setup waters-empower-hplc            # the same questions again (a port moved, a new address)
+mhp node add ika-c-mag-hs7 --yes --set port=COM4 --no-pip   # scripted: no questions, defaults and --set
+mhp node --check                              # what is still missing, in words; serves nothing
+mhp node                                      # serves ~/.openmhp/devices; --install-service keeps it running
+```
+
+With no terminal (`--yes`, piped input) nothing is asked and what still needs an answer is said.
+`--from <folder or .tar.gz>` takes a copied package instead of downloading, for a PC with no internet.
+A package adds its questions in `config.schema.json` and can give its driver `discover` (choices
+from the instrument) and `probe` (the one-line proof); without them the example's text fields are
+asked, with `references/setup.md` as the help.
 
 A node listens on `127.0.0.1` only, so by default no other machine can reach its ports; agents
 beyond the lab reach it through the relay (`--join`, see `docs/relay.md`), which opens nothing
@@ -340,8 +364,8 @@ mhp gateway serve --install-service
 mhp gateway pair                    # one-time code for one lab PC
 mhp gateway add-agent my-laptop     # token + one line for each agent machine
 
-# on the lab PC, once; afterwards plain `mhp node C:\lab\devices` reconnects by itself
-mhp node C:\lab\devices --join https://gw.office ab12-cd34
+# on the lab PC: `mhp node add <package>` asks for this line; or, for packages already there, once:
+mhp node --join https://gw.office ab12-cd34
 ```
 
 ![One call through the relay: the lab PC holds a long-poll open on the gateway; the agent posts its request with its token; the gateway queues it under the agent's name and hands it to the open poll once; the driver runs it on the bench with every limit enforced; the reply comes back the same way. Offline means 503 at once, no answer means 504, and nothing is re-sent.](assets/openmhp-relay-flow.svg)
@@ -435,6 +459,8 @@ questions, roadmap work, interoperability gaps, bugs, and design proposals belon
 | `supported-devices/` | Ready-made device packages for specific instruments, each with a simulated twin |
 | `openmhp/gateway.py` | `mhp gateway`: the relay agents reach when lab PCs sit behind a firewall |
 | `openmhp/relay.py` | Node side of the relay: `mhp node --join` dials out and serves through the gateway |
+| `openmhp/node_add.py` | `mhp node add <package>`: puts a ready-made device package on the instrument PC |
+| `openmhp/node_setup.py` | `mhp node setup`: the questions (from `config.schema.json`), `config.json`, the driver's probe, gateway pairing, the service |
 | `docs/` | Deployment guides: [the relay](docs/relay.md), [firewalled labs](docs/firewalled-labs.md) |
 | `tests/` | Simulator and fake-client coverage, plus a relay end-to-end test |
 

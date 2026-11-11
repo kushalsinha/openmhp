@@ -1,0 +1,23 @@
+{
+  "connector_dll": {
+    "ask": "PeaksimpleConnector.dll from the PeakSimple install folder",
+    "kind": "path",
+    "example": "C:/PeakSimple/PeaksimpleConnector.dll"
+  },
+  "control_dir": {
+    "ask": "Folder holding the control files (.con) agents may run",
+    "kind": "path",
+    "example": "C:/PeakSimple/methods",
+    "help": "Nothing outside this folder can be loaded."
+  },
+  "results_dir": {
+    "ask": "Folder the control file saves results into (its <DATA FILE PATH>)",
+    "kind": "path",
+    "example": "C:/lab/data/gc"
+  },
+  "channel": {
+    "ask": "PeakSimple channel that starts the run",
+    "kind": "int",
+    "advanced": true
+  }
+}

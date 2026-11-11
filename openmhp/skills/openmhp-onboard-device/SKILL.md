@@ -192,6 +192,7 @@ To be included in `supported-devices/`, additionally:
 - [ ] `sim.py` twin that loads with no vendor library and no `config.json`
 - [ ] `references/setup.md` with the vendor library, the host, and a first-hardware-test section
 - [ ] `config.example.json` shipped, `config.json` never committed
+- [ ] `config.schema.json` beside it: one entry per question `mhp node setup` asks (`ask`, `kind`, `example`, `help`; passwords as `secret` to the keyring), and `discover`/`probe` classmethods on the driver where the instrument can be asked (see `openmhp/node_setup.py`)
 - [ ] entry in `openmhp/registry.json`; row in `supported-devices/README.md` with an honest status
 - [ ] the twin exercised in `tests/test_adapters.py`
 - [ ] `mhp inclusion <folder>` Submission tier passes too

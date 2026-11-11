@@ -511,3 +511,26 @@ class EmpowerHPLC(Driver):
         self.last_result = result
         self.emit_signal("last_result", result)
         return result
+
+    # ---- setup-time checks (`mhp node setup`): no driver instance, nothing moves ------------ #
+    @classmethod
+    def discover(cls, cfg: dict, what: str) -> list:
+        hw = EmpowerBackend(cfg)
+        hw.open()
+        if what == "nodes" and hasattr(hw.h, "GetNodeNames"):
+            return list(hw.h.GetNodeNames())
+        if what == "systems" and cfg.get("node") and hasattr(hw.h, "GetSystemNames"):
+            return list(hw.h.GetSystemNames(node=cfg["node"]))
+        return []
+
+    @classmethod
+    def probe(cls, cfg: dict) -> str:
+        hw = EmpowerBackend(cfg)
+        try:
+            hw.open()
+        except ImportError:
+            raise DeviceFault("opti-hplc-handler is not installed (pip install opti-hplc-handler)") from None
+        except Exception as e:                               # noqa: BLE001
+            raise DeviceFault(f"cannot log into {cfg.get('address')} as {cfg.get('username')}: {type(e).__name__}: {e}") from None
+        status = hw.status()
+        return f"Empower at {cfg.get('address')} answers; {cfg.get('system')} is {'idle' if is_idle(status) else 'busy'}"
