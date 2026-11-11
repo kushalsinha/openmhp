@@ -54,7 +54,7 @@ actions:
       point: {type: string, limits: {enum: [mid, low, high]}, default: mid, notes: "Which point: mid first (it clears low and high), then low, then high. EZO-pH only."}
       value: {type: number, unit: "[pH]", limits: {min: 0, max: 14}, resolution: 0.01, default: 7.00, notes: pH of the buffer the probe sits in (mid 6-8, low 0-6.5, high 7.5-14 per the datasheet).}
     examples: [{point: mid, value: 7.00}, {point: low, value: 4.00}, {point: high, value: 10.00}]
-    notes: "Cal,<point>,<value> on an EZO-pH with the probe in the buffer. Confirmed by a person because a wrong buffer silently miscalibrates every later reading. Unverified: the pH datasheet was not readable when this package was written; the command form follows the DO/RTD datasheets and the LabMCP README."
+    notes: "Cal,<point>,<value> on an EZO-pH with the probe in the buffer. Confirmed by a person because a wrong buffer silently miscalibrates every later reading. Unverified: the pH datasheet was not readable when this package was written; the command form follows the DO/RTD datasheets and a secondary open-source driver README."
   - name: calibrate_orp
     duration: short
     approval: confirm
@@ -73,7 +73,7 @@ actions:
       point: {type: string, limits: {enum: [dry, one, low, high]}, default: dry, notes: "dry first (probe in air), then one (single point) or low then high. EZO-EC only."}
       value: {type: number, unit: uS/cm, limits: {min: 0, max: 500000}, resolution: 1, default: 0, notes: Conductivity of the standard; ignored for dry (send 0).}
     examples: [{point: dry, value: 0}, {point: one, value: 1413}, {point: low, value: 12880}, {point: high, value: 80000}]
-    notes: "Cal,<point>,<value> on an EZO-EC with the probe in the standard. For dry the value is ignored by the circuit per the LabMCP README, but this action sends Cal,dry,<value> rather than a bare Cal,dry (unverified: the EC datasheet was not readable; if the circuit answers *ER, send Cal,dry from a terminal once). Confirmed by a person."
+    notes: "Cal,<point>,<value> on an EZO-EC with the probe in the standard. For dry the value is ignored by the circuit per a secondary open-source driver README, but this action sends Cal,dry,<value> rather than a bare Cal,dry (unverified: the EC datasheet was not readable; if the circuit answers *ER, send Cal,dry from a terminal once). Confirmed by a person."
   - name: calibrate_rtd
     duration: short
     approval: confirm

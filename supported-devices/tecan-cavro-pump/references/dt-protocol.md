@@ -3,8 +3,7 @@
 Primary source: Tecan "Operating Manual, Cavro XLP 6000 Modular Syringe Pump", part 734237-C, revision C,
 October 2005, chapter 3 "Software Communication" (sections 3.2.2 Communication Protocols, 3.6 Error Codes
 and Pump Status) and appendix G "Quick Reference" (G.1-G.10), read through a manualslib mirror. Secondary:
-the LabMCP `tecan-cavro-pump` README at github.com/K-Dense-AI/lab-instrument-mcps (Apache-2.0), which
-implements the same manual.
+an open-source (Apache-2.0) Cavro pump driver README, which implements the same manual.
 
 Frames (manual 3.2.2): command block `/` (2Fh), pump address character, data block of commands, CR
 (0Dh); the commands run when the block ends with `R`. Answer block `/` (2Fh), master address `0` (30h),

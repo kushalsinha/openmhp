@@ -1,8 +1,8 @@
 # SBI commands and frame used by this package
 
 Primary source: Sartorius "Entris II - Description of the Interface", technical note, October 2020
-(sartorius.hr, entris-ii-technical-note-en-sartorius.pdf). Secondary: the LabMCP `sartorius-balance`
-README at github.com/K-Dense-AI/lab-instrument-mcps (Apache-2.0), which cites the Sartorius SBI
+(sartorius.hr, entris-ii-technical-note-en-sartorius.pdf). Secondary: an open-source (Apache-2.0) SBI balance
+driver README, which cites the Sartorius SBI
 interface description 98647-000-53 and the Secura/Quintix/Practum (WSE6004) and Cubis (WMS6004,
 WMC6028) manuals. Nothing here was copied from those documents; the tables are in this package's words.
 
