@@ -12,7 +12,7 @@ import time
 from openmhp.driver import LimitViolation
 from openmhp.drivers.serial_ascii import SerialAsciiDriver
 
-_BUSY = re.compile(r"^/0[@-O]")
+_BUSY = re.compile(r"^/0[@A-O]")                   # status byte 0x40-0x4F: busy
 
 
 class _FakePort:
