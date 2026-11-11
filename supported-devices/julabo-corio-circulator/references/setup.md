@@ -33,6 +33,6 @@ Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
 
 twin tested: written from the JULABO CORIO CD original operating manual (1.950.0800.us.V10, 03/2022,
 section 11.1 Interface commands) and not yet run on hardware. `in_pv_02` (external Pt100) and the
-4800/7E1 RS-232 default are taken from the LabMCP julabo-circulator README (Apache-2.0), which cites the
+4800/7E1 RS-232 default are taken from a secondary open-source (Apache-2.0) driver README, which cites the
 CORIO CP, MAGIO and DYNEO manuals; both are unverified here. The `03 REMOTE START` status string is
 inferred from the three documented ones and unverified.

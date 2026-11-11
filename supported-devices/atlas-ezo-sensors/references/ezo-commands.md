@@ -2,8 +2,8 @@
 
 Primary sources read: Atlas Scientific "EZO-DO Embedded Dissolved Oxygen Circuit" datasheet, V 5.8,
 revised 3/25 (files.atlas-scientific.com/DO_EZO_Datasheet.pdf); "EZO-RTD" datasheet, V 3.7, revised
-10/24 (files.atlas-scientific.com/EZO_RTD_Datasheet.pdf). Secondary: the LabMCP `atlas-ezo-sensors`
-README at github.com/K-Dense-AI/lab-instrument-mcps (Apache-2.0), which cites the pH V 6.1, ORP V 5.2
+10/24 (files.atlas-scientific.com/EZO_RTD_Datasheet.pdf). Secondary: an open-source (Apache-2.0) EZO
+driver README, which cites the pH V 6.1, ORP V 5.2
 and EC V 6.7 datasheets that could not be read here.
 
 UART (DO and RTD datasheets): 9600 baud default, 8 data bits, no parity, 1 stop bit; commands are not
@@ -20,7 +20,7 @@ A reading takes about 1 s (DO datasheet: 600 ms reading time, 1000 ms shown for 
 | `Cal,0` | DO | zero-oxygen point | `*OK` | action `calibrate_do_zero` |
 | `Cal,<t>` | RTD | single point at temperature t | `*OK` | action `calibrate_rtd` |
 | `Cal,clear` | all | delete calibration | `*OK` | action `clear_calibration` |
-| `Cal,mid,<pH>` / `Cal,low,<pH>` / `Cal,high,<pH>` | pH | one-, two-, three-point calibration, mid first | `*OK` | action `calibrate_ph` (unverified: pH datasheet not read; ranges mid 6-8, low 0-6.5, high 7.5-14 from the LabMCP README) |
+| `Cal,mid,<pH>` / `Cal,low,<pH>` / `Cal,high,<pH>` | pH | one-, two-, three-point calibration, mid first | `*OK` | action `calibrate_ph` (unverified: pH datasheet not read; ranges mid 6-8, low 0-6.5, high 7.5-14 from the secondary README) |
 | `Cal,<mV>` | ORP | single point | `*OK` | action `calibrate_orp` (unverified: ORP datasheet not read) |
 | `Cal,dry` / `Cal,one,<uS>` / `Cal,low,<uS>` / `Cal,high,<uS>` | EC | dry first, then one or low/high | `*OK` | action `calibrate_ec` (unverified: EC datasheet not read; the action sends `Cal,dry,0` for dry, which may be refused) |
 | `T,<temp>` | pH, DO, EC | temperature compensation, degrees C, not retained | `*OK` | setting `temperature_compensation` |
@@ -36,7 +36,7 @@ A reading takes about 1 s (DO datasheet: 600 ms reading time, 1000 ms shown for 
 | `P,<kPa>`, `S,<ppt>` | DO | pressure and salinity compensation | `*OK` | not used |
 
 Ranges: DO 0.00-100 mg/L, 0-350 % saturation (DO datasheet); RTD -126.000 to 1254 degC (RTD datasheet);
-pH 0.001-14.000, ORP -1019.9 to 1019.9 mV, EC 0.07-500,000 uS/cm (LabMCP README, unverified here).
+pH 0.001-14.000, ORP -1019.9 to 1019.9 mV, EC 0.07-500,000 uS/cm (secondary README, unverified here).
 
 Unverified: everything marked above; the default compensation temperature of the pH and EC circuits (the
 DO circuit's is 20 degC per its datasheet); whether the pH circuit answers `?Cal,3` for three points.

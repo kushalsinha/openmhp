@@ -8,7 +8,7 @@ Sources read (none of their code is copied):
 
 - Waters KB WKB63781 "How do you create a comma-delimited text file that can be imported into
   MassLynx as a sample list?" and MassLynx 4.2 Getting Started Guide 715009602 Ver. 00, Table
-  5-1 "Required sample list columns" (as summarised in the LabMCP source below).
+  5-1 "Required sample list columns" (as summarised in the open-source driver notes below).
 - SCIEX KB "Importing a .txt or .csv file into a batch in SCIEX OS software"; SCIEX OS Feature
   Guide for the Echo MS+ system RUO-IDV-05-15796-C, Table 4-1 (as summarised below).
 - Agilent Community thread 12581 "How to format a CSV file for import as a new worklist for
@@ -16,9 +16,7 @@ Sources read (none of their code is copied):
   Report for LC/MS Acquisition ("-1" = As method).
 - Thermo Xcalibur 2.2 Data Acquisition and Processing User Guide XCALI-97209 Rev. D, Appendix A
   (as summarised below).
-- K-Dense LabMCP `ms-worklist` server, Apache-2.0,
-  github.com/K-Dense-AI/lab-instrument-mcps/servers/chemistry/ms-worklist (README and
-  `formats.py` module docstring and format notes), which collects the above and states what it
+- An open-source (Apache-2.0) MS worklist writer (README and format notes), which collects the above and states what it
   verified and what it assumed. Read for column names, quoting and sample-type words.
 
 Common to all four: UTF-8, CRLF line endings, `csv` minimal quoting (a field is quoted only when

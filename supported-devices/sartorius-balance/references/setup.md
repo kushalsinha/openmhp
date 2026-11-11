@@ -31,5 +31,5 @@ Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
 
 twin tested: written from the Sartorius "Entris II - Description of the Interface" technical note
 (October 2020) and not yet run on hardware. The tare command letter (`T` zero/tare on Entris II; ESC T
-tare on older Cubis/Secura per the Sartorius document 98647-000-53 cited by the LabMCP sartorius-balance
-README) and the frame's handling of an unstable reading are the two things to confirm first.
+tare on older Cubis/Secura per the Sartorius SBI interface description 98647-000-53, cited by a secondary
+open-source driver README) and the frame's handling of an unstable reading are the two things to confirm first.

@@ -1,8 +1,8 @@
 # JULABO interface commands used by this package
 
 Primary source: JULABO CORIO CD original operating manual, document 1.950.0800.us.V10 (03/2022),
-section 11.1 "Interface commands" and 11.2 "Alarms and Warnings". Secondary source: the LabMCP
-`julabo-circulator` README at github.com/K-Dense-AI/lab-instrument-mcps (Apache-2.0), which cites the
+section 11.1 "Interface commands" and 11.2 "Alarms and Warnings". Secondary source: an open-source
+(Apache-2.0) JULABO driver README, which cites the
 CORIO CP (1.950.0900.us.V04), MAGIO MS (1.950.1700.us.V05) and DYNEO DD (1.950.1300.us.V03) manuals.
 
 Syntax (manual): an IN command is the command followed by CR; the unit answers the value followed by
@@ -40,6 +40,6 @@ Ranges (manual, technical data): working temperature range +20..+150 degC on the
 
 Serial (secondary source, unverified here): RS-232 factory default 4800 baud, 7 data bits, even parity,
 1 stop bit, RTS/CTS; USB is a virtual COM port (manual: "STMicroelectronics Virtual COM Port"). The manual
-gives no minimum delay between commands; the LabMCP server waits 0.25 s after a setting (unverified).
+gives no minimum delay between commands; the secondary driver waits 0.25 s after a setting (unverified).
 Not used here: `out_sp_07`/`out_sp_27` (pump stage), `in_sp_03`/`in_sp_04` (warning limits), `in_hil_*`,
 `out_mode_04` (internal/external control) because the CD manual does not list them.

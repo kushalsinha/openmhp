@@ -37,6 +37,6 @@ Method names must exist on the acquisition PC exactly as written; the package ca
 
 ## Status
 
-Twin tested. The formats are written from the vendor documents and the Apache-2.0 LabMCP
-ms-worklist server's notes (see `references/worklist_formats.md`); the files have not yet been
+Twin tested. The formats are written from the vendor documents and an open-source (Apache-2.0)
+worklist writer's notes (see `references/worklist_formats.md`); the files have not yet been
 imported into MassLynx, SCIEX OS, MassHunter or Xcalibur by the package author.
