@@ -8,6 +8,26 @@ from .package import DevicePackage, load_package
 TYPES = {"number", "integer", "boolean", "string", "object", "array"}
 APPROVAL = {"auto", "confirm", "forbid"}
 
+# SPEC 13: the class vocabulary. An unknown class still loads; agents and directories filter on these.
+CLASSES = (
+    "thermocycler", "liquid_handler", "robot_arm", "microscope", "plate_reader", "centrifuge", "incubator",
+    "hotplate", "balance", "pump", "valve", "spectrometer", "laser", "stage", "cnc", "3d_printer", "oven",
+    "power_supply", "camera", "generic",
+    "chromatograph", "mass_spectrometer", "titrator", "reactor", "bioreactor", "circulator", "shaker",
+    "cell_counter", "dissolution_tester", "evaporator", "freeze_dryer", "flow_controller", "source_meter",
+    "vacuum_gauge", "lock_in_amplifier", "daq", "oscilloscope", "sensor", "environmental_chamber",
+    "potentiostat", "nmr", "diffractometer", "particle_analyzer", "biosensor", "electrophoresis",
+    "cytometer", "qpcr", "thermal_analyzer", "stirrer", "temperature_controller", "sampler",
+)
+
+# SPEC 4.6: instrument self-state, the reserved names every instrument SHOULD answer (C12)
+SELF_STATE = {"calibration_status": "string", "calibration_last": "string", "calibration_due": "string",
+              "qualification_status": "string", "usage_count": "integer", "out_of_spec": "boolean"}
+SOURCES = {"record", "runtime", "instrument"}
+RUNTIME = {"state", "busy", "active_jobs", "connected"}
+# SPEC 4.4 / C20: words that mean a handling system meets this instrument at a boundary
+ACCESS_WORDS = re.compile(r"\b(lid|door|drawer|tray|hatch|sash|carousel|autosampler|deck)\b", re.I)
+
 
 def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str], list[str]]:
     """Return (errors, warnings).
@@ -22,6 +42,11 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
         err.append("frontmatter id missing or not lowercase-hyphenated")
     if not m.get("class"):
         err.append("frontmatter class missing")
+    elif m["class"] not in CLASSES:
+        import difflib
+        near = difflib.get_close_matches(str(m["class"]), CLASSES, n=1, cutoff=0.5)
+        warn.append(f"class {m['class']!r} is not in the SPEC 13 vocabulary"
+                    + (f"; nearest is {near[0]!r}" if near else "") + ". It still loads, but agents and directories filter on known classes")
     desc = str(m.get("description", ""))
     if not desc:
         err.append("frontmatter description missing")
@@ -50,6 +75,35 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
     for s in d.get("signals", []) + d.get("settings", []):
         if s.get("type", "number") not in TYPES:
             err.append(f"{s.get('name')}: bad type {s.get('type')}")
+    driver_py = pkg.dir / "driver.py"
+    manual = driver_py.is_file() and "drivers.manual" in driver_py.read_text(encoding="utf-8", errors="replace")
+    # SPEC 4.6: instrument self-state (C12). The names are reserved so two devices answer alike;
+    # the base answers them from the lab's record unless the signal says source: instrument.
+    for s in d.get("signals", []):
+        n, src = s.get("name"), s.get("source")
+        if src is not None and src not in SOURCES:
+            err.append(f"signals.{n}: source must be one of {sorted(SOURCES)}")
+        if n in SELF_STATE and s.get("type", "number") != SELF_STATE[n]:
+            err.append(f"signals.{n}: a self-state signal of this name is a {SELF_STATE[n]} (SPEC 4.6)")
+        if src == "record" and n not in SELF_STATE:
+            err.append(f"signals.{n}: source: record is only for the self-state names {sorted(SELF_STATE)}")
+        if src == "runtime" and n not in RUNTIME:
+            err.append(f"signals.{n}: source: runtime is only for {sorted(RUNTIME)}")
+    if not manual and m.get("class") != "generic" and not (sigs & set(SELF_STATE)):
+        warn.append("no instrument self-state signals (SPEC 4.6, C12): declare calibration_status, "
+                    "qualification_status and usage_count; the base answers them from config.json "
+                    "`self_state`, so an agent can tell whether this instrument is fit to use")
+    for n in ("state", "busy"):
+        if n not in sigs and not manual:
+            warn.append(f"no '{n}' signal: declare it with source: runtime and the base answers it (C7)")
+    # SPEC 4.4 / C20: a handling system meets this instrument at a lid, door, tray or drawer
+    prose = " ".join([str((d.get("device") or {}).get("notes", "")), str((d.get("physical") or {}).get("notes", "")),
+                      *[str(x.get("notes", "")) for sect in ("signals", "settings", "actions") for x in d.get(sect, [])],
+                      pkg.instructions])
+    if "robot_access_ready" not in sigs and ACCESS_WORDS.search(prose) and not manual:
+        word = ACCESS_WORDS.search(prose).group(0)
+        warn.append(f"the package mentions a {word.lower()} but declares no 'robot_access_ready' signal (SPEC 4.4, "
+                    f"C20): a handling system reads that one name on every instrument before it loads or unloads")
     for s in d.get("settings", []):
         lim = s.get("limits")
         if s.get("type", "number") in ("number", "integer"):
@@ -89,6 +143,9 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
             warn.append(f"actions.{a.get('name')}: method-driven but declares no params; a method cannot be validated when saved")
         if a.get("params") and not a.get("examples"):
             warn.append(f"actions.{a.get('name')}: has params but no examples")
+        if a.get("duration") == "long" and not isinstance(a.get("returns"), dict):
+            warn.append(f"actions.{a.get('name')}: a long action with no `returns`; the result's structure is then "
+                        f"per-driver convention, which a caller cannot check (SPEC 4.4, C5)")
     saf = d.get("safety") or {}
     if "estop" not in saf:
         err.append("safety.estop missing (true/false)")
@@ -102,11 +159,10 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
                    "claim a stop this device cannot perform; declare watchdog_action: release")
     if wd_action and not saf.get("watchdog_s"):
         warn.append(f"safety.watchdog_action is '{wd_action}' but watchdog_s is null, so nothing watches the holder")
-    serial = d.get("serial")
-    if saf.get("estop") is True and isinstance(serial, dict) and not serial.get("estop"):
-        err.append("safety.estop is true but serial.estop lists no stop commands")
-    driver_py = pkg.dir / "driver.py"
-    manual = driver_py.is_file() and "drivers.manual" in driver_py.read_text(encoding="utf-8", errors="replace")
+    for block in ("serial", "scpi", "modbus"):
+        decl = d.get(block)
+        if saf.get("estop") is True and isinstance(decl, dict) and not decl.get("estop"):
+            err.append(f"safety.estop is true but {block}.estop lists no stop commands")
     if manual and saf.get("estop") is True:
         warn.append("operator-run instrument declares estop: true; a request to a person is not an automatic stop (use estop: false, estop_kind: operator)")
     if manual and saf.get("watchdog_s"):

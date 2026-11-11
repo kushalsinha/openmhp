@@ -4,13 +4,20 @@ device:
     PeakSimple control file. Results are pushed as last_result when a run finishes.
 
 physical:
-  notes: Hot column oven and detectors; hydrogen or helium carrier gas. Only a person changes gases, columns or temperatures.
+  automated_load: false
+  notes: Hot column oven and detectors; hydrogen or helium carrier gas. The sample is the gas stream flowing through the sampling loop, so nothing is loaded by a handling system. Only a person changes gases, columns or temperatures.
 
 signals:
   - {name: connected, type: boolean, notes: True when PeakSimple answers the connector.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job from here is running; same moment as running.}
   - {name: running, type: boolean, notes: True while a run started from here is in progress.}
-  - {name: runs_today, type: integer}
+  - {name: runs_today, type: integer, notes: Runs started from here today (resets at midnight on the bench PC).}
   - {name: last_result, type: object, notes: Peak table of the most recent run. Pushed when a run finishes.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); PeakSimple's calibration lives in the control file and is not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Injections run from here (the lab's recorded count, or the number of finished run_method jobs when none is recorded).}
 
 settings: []
 
@@ -22,13 +29,33 @@ actions:
     methods: true
     cancellable: true
     params:
-      control_file: "string: name of a PeakSimple control file (.con) in the method folder; a name, not a path"
-      run_time_s: "number (optional): expected run length; read from the control file when omitted"
-      sample: "string (optional): what is being analysed, for the record"
+      control_file: {type: string, notes: "Name of a PeakSimple control file (.con) in the method folder; a name, not a path."}
+      run_time_s: {type: number, unit: s, limits: {min: 30, max: 3600}, nullable: true, notes: "Expected run length. Omitted or null reads it from the control file's '<CHANNEL 1 TIME>=' line; the result reports the value used."}
+      sample: {type: string, nullable: true, notes: "What is being analysed, for the record. Omitted or null leaves the record's sample empty."}
     required: [control_file]
-    limits:
-      run_time_s: [30, 3600]
     notes: Loads the control file into PeakSimple and starts the run, which fires the gas sampling valve as the method programs it. The job ends when PeakSimple reports the run finished; the result carries peaks from each saved chromatogram and from PeakSimple's result file.
+    returns:
+      type: object
+      required: [control_file, run_time_s, injected_at, files, chromatograms, peaks, raw]
+      properties:
+        control_file: {type: string}
+        sample: {type: string, nullable: true, notes: The sample parameter as given; null when none was given.}
+        run_time_s: {type: number, unit: s, notes: The run length used, from the parameter or the control file.}
+        injected_at: {type: string, notes: Local ISO-8601 time the run was started.}
+        files: {type: array, items: {type: string}, notes: Every file PeakSimple wrote into results_dir during the run.}
+        chromatograms: {type: object, notes: "One entry per .ASC file, keyed by file name: {points, rate_hz, duration_min, peaks: [{retention_min, height, area}]}."}
+        peaks:
+          type: array
+          notes: Rows parsed from PeakSimple's result files (component, retention, area and any further columns such as concentration).
+          items:
+            type: object
+            properties:
+              component: {type: string}
+              retention_min: {type: number, unit: min}
+              area: {type: number}
+              extra: {type: array, items: {type: number}, nullable: true, notes: Further numeric columns of the row (height, concentration); absent when the row has none.}
+        raw: {type: array, items: {type: string}, notes: The first 2000 characters of each result file as lines (tabs expanded), for checking the parse.}
+        warning: {type: string, nullable: true, notes: Present only when PeakSimple wrote no files into results_dir.}
     examples:
       - {control_file: co2rr_gas.con, run_time_s: 600, sample: "cathode outlet, pCO2R -150 mA/cm2"}
 

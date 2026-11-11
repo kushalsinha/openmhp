@@ -1,5 +1,10 @@
+physical:
+  automated_load: false
+  notes: Operator-run; a person loads, balances and unloads the rotor. Nothing here can be loaded by a handling system.
 signals:
   - {name: balanced, type: boolean, notes: A person confirms tubes are balanced within 0.1 g.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a spin requested from here is in progress.}
   - {name: door_open, type: boolean}
   - {name: actual_speed, type: number, unit: "{rev}/min", notes: Read off the display by the operator.}
 settings:
@@ -7,6 +12,9 @@ settings:
   - {name: duration_s, type: number, unit: s, limits: {min: 5, max: 3600}, approval: auto}
 actions:
   - {name: spin, duration: long, approval: auto, interlocks: [balanced],
+     returns: {type: object, required: [completed_by],
+               properties: {completed_by: {type: string, notes: Who did the work; always "operator" on the real package.},
+                            notes: {type: string, nullable: true, notes: Remarks the operator gave on acknowledge; null when none.}}},
      notes: The operator starts the run at the set speed and time and acknowledges when it has finished.}
   - {name: open_door, duration: short, approval: confirm, notes: Only after the rotor has stopped.}
 safety:

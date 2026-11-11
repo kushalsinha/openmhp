@@ -184,6 +184,16 @@ def test_the_submission_tier_is_skipped_outside_a_checkout(tmp):
     assert result["ok"], "a package outside a checkout should still pass on its own merits"
 
 
+def test_registry_readme_and_rubric_scores_are_in_sync():
+    """scripts/build_registry.py --check: every shipped package has an entry with a category, the README
+    table is the one the registry renders, and the stored rubric score is what `mhp rubric` computes now."""
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "build_registry.py"), "--check"],
+                       capture_output=True, text=True, cwd=REPO)
+    assert r.returncode == 0, "registry out of date; run scripts/build_registry.py\n" + r.stdout + r.stderr
+
+
 if __name__ == "__main__":
     import tempfile
     for name, fn in list(globals().items()):
@@ -194,3 +204,4 @@ if __name__ == "__main__":
             else:
                 fn()
             print("ok ", name)
+

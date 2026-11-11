@@ -162,7 +162,17 @@ def merge_descriptor(generated: dict, from_package: dict, where: str = "package"
         for extra in from_package.get(section, []) or []:
             name = extra.get("name")
             if name not in items:
-                raise ValueError(f"{where}: descriptor.yaml declares {section[:-1]} '{name}' but the driver has no binding for it")
+                # the reserved names the base answers itself (SPEC 4.4, 4.6) need no binding; anything
+                # else the driver cannot do, so the description may not promise it
+                from .driver import Driver
+                src = extra.get("source")
+                base_answers = section == "signals" and (
+                    (name in Driver.RUNTIME_SIGNALS and src in (None, "runtime"))
+                    or (name in Driver.SELF_STATE and src in (None, "record")))
+                if not base_answers:
+                    raise ValueError(f"{where}: descriptor.yaml declares {section[:-1]} '{name}' but the driver has no binding for it")
+                items[name] = dict(extra)
+                continue
             items[name].update(extra)
         out[section] = list(items.values())
     return out

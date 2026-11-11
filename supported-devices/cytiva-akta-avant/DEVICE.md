@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: akta-avant-01
-class: chromatography_system
+class: chromatograph
 make: Cytiva (GE Healthcare)
 model: ÄKTA avant 25/150 with UNICORN 6/7
 location: ""
