@@ -678,6 +678,20 @@ class Driver:
     def on_estop(self) -> None:                    # cut power, brake, etc.
         pass
 
+    # ---- setup-time hooks: run by `mhp node setup` before any instance exists --- #
+    @classmethod
+    def discover(cls, cfg: dict, what: str) -> list:
+        """Choices for a config question ``what`` (a `choices_from` name in config.schema.json, or
+        a com_port key), given the answers so far. Each item is a value, or (value, note). Return []
+        when there is nothing to offer; raise with a plain reason when the instrument could not be asked."""
+        return []
+
+    @classmethod
+    def probe(cls, cfg: dict) -> str | None:
+        """One line proving ``cfg`` reaches the instrument ("Empower reachable, system X idle").
+        Raise DeviceFault (or anything) with the reason when it does not. None means no check."""
+        return None
+
     def on_fault(self, reason: str) -> None:
         """Called once when the driver latches a fault with an unknown outcome.
         Default: the emergency-stop behaviour, to remove energy and motion."""

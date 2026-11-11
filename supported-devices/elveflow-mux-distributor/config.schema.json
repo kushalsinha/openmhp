@@ -1,0 +1,24 @@
+{
+  "visa_com": {
+    "ask": "The valve's serial port as VISA names it (COM5 -> ASRL5::INSTR)",
+    "kind": "com_port",
+    "choices_from": "visa_ports",
+    "example": "ASRL5::INSTR",
+    "help": "Find the COM port in Device Manager; the Elveflow SDK wants it written as ASRL<n>::INSTR."
+  },
+  "sdk_python_dir": {
+    "ask": "Elveflow SDK folder that holds Elveflow64.py",
+    "kind": "path",
+    "example": "C:/Elveflow/SDK/Python_64"
+  },
+  "sdk_dll_dir": {
+    "ask": "Elveflow SDK folder that holds Elveflow64.dll",
+    "kind": "path",
+    "example": "C:/Elveflow/SDK/DLL64"
+  },
+  "ports": {
+    "ask": "Number of ports on the valve (6, 10 or 12)",
+    "kind": "int",
+    "advanced": true
+  }
+}

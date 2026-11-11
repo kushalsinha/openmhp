@@ -36,20 +36,28 @@ On the gateway:
 mhp gateway pair
 ```
 
-prints a one-time code and a line to run on the lab PC. On the lab PC, where the device packages are:
+prints a one-time code and the line to paste on the lab PC. On the lab PC, name the instrument it
+stands next to:
 
 ```
 pip install openmhp
-mhp node C:\lab\devices --join https://gw.office ab12-cd34
+mhp node add waters-empower-hplc
 ```
 
-It shows the gateway's certificate fingerprint (compare with what `pair` printed), joins, and serves.
-From then on plain `mhp node C:\lab\devices` connects by itself, and `--install-service` keeps it
-running. If the gateway is down it retries quietly; the instruments keep working for anyone on the lab
-network meanwhile.
+`add` asks the instrument's own questions (address, user, project, system, with examples), then
+"Does your lab have an OpenMHP gateway? Paste the line from `mhp gateway pair`". Paste it; the node
+joins, and the last question installs the background service. `mhp node add` alone lists the
+packages. A PC that already serves packages joins once with `mhp node --join https://gw.office
+ab12-cd34`.
 
-If a `config.json` is not filled in or a port is taken, `mhp node` says so and what to do before it
-serves anything.
+Joining shows the gateway's certificate fingerprint (compare with what `pair` printed). From then on
+plain `mhp node` connects by itself. If the gateway is down it retries quietly; the instruments keep
+working for anyone on the lab network meanwhile. The node tells the gateway which instruments it
+serves every time it registers, so an instrument added later appears at the gateway after the node
+restarts; `add` restarts the service for you when one is installed.
+
+If a package is not set up or a port is taken, `mhp node` says so, and which `mhp node setup
+<package>` to run, before it serves anything.
 
 ## For each agent machine
 
