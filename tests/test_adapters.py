@@ -710,7 +710,7 @@ def test_electrochemistry_packages_validate_and_rehearse():
 
 
 def test_chromatography_packages_validate_and_rehearse():
-    """ÄKTA avant (UNICORN OPC), Empower HPLC (Web API) and FloPro sampler (FloZF serial handshake):
+    """ÄKTA avant (UNICORN OPC), Empower HPLC (Web API and Toolkit) and FloPro sampler (FloZF serial handshake):
     the real drivers load without their vendor libraries, and the twins run through the gates."""
     import os
     from openmhp.package import load_driver
@@ -750,6 +750,88 @@ def test_chromatography_packages_validate_and_rehearse():
     refused(-32014, lambda: hplc.invoke("run_samples", samples=[{**sample, "flow": 2}]))
     r = hplc.wait(hplc.invoke("run_samples", samples=[sample, {**sample, "name": "s2", "injections": 2}]))["result"]
     assert r["injections"] == 3 and {row["Vial"] for row in r["exported_rows"]} == {"1:A,1"}
+    assert r["backend"] == "web_api" and r["results_from"] == "export_dir" and r["result_rows"] == r["exported_rows"]
+    b = hplc.read("backend")
+    assert (b["name"], b["can_abort"], b["connected"]) == ("web_api", False, True), b
+    # the Web API has no abort, so a cancel must not be reported as honoured: the job fails and says why
+    job = hplc.invoke("run_samples", samples=[{**sample, "injections": 3}])
+    deadline = time.time() + 5
+    while not hplc.read("busy") and time.time() < deadline:
+        time.sleep(0.01)
+    hplc.cancel(job)
+    try:
+        hplc.wait(job); raise AssertionError("a cancel the backend cannot honour was reported as done")
+    except RemoteError as e:
+        assert "still running in Empower" in str(e), e
+
+    # the Toolkit route: same driver, a backend that can abort and read results
+    os.environ["OPENMHP_SIM_BACKEND"] = "toolkit"
+    try:
+        tk_drv = load_driver("supported-devices/waters-empower-hplc", sim=True)
+        tk = LocalDevice(tk_drv)
+        b = tk.read("backend")
+        assert (b["name"], b["can_abort"], b["connected"]) == ("toolkit", True, True), b
+        r = tk.wait(tk.invoke("run_samples", samples=[sample]))["result"]
+        assert r["backend"] == "toolkit" and r["results_from"] == "toolkit" and r["exported_rows"] == []
+        assert {row["Name"] for row in r["result_rows"]} == {"Product", "Impurity_A"}
+        job = tk.invoke("run_samples", samples=[{**sample, "injections": 3}])
+        deadline = time.time() + 5
+        while not tk.read("busy") and time.time() < deadline:
+            time.sleep(0.01)
+        tk.cancel(job)
+        final = tk.wait(job)
+        assert final["state"] == "cancelled", final
+        assert tk_drv.hw.aborted and tk.read("system_status") == {"SystemState": "Idle"} and tk.read("busy") is False
+    finally:
+        del os.environ["OPENMHP_SIM_BACKEND"]
+    # the real Toolkit backend refuses clearly without pywin32 / config, and an unknown backend name is refused
+    from openmhp.driver import DeviceFault
+    import importlib.util, pathlib as _pl
+    spec = importlib.util.spec_from_file_location("empower_real", _pl.Path("supported-devices/waters-empower-hplc/driver.py"))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    try:
+        mod.ToolkitBackend({"database": "E", "project": "P", "username": "u", "node": "n", "system": "s"}).open()
+        raise AssertionError("expected a refusal")
+    except DeviceFault as e:
+        assert "pywin32" in str(e) or "keyring" in str(e), e
+    try:
+        mod.ToolkitBackend({"backend": "toolkit"}).open(); raise AssertionError("expected a refusal")
+    except DeviceFault as e:
+        assert "database" in str(e), e
+    d = mod.EmpowerHPLC.__new__(mod.EmpowerHPLC); d.cfg = {"backend": "chromeleon"}
+    try:
+        d.make_backend(); raise AssertionError("expected a refusal")
+    except DeviceFault as e:
+        assert "toolkit" in str(e) and "web_api" in str(e), e
+    # backend auto: the Toolkit when this PC has it, else the Web API address, else a message naming both
+    assert mod.choose_backend({"address": "https://api:3076"})[0] == "web_api"
+    assert mod.choose_backend({"backend": "toolkit"}) == ("toolkit", "set in config.json")
+    try:
+        mod.choose_backend({}); raise AssertionError("expected a refusal")
+    except DeviceFault as e:
+        assert "Toolkit" in str(e) and "address" in str(e), e
+    mod.toolkit_installed = lambda prefix="MillenniumToolkit": True
+    assert mod.choose_backend({"database": "Empower"})[0] == "toolkit"
+    assert mod.choose_backend({"address": "https://api:3076"})[0] == "web_api"      # installed, but no database
+    try:
+        mod.choose_backend({}); raise AssertionError("expected a refusal")
+    except DeviceFault as e:
+        assert "database" in str(e), e
+    # an auto-chosen Toolkit that will not log in falls back to the Web API address and says so
+    class Dead(mod.ToolkitBackend):
+        def open(self): raise DeviceFault("license missing")
+    class Alive(mod.WebApiBackend):
+        def open(self): pass
+    mod.BACKENDS["toolkit"], mod.WebApiBackend = Dead, Alive
+    d = mod.EmpowerHPLC.__new__(mod.EmpowerHPLC); d.setup()
+    d.cfg = {"database": "Empower", "address": "https://api:3076"}
+    assert d._hw().name == "web_api" and "license missing" in d.chosen["reason"], d.chosen
+    d = mod.EmpowerHPLC.__new__(mod.EmpowerHPLC); d.setup()
+    d.cfg = {"backend": "toolkit", "database": "Empower", "address": "https://api:3076"}
+    try:
+        d._hw(); raise AssertionError("an explicit toolkit choice must not fall back")
+    except DeviceFault as e:
+        assert "license missing" in str(e)
 
     drv = load_driver("supported-devices/globalfia-flopro-sampler", sim=True)
     flo = LocalDevice(drv)
