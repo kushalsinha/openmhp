@@ -346,7 +346,7 @@
    "make": "Waters",
    "model": "HPLC/UPLC system under Empower 3",
    "kind": "rest",
-   "description": "Waters HPLC/UPLC through the Empower Web API (opti-hplc-handler). Builds and runs injection sample sets on a node and system and follows the system status.",
+   "description": "Waters HPLC/UPLC through the Empower Web API (opti-hplc-handler) or the Empower Toolkit (COM). Builds and runs injection sample sets on a node and system, follows the system status and returns result rows.",
    "tags": [
     "hplc",
     "chromatography",
@@ -354,7 +354,7 @@
    ],
    "target": "github:kushalsinha/openmhp/supported-devices/waters-empower-hplc",
    "sim": true,
-   "via": "Empower Web API, opti-hplc-handler",
+   "via": "Empower Web API (opti-hplc-handler) or Empower Toolkit (COM, pywin32)",
    "status": "twin tested",
    "rubric": {
     "score": 27.0,

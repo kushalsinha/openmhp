@@ -30,7 +30,7 @@ mhp lab add github:kushalsinha/openmhp/supported-devices/<name>          # the r
 | [`ta-dsc-tga`](ta-dsc-tga) | TA Instruments Discovery / Q-series DSC and TGA under TRIOS | TRIOS run-list folder + text export folder | Windows | twin tested | 24.0 / 26 |
 | [`thermo-chromeleon-hplc`](thermo-chromeleon-hplc) | Thermo Fisher Scientific Vanquish or UltiMate 3000 under Chromeleon 7.x | Chromeleon SDK (.NET) through pythonnet | Windows | twin tested | 26.0 / 28 |
 | [`vapourtec-rseries`](vapourtec-rseries) | Vapourtec R-Series (R2 pump module, R4 reactor heater) under Flow Commander | Flow Commander OPC UA server (node ids per lab) | Windows | twin tested | 23.0 / 26 |
-| [`waters-empower-hplc`](waters-empower-hplc) | Waters HPLC/UPLC system under Empower 3 | Empower Web API, opti-hplc-handler | any | twin tested | 27.0 / 28 |
+| [`waters-empower-hplc`](waters-empower-hplc) | Waters HPLC/UPLC system under Empower 3 | Empower Web API (opti-hplc-handler) or Empower Toolkit (COM, pywin32) | any | twin tested | 27.0 / 28 |
 
 **Pharma, biologics**
 
