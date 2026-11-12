@@ -401,11 +401,14 @@ as being at your desk.
 # on the gateway machine, once
 mhp gateway init
 mhp gateway serve --install-service
-mhp gateway pair                    # one-time code for one lab PC
-mhp gateway add-agent my-laptop     # token + one line for each agent machine
+mhp gateway pair                    # one-time code for one lab PC (15 minutes)
+mhp gateway pair-agent              # one-time code for one agent machine (1 hour); send it in chat
 
 # on the lab PC: `mhp node add <package>` asks for this line; or, for packages already there, once:
 mhp node --join https://gw.office ab12-cd34
+
+# on the agent machine, once; after that plain `mhp-mcp` reaches every instrument behind the gateway
+mhp agent --join https://gw.office ef56-ab78
 ```
 
 ![One call through the relay: the lab PC holds a long-poll open on the gateway; the agent posts its request with its token; the gateway queues it under the agent's name and hands it to the open poll once; the driver runs it on the bench with every limit enforced; the reply comes back the same way. Offline means 503 at once, no answer means 504, and nothing is re-sent.](assets/openmhp-relay-flow.svg)

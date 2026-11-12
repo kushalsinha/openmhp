@@ -6,10 +6,11 @@ command either finishes the job or prints the one thing to do next.
     mhp gateway init                  make this machine the gateway (asks name and port; makes a certificate)
     mhp gateway serve                 run it (add --install-service to keep it running across reboots)
     mhp gateway pair                  print a one-time code for a lab PC:  mhp node <dir> --join <this url> <code>
-    mhp gateway add-agent <name>      let one agent machine through; prints what to paste there
+    mhp gateway pair-agent [name]     print a one-time code for an agent machine:  mhp agent --join <this url> <code>
+    mhp gateway add-agent <name>      let one agent machine through by hand; prints the token to paste there
     mhp gateway status | check        what is connected, and what to fix
 
-Agent face (bearer = agent token):  GET /    GET /<node>/<device>/mhp.json    POST /<node>/<device>/rpc
+Agent face (bearer = agent token):  POST /agent/join (code, no token)    GET /    GET /<node>/<device>/mhp.json    POST /<node>/<device>/rpc
                                     GET /<node>/<device>/events (SSE)         /directory/{rpc,mhp.json}
 Node face  (bearer = node token):   POST /relay/join  POST /relay/register  GET /relay/next (long poll)
                                     POST /relay/reply  POST /relay/events
@@ -47,7 +48,8 @@ STATE = GW_DIR / "gateway.json"
 OFFLINE_S = 45            # no /relay/next from a node for this long: offline
 POLL_S = 25               # how long /relay/next may wait before answering empty
 REQUEST_TIMEOUT_S = 120   # default wait for a node's reply; X-MHP-Timeout raises it
-CODE_TTL_S = 15 * 60
+CODE_TTL_S = 15 * 60                  # a lab PC code: typed within minutes by the person at the bench
+AGENT_CODE_TTL_S = 60 * 60            # an agent code: sent in chat, redeemed when the person gets to it
 
 
 def say(*lines: str) -> None:
@@ -118,6 +120,10 @@ def new_code() -> str:
     a = secrets.token_hex(2)
     b = secrets.token_hex(2)
     return f"{a}-{b}"
+
+
+AGENT_401 = ("unknown agent token; pair this machine with a code from `mhp gateway pair-agent`:  "
+             "mhp agent --join <gateway url> <code>")
 
 
 # ---- the server --------------------------------------------------------------------------------
@@ -203,7 +209,7 @@ class Gateway:
         for c in list(codes):
             if codes[c]["expires"] < time.time():
                 del codes[c]
-        if code not in codes:
+        if code not in codes or codes[code].get("kind", "node") != "node":
             self.persist()
             return 403, {"error": "unknown or expired pairing code"}
         del codes[code]
@@ -225,6 +231,28 @@ class Gateway:
         self.persist()
         self._index_tokens()
         return 200, {"node_token": token, "name": name}
+
+    def join_agent(self, body: dict) -> tuple[int, dict]:
+        """`mhp agent --join`: a single-use code from `mhp gateway pair-agent` becomes this machine's agent token.
+        A machine pairing again takes its name back and the old token stops working, as a lab PC does."""
+        self.refresh()
+        code = (body.get("code") or "").strip().lower()
+        codes = self.state.setdefault("codes", {})
+        for c in list(codes):
+            if codes[c]["expires"] < time.time():
+                del codes[c]
+        if code not in codes or codes[code].get("kind") != "agent":
+            self.persist()
+            return 403, {"error": "unknown or expired agent code"}
+        preset = codes.pop(code).get("name")
+        name = re.sub(r"[^A-Za-z0-9._-]", "-", preset or body.get("name") or "agent") or "agent"
+        agents = self.state.setdefault("agents", {})
+        for t in [t for t, n in agents.items() if n == name]:
+            del agents[t]
+        token = secrets.token_urlsafe(24)
+        agents[token] = name
+        self.persist()
+        return 200, {"agent_token": token, "name": name, "directory": agent_url(self.state, "directory")}
 
     def register(self, node: Node, body: dict) -> None:
         node.last_poll = time.time()              # registering counts as alive until the first poll arrives
@@ -359,10 +387,12 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
                     gw.events(node, self._body())
                     return self._json(200, {"ok": True})
                 return self._json(404, {"error": "relay: join | register | reply | events"})
+            if parts == ["agent", "join"]:                 # no token yet: the code is the credential
+                return self._json(*gw.join_agent(self._body()))
             # ---- agent face ----
             agent = gw.agent_for(self._auth())
             if agent is None:
-                return self._json(401, {"error": "unknown agent token; the gateway operator issues one with `mhp gateway add-agent`"})
+                return self._json(401, {"error": AGENT_401})
             if parts == ["directory", "rpc"]:
                 from .transport import dispatch
                 msg = self._body()
@@ -388,7 +418,7 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
                 return self._json(200, gw.status_doc())
             agent = gw.agent_for(self._auth())
             if agent is None:
-                return self._json(401, {"error": "unknown agent token; the gateway operator issues one with `mhp gateway add-agent`"})
+                return self._json(401, {"error": AGENT_401})
             if not parts:
                 return self._json(200, {"mhp_gateway": gw.state["server_name"], "directory": agent_url(gw.state, "directory"),
                                         "devices": sorted(f"{n}/{d}" for n, node in gw.nodes.items() for d in node.devices)})
@@ -475,7 +505,7 @@ def serve(host: str | None = None, port: int | None = None) -> int:
         return 1
     say(f"MHP gateway '{state['server_name']}' listening on https://{host}:{port}",
         f"  lab PCs join with:   mhp node <devices folder> --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair`>",
-        f"  agents use:          mhp-mcp --directory {agent_url(state, 'directory')}", "  Ctrl-C to stop")
+        f"  agent machines join: mhp agent --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair-agent`>", "  Ctrl-C to stop")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -512,11 +542,11 @@ def init(*, server_name: str | None = None, listen: int | None = None, cert: str
     say("", f"gateway '{name}' on port {port}. Settings: {STATE}",
         f"certificate: {'self-signed' if self_made else 'from IT'}, fingerprint {fingerprint_of(str(crt))}")
     if self_made:
-        say("  lab PCs pin this certificate when they join; agent machines need a copy of it as SSL_CERT_FILE.",
+        say("  lab PCs and agent machines pin this certificate when they join; nothing to copy by hand.",
             "  (when IT gives you a real certificate:  mhp gateway init --cert <file.crt> --key <file.key>)")
     say("", "Next:", "  1. mhp gateway serve            (add --install-service to keep it running across reboots)",
         "  2. mhp gateway pair             then run the printed line on each lab PC",
-        "  3. mhp gateway add-agent <name> for every machine that runs an AI agent",
+        "  3. mhp gateway pair-agent       then send the code to the person whose machine runs an AI agent",
         f"  4. the only network requirement: lab PCs and agent machines must reach {name}:{port} (over the office network or the VPN).",
         "     The gateway listens on that address only. Nothing inbound to the lab.")
     return 0
@@ -534,6 +564,25 @@ def pair() -> int:
         f"  mhp node <devices folder> --join {agent_url(state).rstrip('/')} {code}", "",
         f"It will show the gateway certificate fingerprint {fingerprint_of(state['cert'])}; stop if it differs.",
         "From then on `mhp node <devices folder>` connects by itself.")
+    return 0
+
+
+def pair_agent(name: str | None = None) -> int:
+    state = load()
+    if state is None:
+        say("no gateway on this machine yet. Run `mhp gateway init` first.")
+        return 1
+    code = new_code()
+    entry = {"expires": time.time() + AGENT_CODE_TTL_S, "kind": "agent"}
+    if name:
+        entry["name"] = re.sub(r"[^A-Za-z0-9._-]", "-", name)
+    state.setdefault("codes", {})[code] = entry
+    save(state)
+    say(f"agent code (1 hour, one machine{', named ' + entry['name'] if name else ''}):  {code}", "",
+        "Send it to the person. On their machine, once:", "",
+        f"  mhp agent --join {agent_url(state).rstrip('/')} {code}", "",
+        f"It will show the gateway certificate fingerprint {fingerprint_of(state['cert'])}; they should stop if it differs.",
+        "From then on `mhp-mcp` on that machine reaches every instrument behind this gateway. Nothing to paste.")
     return 0
 
 
@@ -613,7 +662,7 @@ def status() -> int:
         say(f"lab PC '{name}': {flag}")
         for did, d in sorted(n.get("devices", {}).items()):
             say(f"    {d['url']:62s} {d.get('state') or ''}")
-    say("", "agents allowed through: " + (", ".join(sorted(set(state["agents"].values()))) or "none yet (mhp gateway add-agent <name>)"))
+    say("", "agents allowed through: " + (", ".join(sorted(set(state["agents"].values()))) or "none yet (mhp gateway pair-agent)"))
     say("", f"network requirement: lab PCs and agent machines must reach {state['server_name']}:{state.get('listen', 443)}. Nothing inbound to the lab.")
     return 0
 
@@ -646,7 +695,7 @@ def check() -> int:
             else:
                 fix(f"lab PC '{name}' is not connected", f"on that PC, is `mhp node` running? It reconnects by itself; its window says why it cannot.")
     if not state["agents"]:
-        fix("no agent is allowed through", "mhp gateway add-agent <name>")
+        fix("no agent is allowed through", "mhp gateway pair-agent, then `mhp agent --join ...` on the agent machine")
     elif live is not None:
         tok = next(iter(state["agents"]))
         ctx = ssl.create_default_context(cafile=state["cert"]) if state.get("self_signed") else ssl.create_default_context()
@@ -686,6 +735,8 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
         return serve(host, listen)
     if verb == "pair":
         return pair()
+    if verb == "pair-agent":
+        return pair_agent(args[0] if args else None)
     if verb == "add-agent":
         if not args:
             say("usage: mhp gateway add-agent <name of the agent machine>")
@@ -698,5 +749,5 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
         return remove(verb.split("-")[1], args[0])
     if verb == "check":
         return check()
-    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, add-agent, remove-agent, remove-node, status, check")
+    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check")
     return 2

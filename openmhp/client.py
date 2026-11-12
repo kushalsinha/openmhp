@@ -328,17 +328,19 @@ class LocalDevice(Device):
 def _device_token(url: str, given: str | None) -> str | None:
     """The bearer token to present to a device server (SPEC 9.1).
 
-    An explicit one wins; then OPENMHP_DEVICE_TOKEN, which the operator set for this process; then
-    the token file, but only for a device on this machine, because that file is our own server's
-    secret and is not volunteered to a host that did not issue it.
+    An explicit one wins; then the agent token this machine got from `mhp agent --join`, for URLs on
+    that gateway only; then OPENMHP_DEVICE_TOKEN, which the operator set for this process; then the
+    token file, but only for a device on this machine, because that file is our own server's secret
+    and is not volunteered to a host that did not issue it.
     """
     if given is not None:
         return given or None
     import os
     from urllib.parse import urlsplit
 
+    from .agent import access
     from .transport import device_token, is_loopback
-    return os.environ.get("OPENMHP_DEVICE_TOKEN") or (
+    return access(url)[0] or os.environ.get("OPENMHP_DEVICE_TOKEN") or (
         device_token() if is_loopback(urlsplit(url).hostname or "") else None)
 
 
@@ -347,6 +349,8 @@ class HttpDevice(Device):
                  token: str | None = None, **kw):
         self.url = url.rstrip("/")
         self.token = _device_token(self.url, token)
+        from .agent import access
+        self._ctx = access(self.url)[1]          # the pinned gateway certificate, when this URL is on the joined gateway
         super().__init__(name, session=kw.pop("session", None) or client_id, **kw)
 
     def _headers(self) -> dict:
@@ -360,7 +364,7 @@ class HttpDevice(Device):
             self.url + "/rpc", data=json.dumps(msg).encode(),
             headers={"Content-Type": "application/json", **self._headers()})
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=self._ctx) as r:
                 return json.loads(r.read())
         except urllib.error.HTTPError as e:
             if e.code == 401:
@@ -388,7 +392,7 @@ class HttpDevice(Device):
             while not stop.is_set():
                 try:
                     req = urllib.request.Request(self.url + "/events", headers=self._headers())
-                    resp = urllib.request.urlopen(req, timeout=60)     # the server keeps alive every 15 s
+                    resp = urllib.request.urlopen(req, timeout=60, context=self._ctx)     # the server keeps alive every 15 s
                     self._sse_resp = resp
                     backoff = 0.5
                     for raw in resp:

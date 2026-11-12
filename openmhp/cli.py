@@ -37,7 +37,7 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", help="lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("target", help="lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
@@ -54,11 +54,11 @@ def main(argv=None):
     ap.add_argument("--service-status", action="store_true", help="(node) is a service installed, and is it running")
     ap.add_argument("--dry-run-service", action="store_true", help="(node --install-service) print what would be written and run, but do neither")
     ap.add_argument("--check", action="store_true", help="(node) check the packages and ports and say what to fix, without serving")
-    ap.add_argument("--name", help="(gateway init) the address lab PCs and agents will use for the gateway; (node --join) this PC's name at the gateway")
+    ap.add_argument("--name", help="(gateway init) the address lab PCs and agents will use for the gateway; (node|agent --join) this machine's name at the gateway")
     ap.add_argument("--listen", type=int, metavar="PORT", help="(gateway init|serve) TLS port, default 443")
     ap.add_argument("--cert", metavar="FILE", help="(gateway init) TLS certificate from IT; a self-signed one is made otherwise")
     ap.add_argument("--key", metavar="FILE", help="(gateway init) private key for --cert")
-    ap.add_argument("--join", nargs=2, metavar=("GATEWAY_URL", "CODE"), help="(node) pair this PC with a gateway once, using a code from `mhp gateway pair` there; later runs connect by themselves")
+    ap.add_argument("--join", nargs=2, metavar=("GATEWAY_URL", "CODE"), help="(node|agent) pair this machine with a gateway once, using a code from `mhp gateway pair` (node) or `mhp gateway pair-agent` (agent) there; later runs connect by themselves")
     ap.add_argument("--no-relay", action="store_true", help="(node) serve locally only, even if this PC has joined a gateway")
     ap.add_argument("--no-setup", action="store_true", help="(node add) only put the package on this PC; print the remaining steps instead of asking")
     ap.add_argument("--yes", action="store_true", help="(node add|setup) ask nothing: take defaults and --set values, say what is still missing")
@@ -79,7 +79,11 @@ def main(argv=None):
         return serve_http(drv, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
             else serve_stdio(drv)
 
-    if a.target == "gateway":               # mhp gateway init | serve | pair | add-agent <name> | check | status
+    if a.target == "agent":                 # mhp agent --join <gateway url> <code> | status | leave
+        from . import agent
+        return agent.main(a.verb, a.args, join_args=a.join, name=a.name)
+
+    if a.target == "gateway":               # mhp gateway init | serve | pair | pair-agent | add-agent <name> | check | status
         from . import gateway
         return gateway.main(a.verb, a.args, server_name=a.name, listen=a.listen, cert=a.cert, key=a.key, host=a.host,
                             install_service=a.install_service, dry_run_service=a.dry_run_service)
