@@ -277,8 +277,19 @@ one to a lab with `mhp lab add github:kushalsinha/openmhp/supported-devices/<nam
 [list](supported-devices/README.md) says, per device, whether the driver has been run on real
 hardware or only against its twin, and carries a self-assessed score against the twelve
 device-level criteria of Gottstein et al.'s autonomous-ready procurement profile (`mhp rubric
-<folder>` shows the evidence). Packages are grouped by category: pharma small molecule, pharma
-biologics, chemistry, biology, physics, engineering. Three declarative drivers cover most bench
+<folder>` shows the evidence). The full table with scores and setup routes is on
+[openmhp.com/instruments](https://openmhp.com/instruments); in brief:
+
+| Field | Packages | Instruments |
+|---|---|---|
+| Pharma, small molecule | 16 | HPLC/UPLC under Empower, OpenLab CDS and Chromeleon; EasyMax/OptiMax reactor; Karl Fischer titrator; 708-DS dissolution; Rotavapor R-300; Crystal16; Vapourtec R-Series; DSC/TGA under TRIOS; Bruker NMR (ICON-NMR); D8 PXRD; Cary UV-Vis/FTIR; LyoStar freeze dryer; Mettler Toledo and Sartorius balances |
+| Pharma, biologics | 14 | Biostat bioreactor; ÄKTA avant; CLARIOstar/PHERAstar, SpectraMax and Spark plate readers; Hamilton STAR; Vi-CELL BLU; Octet BLI; Zetasizer DLS; Maurice CE; QuantStudio qPCR; Cytek Aurora cytometer; Innova shaker; Heracell CO2 incubator; Sigma centrifuge; BINDER stability chamber |
+| Chemistry | 13 | IKA C-MAG and EUROSTAR; JULABO circulators; BioLogic SP-300 and PalmSens potentiostats; Ocean Insight and Wasatch/Blaze spectrometers; SRI 8610C GC; Orbitrap (IAPI); LC-MS worklists for MassLynx, SCIEX OS, MassHunter, Xcalibur; Elveflow OB1 and MUX; FloPro sampler |
+| Biology | 7 | Opentrons Flex and OT-2; Micro-Manager microscopes; New Era and Tecan Cavro syringe pumps; Atlas Scientific EZO sensors; benchtop centrifuge (operator-run) |
+| Physics | 6 | Keithley 2400 SMU; Lake Shore 33x/350; Pfeiffer TPG gauges; SRS SR830 lock-in; SRS RGA; Thorlabs PM100D |
+| Engineering | 5 | Alicat flow controllers; LabJack T-series; NI-DAQmx; Rigol DP8xx supply; Rigol DS1000Z scope |
+
+Three declarative drivers cover most bench
 instruments with no package code at all: `serial_ascii` (text commands over USB or RS-232),
 `scpi_visa` (SCPI over VISA, a raw socket or serial) and `modbus` (TCP or RTU registers); the
 command map lives in `descriptor.yaml`. Every instrument that is not operator-run also answers
