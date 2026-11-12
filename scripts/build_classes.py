@@ -132,7 +132,7 @@ def resolve(ref: str) -> dict | None:
     if ref.startswith("AFE_"):
         d = _get(f"https://api.terminology.tib.eu/api/search?q={ref}&ontology=afo&rows=5")
         for x in d.get("response", {}).get("docs", []):
-            if x.get("short_form") == ref and str(x.get("iri", "")).startswith("http://purl.allotrope.org"):
+            if x.get("short_form") == ref and urllib.parse.urlparse(str(x.get("iri", ""))).netloc == "purl.allotrope.org":
                 return {"label": x.get("label"), "definition": (x.get("description") or [None])[0], "iri": x["iri"],
                         "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"}
         return None
