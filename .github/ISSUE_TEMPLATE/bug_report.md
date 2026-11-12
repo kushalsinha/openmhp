@@ -20,7 +20,7 @@ Steps, plus, if relevant, the device package (descriptor.yaml/DEVICE.md) or scri
 
 **Environment**
 
-- OpenMHP version (openmhp-cli / openmhp / openmhp-node): 
+- OpenMHP version (openmhp-cli / openmhp): 
 - OS: 
 - Python version: 
 - Node version: 

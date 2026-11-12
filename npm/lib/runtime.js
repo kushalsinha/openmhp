@@ -1,6 +1,6 @@
-/* Shared by openmhp-cli and openmhp-node: find or install a Python 3.10+ runtime in an
- * isolated venv under ~/.openmhp, and run the `mhp`/`mhp-mcp` it installs. Neither launcher
- * does any of the actual work itself -- this just makes sure the Python package exists.
+/* Used by openmhp-cli: find or install a Python 3.10+ runtime in an isolated venv under
+ * ~/.openmhp, and run the `mhp`/`mhp-mcp` it installs. The launcher does none of the actual
+ * work itself -- this just makes sure the Python package exists.
  */
 "use strict";
 const { spawnSync, spawn } = require("child_process");
