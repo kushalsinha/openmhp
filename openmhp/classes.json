@@ -1,0 +1,713 @@
+{
+ "thermal_cycler": {
+  "ref": "OBI:0400116",
+  "match": "exact",
+  "aliases": [
+   "thermocycler"
+  ],
+  "conventions": "`lid_closed` interlock on the run action; `robot_access_ready`; a run action that is `cancellable`",
+  "label": "thermal cycler",
+  "definition": "An instrument that is capable of repeatedly altering and maintaining specific temperatures for defined periods of time.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0400116",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "liquid_handler": {
+  "ref": "OBI:0400112",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "`robot_access_ready`; positions named as the vendor names them in `notes`",
+  "label": "liquid handler",
+  "definition": "A device that is used for automated liquid transfer and handling.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0400112",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "robot_arm": {
+  "ref": "NCIT:C20678",
+  "match": "broader",
+  "aliases": [],
+  "conventions": "a `locations` map; `robot_access_ready` on anything it serves",
+  "label": "Robot",
+  "definition": "A mechanical device that sometimes resembles a living animal and is capable of performing a variety of often complex human tasks on command or by being programmed in advance.",
+  "iri": "http://purl.obolibrary.org/obo/NCIT_C20678",
+  "source": "NCI Thesaurus (NCIT), public domain"
+ },
+ "stage": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "a `locations` map; `robot_access_ready` on anything it serves",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "microscope": {
+  "ref": "AFE_0000825",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "an `acquire` action returning an image URI in `returns`",
+  "label": "microscope",
+  "definition": "A microscope is a device which is used to visually magnify a specimen. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000825",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "electron_microscope": {
+  "ref": "CHMO:0001088",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "`vacuum_ready`, `beam_on`, `stage_position` signals; `load_sample` with `robot_access_ready` and `physical.automated_load`; `acquire_image` whose `returns` names the file and magnification; e-stop turns the beam off",
+  "label": "electron microscope",
+  "definition": "A piece of apparatus which is used to produce an enlarged image of a specimen using a finely focused (<10 nm diameter) electron beam with an acceleration voltage of 50–150 kV under vacuum and measuring the interaction of the electrons with the specimen.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0001088",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "camera": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "an `acquire` action returning an image URI in `returns`",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "sampler": {
+  "ref": "AFE_0001711",
+  "match": "exact",
+  "aliases": [
+   "autosampler"
+  ],
+  "conventions": "`robot_access_ready`; positions named as the vendor names them in `notes`",
+  "label": "sampler",
+  "definition": "A sample is a device that function to sample known amounts of material. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0001711",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "chromatograph": {
+  "ref": "AFE_0000392",
+  "match": "exact",
+  "aliases": [
+   "gc",
+   "hplc"
+  ],
+  "conventions": "one method-driven run action (`methods: true`, SPEC 4.5) whose `returns` names the result file or table; `usage_count` counts injections",
+  "label": "chromatograph",
+  "definition": "A piece of apparatus, consisting of a mobile phase supply system, an injection or sampling system, a column, detector and a data acquisition/processing system, that is used to carry out chromatographic separations. [CHMO]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000392",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "mass_spectrometer": {
+  "ref": "AFE_0000648",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "one method-driven run action whose `returns` names the result file; `usage_count` counts scans or runs",
+  "label": "mass spectrometer",
+  "definition": "A mass spectrometer is a measurement device that measures the m/z values and abundances of gas-phase ions. [IUPAC]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000648",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "nuclear_magnetic_resonance_spectrometer": {
+  "ref": "AFE_0002280",
+  "match": "exact",
+  "aliases": [
+   "nmr",
+   "nmr_spectrometer"
+  ],
+  "conventions": "one method-driven run action whose `returns` names the result folder; `usage_count` counts experiments",
+  "label": "nuclear magnetic resonance spectrometer",
+  "definition": "A nuclear magnetic resonance spectrometer is a measurement device used to conduct NMR experiments consisting of a magnet housing a sample space surrounded by two coils which act to transmit radio frequency radiation to the sample and to detect the response of the sample. [CHMO]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0002280",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "diffractometer": {
+  "ref": "CHMO:0000950",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "one method-driven scan action whose `returns` names the pattern file; `usage_count` counts scans",
+  "label": "diffractometer",
+  "definition": "A piece of apparatus which illuminates a sample with X-rays, electrons or neutrons and measures the diffraction pattern produced. It typically will contain at least one monochromator to ensure the incident radiation is of a specific energy, a goniometer which allows the geometry of the sample and detector to be precisely specified, and a detector.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0000950",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "thermal_analyzer": {
+  "ref": "AFE_0000733",
+  "match": "narrower",
+  "aliases": [],
+  "conventions": "one method-driven run action (DSC, TGA) whose `returns` names the result file; `usage_count` counts runs",
+  "label": "differential scanning calorimeter",
+  "definition": "A device that is used to measure the heat of chemical reactions or physical changes for both a sample and a reference. [CHMO]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000733",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "microplate_reader": {
+  "ref": "OBI:0001058",
+  "match": "exact",
+  "aliases": [
+   "plate_reader"
+  ],
+  "conventions": "one protocol-driven read action whose `returns` names the result table; `robot_access_ready` when the tray is out",
+  "label": "microplate reader",
+  "definition": "A measurement device that detects biological, chemical or physical events of samples in microtiter plates.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0001058",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "dissolution_tester": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "a run action with typed media, speed and sampling times and `returns` naming the sample table; `usage_count` counts runs",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "capillary_electrophoresis_instrument": {
+  "ref": "OBI:0001132",
+  "match": "exact",
+  "aliases": [
+   "electrophoresis"
+  ],
+  "conventions": "one method-driven run action whose `returns` names the result file; `usage_count` counts injections",
+  "label": "capillary electrophoresis instrument",
+  "definition": "An electrophoresis system that is used to separate ionic species by their charge and frictional forces and mass.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0001132",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "real_time_pcr_machine": {
+  "ref": "OBI:0001110",
+  "match": "exact",
+  "aliases": [
+   "qpcr"
+  ],
+  "conventions": "one plate-run action whose `returns` names the result export; `lid_closed` interlock; `usage_count` counts runs",
+  "label": "real-time PCR machine",
+  "definition": "An PCR instrument that enables both detection and quantification of one or more specific sequences in a DNA sample.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0001110",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "flow_cytometer": {
+  "ref": "CHMO:0001957",
+  "match": "exact",
+  "aliases": [
+   "cytometer"
+  ],
+  "conventions": "one acquisition action whose `returns` names the FCS files; `usage_count` counts tubes or wells",
+  "label": "flow cytometer",
+  "definition": "A piece of apparatus, consisting of a flow cell, a laser and a detector, which detects the fluorescence and light scattering of individual particles (e.g. cells).",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0001957",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "spectrometer": {
+  "ref": "AFE_0000857",
+  "match": "exact",
+  "aliases": [
+   "spectrophotometer"
+  ],
+  "conventions": "an `acquire` action with typed integration time whose `returns` carries the spectrum or names its file",
+  "label": "spectrometer",
+  "definition": "A piece of apparatus used to measure a spectrum. [CHMO]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000857",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "particle_analyzer": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "measurements as signals with units; a `measure` action whose `returns` carries the size distribution summary",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "biosensor": {
+  "ref": "CHMO:0002795",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "measurements as signals with units; `out_of_spec` from the instrument's self-check where it has one",
+  "label": "biosensor",
+  "definition": "A chemosensor that recognises the analyte under study by interaction with a given biological system.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0002795",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "cell_counter": {
+  "ref": "AFE_0000524",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "measurements as signals with units; a `count` action whose `returns` carries concentration and viability",
+  "label": "cell counter",
+  "definition": "A device used to count the number of cells present in known volume of sample to determine the overall concentration cells per unit volume. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000524",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "profilometer": {
+  "ref": "CHMO:0001994",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "a `scan` action with typed length and force whose `returns` names the profile file and the step height",
+  "label": "profilometer",
+  "definition": "A piece of apparatus that measures surface profiles by dragging a (diamond) stylus across the sample surface. A feedback loop is used to maintain a fixed relationship between the stylus and surface during scanning.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0001994",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "surface_analyzer": {
+  "ref": "CHMO:0002648",
+  "match": "narrower",
+  "aliases": [],
+  "conventions": "a method-driven acquisition whose `returns` names the spectrum or image; vacuum readiness as a signal and interlock",
+  "label": "X-ray photoelectron spectrometer",
+  "definition": "A piece of apparatus, consisting of an X-ray source, an analyser and a detector, which is used to measure the photoelectron emission of samples bombarded with X-rays.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0002648",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "rheometer": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "measured and setpoint temperature as separate signals; a method-driven run action whose `returns` names the result file; `lid_closed` interlock",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "mechanical_tester": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "`load`, `extension` and `crosshead_state` signals; `run_test` with typed rate and limits whose `returns` carries peak load and modulus; e-stop halts the crosshead; `hardware_stop: true`",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "balance": {
+  "ref": "AFE_0000693",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "`weigh` returning `{mass, unit, stable}`; `tare`; `calibration_status` from the instrument's own log where it has one",
+  "label": "balance",
+  "definition": "A balance is a weighing device, intended predominantly for medium to low capacity weighments, with moderate to high resolutions, mostly used indoors. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000693",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "dispenser": {
+  "ref": "NCIT:C69095",
+  "match": "broader",
+  "aliases": [
+   "powder_dispenser"
+  ],
+  "conventions": "a `dose` action with typed target mass and tolerance whose `returns` carries the dispensed mass; `calibration_status` from the balance",
+  "label": "Dispenser",
+  "definition": "A container designed to give out the contents in convenient or/and prescribed amounts.",
+  "iri": "http://purl.obolibrary.org/obo/NCIT_C69095",
+  "source": "NCI Thesaurus (NCIT), public domain"
+ },
+ "pump": {
+  "ref": "AFE_0000499",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "`flow`/`pressure` signals in UCUM; a `stop` that zeroes the setpoint; `estop: true`",
+  "label": "pump",
+  "definition": "A pump is a device that is used to pump. [CHMO]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000499",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "mass_flow_controller": {
+  "ref": "AFE_0001671",
+  "match": "exact",
+  "aliases": [
+   "flow_controller"
+  ],
+  "conventions": "`flow`/`pressure` signals in UCUM; a `stop` that zeroes the setpoint; `estop: true`",
+  "label": "mass flow controller",
+  "definition": "A mass flow controller is a device that determines the mixture of different materials. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0001671",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "valve": {
+  "ref": "AFE_0000795",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "position as a setting with the vendor's names; `estop` leaves the valve where it is unless `safety.notes` says otherwise",
+  "label": "valve",
+  "definition": "A valve is a plumbing equipment that regulates, directs or controls the flow of a fluid (gases, liquids, fluidized solids, or slurries) by opening, closing, or partially obstructing various passageways. [Wikipedia]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000795",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "titrator": {
+  "ref": "AFE_0000876",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "one method-driven titration whose `returns` carries the result and its unit; `usage_count` counts titrations",
+  "label": "titrator",
+  "definition": "A titrator is a device that automates titrations. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000876",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "hotplate": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "the measured value and the setpoint as separate signals; `estop` turns heating and stirring off",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "stirrer": {
+  "ref": "AFE_0000812",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "the measured value and the setpoint as separate signals; `estop` stops the motor",
+  "label": "stirrer",
+  "definition": "A stirrer is a mixing device used for stirring something. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000812",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "circulator": {
+  "ref": "OBI:0400155",
+  "match": "broader",
+  "aliases": [
+   "water_bath"
+  ],
+  "conventions": "the measured value and the setpoint as separate signals; `circulating` as a signal",
+  "label": "water bath",
+  "definition": "A water bath is a temperature control bath in which a water acts as contact medium enabling temperature transfer from the heating element or cooling element to the sample. The temperature can be controlled in the 0 to 100 degree centigrade range (under normal pressure).",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0400155",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "temperature_controller": {
+  "ref": "AFE_0000528",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "the measured value and the setpoint as separate signals per loop",
+  "label": "temperature controller",
+  "definition": "A device used to control the temperature in a compartment. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000528",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "incubator": {
+  "ref": "OBI:0000136",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "the measured value and the setpoint as separate signals; `door_closed` as a signal and an interlock; `robot_access_ready` where a handling system loads it",
+  "label": "incubator",
+  "definition": "A device in which environmental conditions (light, photoperiod, temperature, humidity, etc.) can be controlled",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0000136",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "oven": {
+  "ref": "AFE_0000816",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "the measured value and the setpoint as separate signals; `door_closed` as a signal and an interlock",
+  "label": "oven",
+  "definition": "An oven is a device for heating an enclosed space. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000816",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "furnace": {
+  "ref": "NCIT:C49965",
+  "match": "exact",
+  "aliases": [
+   "tube_furnace",
+   "muffle_furnace"
+  ],
+  "conventions": "`temperature` and `temperature_setpoint` separate; `program_running` and `segment` signals; `run_program` with typed `segments` (target, ramp, dwell) and `returns`; `door_closed` interlock; watchdog `release`, because an abort mid-sinter is the damage",
+  "label": "Furnace Device",
+  "definition": "An enclosed chamber designed to produce heat.",
+  "iri": "http://purl.obolibrary.org/obo/NCIT_C49965",
+  "source": "NCI Thesaurus (NCIT), public domain"
+ },
+ "environmental_chamber": {
+  "ref": null,
+  "match": null,
+  "aliases": [
+   "stability_chamber",
+   "climate_chamber"
+  ],
+  "conventions": "temperature and humidity measured and setpoint as separate signals; `door_closed` as a signal and an interlock",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "glovebox": {
+  "ref": null,
+  "match": null,
+  "aliases": [
+   "glove_box"
+  ],
+  "conventions": "`o2_ppm`, `h2o_ppm`, `box_pressure` signals; `antechamber_state` enum; `antechamber_cycle` with a typed purge count; inner and outer door actions interlocked on each other; `robot_access_ready` only when the inner door is open and the box is still",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "shaker": {
+  "ref": "OBI:0001076",
+  "match": "narrower",
+  "aliases": [
+   "incubator_shaker"
+  ],
+  "conventions": "the measured value and the setpoint as separate signals; `lid_closed` interlock; `robot_access_ready` where a handling system loads it",
+  "label": "incubator shaker",
+  "definition": "An incubating device that provides shaking motion for biomedical applications (e.g., cell cultures).",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0001076",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "centrifuge": {
+  "ref": "OBI:0400106",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "`lid_closed` interlock on the run action; `robot_access_ready`; a run action that is `cancellable`",
+  "label": "centrifuge",
+  "definition": "A device with a rapidly rotating container that applies centrifugal force to its contents",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0400106",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "lyophilizer": {
+  "ref": "OBI:0001087",
+  "match": "exact",
+  "aliases": [
+   "freeze_dryer"
+  ],
+  "conventions": "`lid_closed`/`door_closed` interlock on the run action; a recipe-driven run that is `cancellable`; watchdog `release`",
+  "label": "lyophilizer",
+  "definition": "A device that is used to freeze dry material.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0001087",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "rotary_evaporator": {
+  "ref": "CHMO:0002199",
+  "match": "exact",
+  "aliases": [
+   "evaporator",
+   "rotavap"
+  ],
+  "conventions": "bath temperature, rotation and vacuum each as measured and setpoint; `lid_closed`-style interlock on lowering the flask; a run that is `cancellable`",
+  "label": "rotary evaporator",
+  "definition": "A piece of apparatus consisting of a motor unit that rotates the evaporation flask, a vacuum system, a heated water bath and a condenser, which is used to remove solvents from samples under reduced pressure.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0002199",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "reactor": {
+  "ref": "AFE_0000153",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "the measured value and the setpoint as separate signals; `door_closed`/`lid_closed` as a signal and an interlock where there is one; a recipe-driven run with `returns`",
+  "label": "reactor",
+  "definition": "A reactor is a container for controlling a biological or chemical reaction or process. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000153",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "bioreactor": {
+  "ref": "OBI:0001046",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "the measured value and the setpoint as separate signals per loop; a recipe-driven run with `returns`; `robot_access_ready` where a sampler meets it",
+  "label": "bioreactor",
+  "definition": "A device or system that supports a biologically active environment.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0001046",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "cryostat": {
+  "ref": "OBI:0001072",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "temperature and field measured and setpoint as separate signals; `chamber_state` enum; watchdog `release`",
+  "label": "cryostat",
+  "definition": "A device consisting of a vessel, similar in construction to a vacuum flask, that is used to maintain cold cryogenic temperatures. FIX THIS DEFINITION",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0001072",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "spin_coater": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "a `run_recipe` action with typed steps (speed, acceleration, duration) and `returns`; `lid_closed` and `vacuum_ok` interlocks; `estop` stops the chuck",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "mill": {
+  "ref": null,
+  "match": null,
+  "aliases": [
+   "ball_mill"
+  ],
+  "conventions": "a `run` action with typed speed and duration and `returns`; `lid_closed` interlock; `estop` stops the drive",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "deposition_system": {
+  "ref": "CHMO:0002122",
+  "match": "narrower",
+  "aliases": [
+   "sputter_system",
+   "evaporation_system"
+  ],
+  "conventions": "`base_pressure`, `process_pressure`, `power`/`power_setpoint`, `shutter_open`, `substrate_temperature` signals; `deposit` with `returns` carrying the thickness estimate; `base_pressure_ok` and `door_closed` interlocks; `hardware_stop: true` where the tool has one",
+  "label": "sputter coater",
+  "definition": "A piece of apparatus, consisting of an anode (the specimen) a cathode (the source of sputter atoms or 'target') and a magnet, all held inside a vacuum chamber, which is used to coat specimens with a thin layer of atoms (e.g. Au) prior to microscopy.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0002122",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "3d_printer": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "a `print` action taking a file URI whose `returns` names the job; `door_closed` interlock; `estop` disables the heaters",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "cnc": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "a `run_program` action taking a file URI; `door_closed` interlock; `estop: true`",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "laser": {
+  "ref": "OBI:0400064",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "output enable as a boolean setting; `shutter_open` as a signal; `estop` closes the shutter and disables emission",
+  "label": "laser",
+  "definition": "A laser (acronym for light amplification by the stimulated emission of radiation) is a light source that emits photons of the same characteristics in a coherent beam. A laser uses a solid, liquid or gaseous lasing medium, that contains molecules, of which some atoms have electrons that emit photons of the same frequency when falling back to their normal orbital after excitation (pumping) by external means A laser is the most common way to irradiate a cell in a flow cytometer.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0400064",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "potentiostat": {
+  "ref": "CHMO:0002427",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "output enable as a boolean setting; `estop` disables every output; `returns` on acquisitions names the data file",
+  "label": "potentiostat",
+  "definition": "A device that maintains the potential through an electrochemical cell at a preset value.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0002427",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "battery_cycler": {
+  "ref": null,
+  "match": null,
+  "aliases": [
+   "battery_tester"
+  ],
+  "conventions": "a `channel` parameter on every action; `start_protocol` with typed steps (mode, current, voltage, time limits) and `returns` carrying cycle count and last capacity; `channel_state` signal; `estop` opens every channel",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "source_meter": {
+  "ref": null,
+  "match": null,
+  "aliases": [
+   "source_measure_unit"
+  ],
+  "conventions": "output enable as a boolean setting; `estop` disables every output; `returns` on sweeps names the data file",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "lock_in_amplifier": {
+  "ref": "CHMO:0002340",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "output enable as a boolean setting; `estop` disables every output; `returns` on acquisitions names the data file",
+  "label": "lock-in amplifier",
+  "definition": "An amplifier that can increase the power of a signal with a known carrier wave from an extremely noisy environment. A lock-in amplifier uses a frequency mixer to convert the signal's phase and amplitude into a DC voltage signal.",
+  "iri": "http://purl.obolibrary.org/obo/CHMO_0002340",
+  "source": "Chemical Methods Ontology (CHMO), CC-BY"
+ },
+ "oscilloscope": {
+  "ref": "OBI:0000948",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "an `acquire` action whose `returns` names the waveform file",
+  "label": "oscilloscope",
+  "definition": "A device that measures and displayes signal voltages, usually as a two-dimensional graph of one or more electrical potential differences (vertical axis) plotted as a function of time or of some other voltage (horizontal axis).",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0000948",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "power_supply": {
+  "ref": "OBI:0400142",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "output enable as a boolean setting; `estop` disables every output",
+  "label": "power supply",
+  "definition": "A power supply is an device or part of a device that permits the required application of a defined electrical charge to an instrument. The power supply may permit the defined application of a given amount of current for a defined length of time.",
+  "iri": "http://purl.obolibrary.org/obo/OBI_0400142",
+  "source": "Ontology for Biomedical Investigations (OBI), CC-BY"
+ },
+ "data_acquisition_device": {
+  "ref": "AFE_0000555",
+  "match": "exact",
+  "aliases": [
+   "daq"
+  ],
+  "conventions": "channels as signals with units; output enable as a boolean setting; `estop` disables every output",
+  "label": "data acquisition device",
+  "definition": "A device to acquire signals or data. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0000555",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "sensor": {
+  "ref": "AFE_0002184",
+  "match": "exact",
+  "aliases": [],
+  "conventions": "measurements as signals with units; `out_of_spec` from the instrument's self-check where it has one",
+  "label": "sensor",
+  "definition": "A sensor is a component of a measuring system that is directly affected by a phenomenon, body, or substance carrying a quantity to be measured. [Allotrope]",
+  "iri": "http://purl.allotrope.org/ontologies/equipment#AFE_0002184",
+  "source": "Allotrope Foundation Ontology (AFO) equipment, CC-BY"
+ },
+ "vacuum_gauge": {
+  "ref": null,
+  "match": null,
+  "aliases": [
+   "pressure_gauge"
+  ],
+  "conventions": "pressure as a signal in UCUM; `out_of_spec` from the gauge's self-check where it has one",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ },
+ "generic": {
+  "ref": null,
+  "match": null,
+  "aliases": [],
+  "conventions": "no convention; name the capabilities plainly and say in `notes` what the device is",
+  "label": null,
+  "definition": null,
+  "iri": null,
+  "source": null,
+  "propose_to": "no published term; propose to the Allotrope Foundation or OBI"
+ }
+}

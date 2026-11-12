@@ -1,0 +1,106 @@
+device:
+  notes: >
+    Ossila Spin Coater L2001A3 (120-6,000 rpm, 1-1,000 s steps, 10 programs of 50 steps) or L2001B1
+    (500-10,000 rpm, 1-3,600 s, 15 programs), a vacuum-free chuck under a lid with a software and
+    hardware interlock, 24 V DC, USB. TEMPLATE: Ossila publishes no command set for it; every command
+    here is a placeholder (references/serial.md). Confirm with Ossila before use.
+
+physical:
+  automated_load: false
+  notes: >
+    A 170 x 225 x 140 mm bench or glovebox unit with a hinged lid opened by hand; the substrate is
+    pushed into the chuck's edge holder by hand or by a glovebox robot when the lid is open and the
+    chuck still, which robot_access_ready reports. Nothing opens the lid for a robot, so
+    automated_load is false. No vacuum chuck and no dispense valves; the only hazard is the chuck at
+    up to 6,000 (10,000) rpm and the solvent in the bowl.
+
+signals:
+  - {name: speed_rpm, type: number, unit: "{rev}/min", notes: "Actual chuck speed (placeholder command ?RPM, unverified); 0 when stopped."}
+  - {name: lid_closed, type: boolean, notes: "Lid closed (placeholder ?LID, unverified). The unit's software and hardware interlock stops the chuck when the lid opens."}
+  - {name: running, type: boolean, notes: "A program is running (placeholder ?RUN, unverified)."}
+  - {name: program, type: integer, notes: "Selected program 1-10 (1-15 on the L2001B1); placeholder ?PRG, unverified."}
+  - {name: step, type: integer, notes: "Current step of the running program (placeholder ?STEP, unverified); 0 when idle."}
+  - {name: time_remaining, type: number, unit: s, notes: "Seconds left in the current step as the display shows them (placeholder ?TIME, unverified)."}
+  - {name: robot_access_ready, type: boolean, notes: True only when the lid is open and the chuck reads 0 rpm (derived by the driver from lid_closed and speed_rpm), so a glovebox robot may reach the chuck.}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a recipe job runs; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record, notes: valid, due, overdue or unknown, from calibration_due in the lab's config.json self_state record. The unit reports no speed calibration over the interface.}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next speed check (tachometer) is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: run_recipe jobs completed here (spins), from this device's job records unless the lab records its own count.}
+
+settings:
+  - name: program
+    type: integer
+    limits: {min: 1, max: 10}
+    approval: auto
+    notes: Program to select on the unit (placeholder PRG {value}, unverified); 1-10 on the L2001A3, 1-15 on the L2001B1 (raise the limit for one). run_recipe selects its own slot; this setting exists for start_program on a program edited at the display.
+
+actions:
+  - name: run_recipe
+    duration: long
+    approval: auto
+    interlocks: [lid_closed, connected]
+    cancellable: true
+    params:
+      slot: {type: integer, default: 10, limits: {min: 1, max: 10}, notes: Program the steps are written into before the run; 10 by default so programs edited at the display in low slots survive.}
+      steps:
+        type: array
+        items:
+          type: object
+          required: [speed_rpm, acceleration_rpm_s, duration_s]
+          properties:
+            speed_rpm: {type: number, unit: "{rev}/min", limits: {min: 0, max: 6000}, resolution: 1, notes: Step speed; 0 stops the chuck, otherwise 120-6,000 rpm on the L2001A3 (500-10,000 on the L2001B1, raise the limit for one). Set the limit to what the substrate survives.}
+            acceleration_rpm_s: {type: number, unit: "{rev}/min/s", limits: {min: 1, max: 2000}, resolution: 1, notes: Ramp rate to the step speed. 2,000 rpm/s is a placeholder cap for edge-held 25 mm substrates, not a published figure.}
+            duration_s: {type: number, unit: s, limits: {min: 1, max: 1000}, resolution: 1, notes: Time at the step speed; 1-1,000 s on the L2001A3 (1-3,600 on the L2001B1).}
+        notes: Up to 50 steps, the unit's program length; end with a 0 rpm step to stop the chuck.
+    required: [steps, slot]
+    examples:
+      - {steps: [{speed_rpm: 1000, acceleration_rpm_s: 500, duration_s: 10}, {speed_rpm: 4000, acceleration_rpm_s: 1000, duration_s: 30}, {speed_rpm: 0, acceleration_rpm_s: 1000, duration_s: 3}], slot: 10}
+    returns:
+      type: object
+      properties:
+        replies: {type: array, items: {type: string}, notes: The unit's reply to each command in order (one per step written, then the select and the start).}
+    notes: >
+      Writes each step into the slot (placeholder STEP <slot> <n> <rpm> <rpm/s> <s>, unverified),
+      selects the slot (PRG) and starts it (RUN). The job returns once the run is started; poll
+      running and speed_rpm. Refused unless the lid is closed, which the unit also enforces.
+      Cancelling before RUN starts nothing.
+  - {name: start_program, duration: short, approval: auto, interlocks: [lid_closed, connected], notes: Starts the selected program as stored (placeholder RUN, unverified), for programs edited at the display.}
+  - {name: stop, duration: short, approval: auto, interlocks: [connected], notes: Stops the run; the chuck decelerates (placeholder STOP, unverified). The same command e-stop sends.}
+  - {name: chuck_still_check, duration: short, approval: auto, interlocks: [connected], notes: "Reads the speed once (placeholder ?RPM) so a caller can log that the chuck was still before a hand or robot reaches in; the same reading feeds robot_access_ready."}
+
+safety:
+  estop: true
+  interlocks: [lid_closed, connected]
+  watchdog_s: 30
+  notes: >
+    E-stop sends STOP: the chuck decelerates, the same as the unit's lid interlock does. A
+    controller silent for 30 s while holding the lease gets the same stop, because a chuck left
+    spinning with solvent in the bowl is the hazard. The unit's own software and hardware lid
+    interlock acts regardless of this package. There is no vacuum to release and no dispense
+    valve. No physical stop button exists beyond the 24 V power connector.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 115200
+  eol: "\n"
+  read:
+    speed_rpm: "?RPM"
+    lid_closed: "?LID"
+    running: "?RUN"
+    program: "?PRG"
+    step: "?STEP"
+    time_remaining: "?TIME"
+  write:
+    program: "PRG {value}"
+  actions:
+    run_recipe: ["RUN"]
+    start_program: ["RUN"]
+    stop: ["STOP"]
+    chuck_still_check: ["?RPM"]
+  estop: ["STOP"]
+  booleans:
+    lid_closed: {true: ["LID 1"], false: ["LID 0"]}
+    running: {true: ["RUN 1"], false: ["RUN 0"]}

@@ -1,0 +1,10 @@
+{
+  "job_dir": "C:\\ProgramData\\Rigaku\\SmartLabStudioII\\Jobs\\openmhp",
+  "results_dir": "C:\\ProgramData\\Rigaku\\SmartLabStudioII\\Results\\openmhp",
+  "changer_positions": 10,
+  "changer_s": 90,
+  "max_points": 50000,
+  "max_scan_hours": 12,
+  "poll_s": 10,
+  "result_wait_s": 7200
+}

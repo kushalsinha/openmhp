@@ -92,6 +92,41 @@ mhp lab add github:kushalsinha/openmhp/supported-devices/<name>          # the r
 | [`srs-rga`](srs-rga) | Stanford Research Systems RGA100 / RGA200 / RGA300 | serial, SRS RGA ASCII commands at 28800 baud | any | twin tested | 24.0 / 26 |
 | [`thorlabs-power-meter`](thorlabs-power-meter) | Thorlabs PM100D optical power meter console (PM100A, PM100USB, PM400) | SCPI over USBTMC (pyvisa-py + pyusb) | any | twin tested | 23.0 / 26 |
 
+**Materials, synthesis and processing**
+
+| Package | Instrument | Talks through | Host | Status | Rubric |
+|---|---|---|---|---|---|
+| [`aja-sputter-system`](aja-sputter-system) | AJA International ATC Orion (Phase II control); Kurt J. Lesker PVD 75 and Moorfield nanoPVD via notes | Modbus TCP to the control PLC (placeholder map) | any | template | 26.0 / 28 |
+| [`eurotherm-tube-furnace`](eurotherm-tube-furnace) | Eurotherm (Carbolite Gero, MTI, Thermcraft furnaces) 2416 / 2404 / 2408 programmer-controllers (2400 series Modbus map); 3216 / 3508 / nanodac need their own map | Modbus RTU (EIA-485/232) or TCP gateway, HA026230 map | any | twin tested | 24.0 / 26 |
+| [`laurell-spin-coater`](laurell-spin-coater) | Laurell Technologies WS-650 and WS-400 series spin processors with the 650 controller (RS-232 / USB to Spin 3000) | RS-232/USB to the 650 controller (Spin 3000 port) | any | template | 26.0 / 28 |
+| [`mbraun-glovebox`](mbraun-glovebox) | MBRAUN LABstar / UNIlab / LABmaster / MB200 with the PLC Ethernet (Modbus TCP) option | Modbus TCP to the MBRAUN/Siemens PLC Ethernet option | any | template | 26.0 / 28 |
+| [`mettler-quantos-dosing`](mettler-quantos-dosing) | Mettler Toledo Quantos QB1 / QS30 and XPR automatic powder dosing (XPR/XSR balance with a dosing module) over MT-SICS | RS-232/USB, MT-SICS on the XPR/XSR balance | any | template | 24.0 / 26 |
+| [`nabertherm-furnace`](nabertherm-furnace) | Nabertherm B400 / B410 / C440 / C450 / P470 / P480 (and series 500) controllers with the Modbus TCP communication module | Modbus TCP port 502, Nabertherm communication module (M03.0021) | any | twin tested | 24.0 / 26 |
+| [`ossila-spin-coater`](ossila-spin-coater) | Ossila Spin Coater L2001A3 (120-6,000 rpm) and L2001B1 (500-10,000 rpm) | USB virtual COM port on the unit | any | template | 26.0 / 28 |
+| [`retsch-planetary-mill`](retsch-planetary-mill) | Retsch PM 100 / PM 200 / PM 400 (serial interface) | RS-232/RS-485 serial (placeholder commands) | any | template | 26.0 / 28 |
+
+**Materials, characterization**
+
+| Package | Instrument | Talks through | Host | Status | Rubric |
+|---|---|---|---|---|---|
+| [`anton-paar-rheometer`](anton-paar-rheometer) | Anton Paar MCR 72 / 92 / 102e / 302e / 502e under RheoCompass | RheoCompass job folder + ASCII export folder | Windows | twin tested | 22.0 / 26 |
+| [`instron-bluehill-tester`](instron-bluehill-tester) | Instron 3400 / 5900 / 6800 series under Bluehill Universal | Bluehill Universal API (WCF) through pythonnet + results CSV export | Windows | template | 23.0 / 26 |
+| [`kla-dektak-profilometer`](kla-dektak-profilometer) | Bruker Dektak XT / XT-A under Vision64 (KLA Alpha-Step D-500/D-600 by the same shape) | Vision64 TCP/IP control server + .OPDx auto-save + database CSV | Windows | template | 23.0 / 26 |
+| [`panalytical-empyrean-xrd`](panalytical-empyrean-xrd) | Malvern Panalytical Empyrean / Aeris under Data Collector | Data Collector job folder + .xrdml results folder | Windows | twin tested | 24.0 / 26 |
+| [`phenom-desktop-sem`](phenom-desktop-sem) | Thermo Fisher Scientific (Phenom-World) Phenom XL G2 / G3 (Pharos, ProX by the same interface) | Phenom Programming Interface (PyPhenom), network | any | template | 26.0 / 28 |
+| [`quantum-design-ppms`](quantum-design-ppms) | Quantum Design PPMS / DynaCool / MPMS3 (VersaLab and OptiCool by the same shape) | MultiPyVu client to the MultiVu socket server (port 27183) | any | twin tested | 23.0 / 26 |
+| [`rigaku-smartlab-xrd`](rigaku-smartlab-xrd) | Rigaku SmartLab / SmartLab SE / MiniFlex under SmartLab Studio II | Studio II job folder + .rasx/.ras results folder | Windows | twin tested | 24.0 / 26 |
+| [`tescan-sem`](tescan-sem) | TESCAN VEGA / MIRA / CLARA (SharkSEM remote control) | SharkSEM TCP remote control, TESCAN client library | any | template | 26.0 / 28 |
+| [`zeiss-sem`](zeiss-sem) | ZEISS EVO / Sigma / GeminiSEM under SmartSEM (Remote API) | SmartSEM Remote API (COM), pywin32 | Windows | template | 25.0 / 28 |
+
+**Energy storage**
+
+| Package | Instrument | Talks through | Host | Status | Rubric |
+|---|---|---|---|---|---|
+| [`arbin-battery-cycler`](arbin-battery-cycler) | Arbin Instruments LBT / BT-2000 under MITS Pro (results-folder route) | MITS Pro request folder + CSV export | Windows | template | 22.0 / 26 |
+| [`gamry-potentiostat`](gamry-potentiostat) | Gamry Instruments Interface 1010 / Reference 620 (Electrochemistry Toolkit, GamryCOM) | GamryCOM (Electrochemistry Toolkit) via pywin32 | Windows | twin tested | 23.0 / 26 |
+| [`neware-battery-cycler`](neware-battery-cycler) | Neware CT-4008 / BTS 8.0 (BTS server TCP interface) | BTS server TCP API (XML, port 502) | any | template | 24.0 / 26 |
+
 **Engineering and data acquisition**
 
 | Package | Instrument | Talks through | Host | Status | Rubric |

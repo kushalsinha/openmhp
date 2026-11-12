@@ -1,0 +1,23 @@
+{
+  "host": "127.0.0.1",
+  "port": 5000,
+  "data_dir": "C:\\Users\\Public\\Documents\\Vision64\\Data\\openmhp",
+  "db_csv": "C:\\Users\\Public\\Documents\\Vision64\\Database\\openmhp.csv",
+  "recipes_dir": "C:\\Users\\Public\\Documents\\Vision64\\Recipes",
+  "commands": {
+    "status": "STATUS",
+    "load_recipe": "LOAD_RECIPE {path}",
+    "set": "SET {field} {value}",
+    "run": "RUN",
+    "abort": "ABORT",
+    "tower_up": "TOWER_HOME"
+  },
+  "columns": {
+    "sample": "Sample ID",
+    "step_height": "ASH"
+  },
+  "step_height_unit": "nm",
+  "max_duration_s": 600,
+  "result_wait_s": 120,
+  "poll_s": 1
+}

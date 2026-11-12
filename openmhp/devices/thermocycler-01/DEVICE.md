@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: thermocycler-01
-class: thermocycler
+class: thermal_cycler
 make: SimBio
 model: TC-96
 location: bay 3, bench 3

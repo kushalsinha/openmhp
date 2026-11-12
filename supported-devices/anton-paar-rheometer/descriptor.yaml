@@ -1,0 +1,124 @@
+device:
+  notes: >
+    An Anton Paar MCR rotational rheometer run by RheoCompass on its Windows PC, with a Peltier
+    plate (P-PTD 200 class, -40 to 200 degC) and its hood. The package queues one test per request
+    by writing a job file into the folder the lab's RheoCompass workflow reads from, waits for the
+    ASCII export in the results folder, and reports the curve's size and the last point's values.
+    RheoCompass drives the head, the temperature device and the measurement; the package never
+    touches the instrument.
+
+physical:
+  automated_load: false
+  notes: >
+    A person loads the sample on the lower plate, lowers the head to the measuring gap, trims the
+    edge and closes the hood; no handling system meets a standalone MCR (Anton Paar's HTR cells do
+    that with their own robot and enclosure). The head moves with force enough to crush a finger
+    (SafeGap limits the force during gap setting); the Peltier plate and hood reach 200 degC.
+    The hood's open/closed state is not reported by the instrument: the lab writes it to
+    hood_state_file from its workflow or a switch.
+
+signals:
+  - {name: connected, type: boolean, notes: True when config.json names the job folder (writable) and the results folder (exists).}
+  - {name: queue_depth, type: integer, unit: 1, notes: Job files (*.csv) still waiting in the job folder, from this package or anyone else; the workflow removes a file once taken.}
+  - {name: temperature, type: number, unit: Cel, nullable: true, notes: "Last Temperature value of the live export file named in config.json (live_export_file), which the lab's workflow can keep writing during a test; null when none is configured or it holds no rows. Not a direct instrument reading."}
+  - {name: temperature_setpoint, type: number, unit: Cel, nullable: true, notes: Temperature of the test this package is waiting on once its job was taken; null when idle. It is the setpoint requested, not a readback.}
+  - {name: hood_closed, type: boolean, notes: "True when hood_state_file reads 'closed' (a one-line file the lab's workflow or a switch script maintains); false when it reads anything else or is not configured. The MCR itself does not report the hood."}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent queue_test from here (same shape as its returns); null before the first.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True from writing the job file until the export appears or the wait times out.}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state): the torque, normal-force and temperature calibrations and the standard-oil check live in RheoCompass and are not read here."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Tests queued from here (the lab's recorded count, or the number of finished queue_test jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: queue_test
+    duration: long
+    approval: confirm
+    interlocks: [connected, hood_closed]
+    methods: true
+    cancellable: true
+    notes: >
+      Writes one job file (sample name, test type, measuring system, temperature, the ramp or
+      sweep, export file name) and waits for <sample_name>_<token>.txt in the results folder.
+      Confirm-gated because the workflow starts the motor and the temperature device as soon as
+      it takes the job. A saved method is the test definition per material (type, measuring
+      system, temperature, ramp or sweep); the caller passes the sample name. Cancelling before
+      the job was taken removes the file; afterwards the test is stopped in RheoCompass.
+    params:
+      sample_name: {type: string, notes: Written to the job and the export name; letters, digits, underscore, hyphen, dot.}
+      test_type: {type: string, limits: {enum: [flow_curve, frequency_sweep]}, notes: flow_curve needs flow_curve set and frequency_sweep needs frequency_sweep set; the other may be null.}
+      measuring_system: {type: string, notes: "Measuring system as RheoCompass names it (CP50-1, PP25, CC27); the Toolmaster-recognised one must match or the workflow refuses the job."}
+      temperature_c: {type: number, unit: Cel, limits: {min: -40, max: 200}, resolution: 0.1, notes: Test temperature for the Peltier plate; -40 to 200 degC is the P-PTD 200 range, bounded conservatively; the lab sets its own.}
+      flow_curve:
+        type: object
+        nullable: true
+        required: [shear_rate_start, shear_rate_end, points, point_duration_s]
+        notes: A rotational shear-rate ramp (CSR); null for a frequency sweep.
+        properties:
+          shear_rate_start: {type: number, unit: /s, limits: {min: 0.001, max: 3000}, notes: First shear rate in 1/s; the reachable range depends on the measuring system (314 rad/s max speed).}
+          shear_rate_end: {type: number, unit: /s, limits: {min: 0.001, max: 3000}, notes: Last shear rate in 1/s.}
+          points: {type: integer, unit: 1, limits: {min: 2, max: 200}, notes: Measuring points, spaced logarithmically when log is true.}
+          point_duration_s: {type: number, unit: s, limits: {min: 1, max: 600}, notes: Duration per point; longer at low rates lets the stress settle.}
+          log: {type: boolean, default: true, notes: Logarithmic spacing of the points.}
+      frequency_sweep:
+        type: object
+        nullable: true
+        required: [strain_pct, frequency_start_hz, frequency_end_hz, points]
+        notes: An oscillatory frequency sweep at constant strain; null for a flow curve.
+        properties:
+          strain_pct: {type: number, unit: "%", limits: {min: 0.01, max: 1000}, notes: Strain amplitude inside the linear viscoelastic range found by an amplitude sweep.}
+          frequency_start_hz: {type: number, unit: Hz, limits: {min: 0.01, max: 100}, notes: First frequency; 100 Hz is the MCR maximum.}
+          frequency_end_hz: {type: number, unit: Hz, limits: {min: 0.01, max: 100}, notes: Last frequency.}
+          points: {type: integer, unit: 1, limits: {min: 2, max: 100}, notes: Measuring points, spaced logarithmically.}
+    required: [sample_name, test_type, measuring_system, temperature_c]
+    returns:
+      type: object
+      required: [sample_name, file, test_type, points, columns, summary, duration_s]
+      properties:
+        sample_name: {type: string}
+        file: {type: string, notes: Full path of the RheoCompass ASCII export.}
+        test_type: {type: string}
+        points: {type: integer, notes: Data rows in the export's first interval.}
+        columns: {type: array, items: {type: string}, notes: Column names as the export's Interval data header lists them.}
+        temperature_mean_c: {type: number, unit: Cel, nullable: true, notes: Mean of the Temperature column; null when the export has none.}
+        summary:
+          type: object
+          notes: Values of the last data point; a field is null when its column is absent.
+          properties:
+            shear_rate: {type: number, unit: /s, nullable: true}
+            shear_stress_pa: {type: number, unit: Pa, nullable: true}
+            viscosity_pa_s: {type: number, unit: Pa.s, nullable: true}
+            storage_modulus_pa: {type: number, unit: Pa, nullable: true}
+            loss_modulus_pa: {type: number, unit: Pa, nullable: true}
+            frequency_hz: {type: number, unit: Hz, nullable: true}
+        duration_s: {type: number, unit: s, notes: From writing the job file to the export appearing.}
+    examples:
+      - sample_name: "batch12_gel"
+        test_type: flow_curve
+        measuring_system: "CP50-1"
+        temperature_c: 25
+        flow_curve: {shear_rate_start: 0.1, shear_rate_end: 1000, points: 21, point_duration_s: 10, log: true}
+        frequency_sweep: null
+      - sample_name: "batch12_gel"
+        test_type: frequency_sweep
+        measuring_system: "PP25"
+        temperature_c: 25
+        flow_curve: null
+        frequency_sweep: {strain_pct: 1, frequency_start_hz: 0.1, frequency_end_hz: 100, points: 16}
+
+safety:
+  estop: false
+  interlocks: [connected, hood_closed]
+  watchdog_s: 900
+  watchdog_action: release
+  notes: >
+    The motor, the normal-force limit, SafeGap during gap setting and the temperature device's
+    limits are RheoCompass's and the instrument's own; a person stops a test with Stop in
+    RheoCompass and lifts the head from its control panel. An e-stop here removes job files this
+    package queued that the workflow has not taken yet and fails the waiting job; a test already
+    started continues in RheoCompass. A controller silent for 15 minutes loses its lease and the
+    test completes: aborting a sweep mid-way wastes the sample, and the window must outlast
+    temperature equilibration and a slow low-rate point.

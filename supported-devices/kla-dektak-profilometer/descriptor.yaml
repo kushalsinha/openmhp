@@ -1,0 +1,84 @@
+device:
+  notes: >
+    A Bruker Dektak XT / XT-A stylus profilometer run by Vision64 on its Windows PC (a KLA
+    Alpha-Step D-500/D-600 fits the same shape with its own software). The package loads a saved
+    Vision64 recipe, sets scan length, duration, stylus force, range and profile over a command
+    channel (command strings unverified, configurable), runs one scan, and reports the .OPDx
+    dataset Vision64 auto-saved and the step height its analysis recipe logged to the database
+    CSV. Vision64 lowers and raises the tower and scans; the package never moves the stage.
+
+physical:
+  automated_load: false
+  notes: >
+    A person places the sample on the stage (manual or motorised X-Y, samples to 200 mm and
+    50 mm thick) and positions the stylus start point; no handling system meets a Dektak XT. The
+    tower lowers at the start of every scan: nothing may be under the stylus but the sample, and
+    a feature taller than about 1 mm catches the stylus. Stylus radii 2 or 12.5 um are usual.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Vision64 control channel answers the status command.}
+  - {name: status, type: string, notes: "idle, scanning, tower_moving or error, mapped from the status reply (mapping unverified)."}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent scan from here (same shape as its returns); null before the first.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a scan from here runs.}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state): the step-height standard check (VLSI standard) is run in Vision64 and is not read here."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next standard check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Scans run from here (the lab's recorded count, or the number of finished scan jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: scan
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    notes: >
+      Loads the recipe, sets length, duration (length / speed, as Vision64's recipe takes a
+      duration), stylus force, range and profile, sets the auto-save file name, runs the scan and
+      waits for the .OPDx and the database CSV row. Confirm-gated because the tower lowers the
+      stylus onto whatever is under it. A saved method is the recipe with its scan parameters per
+      sample type; the caller passes the sample id. Cancelling aborts the scan and raises the tower.
+    params:
+      recipe: {type: string, notes: Vision64 measurement recipe file name (.visrcp) in recipes_dir; it fixes the stylus type and analysis. Name only, no path.}
+      sample_id: {type: string, notes: Written to the recipe's sample information and used in the auto-save file name; letters, digits, underscore, hyphen, dot.}
+      length_um: {type: number, unit: um, limits: {min: 50, max: 55000}, notes: Scan length; 55 mm is the Dektak XT maximum without stitching.}
+      force_mg: {type: number, unit: mg, limits: {min: 1, max: 15}, resolution: 0.01, notes: Stylus force; 1 to 15 mg is the standard LIS 3 sensor range (0.03 mg with the N-Lite+ option). 3 mg is usual on hard films, 1 mg on soft ones.}
+      speed_um_s: {type: number, unit: um/s, limits: {min: 1, max: 1000}, notes: Scan speed; Vision64's recipe takes a duration, so duration = length / speed and must stay within max_duration_s. Slower gives more points (resolution = speed / sampling rate).}
+      range: {type: string, limits: {enum: [6.5um, 65.5um, 524um, 1mm]}, default: 65.5um, notes: Vertical measurement range; smaller gives finer resolution (about 0.1 nm at 6.5 um, 8 nm at 524 um).}
+      profile: {type: string, limits: {enum: [hills, valleys, hills_and_valleys]}, default: hills_and_valleys, notes: Where the range sits relative to the start height; hills for a raised step, valleys for a trench.}
+    required: [recipe, sample_id, length_um, force_mg, speed_um_s]
+    returns:
+      type: object
+      required: [sample_id, file, scan_length_um, duration_s]
+      properties:
+        sample_id: {type: string}
+        file: {type: string, notes: Full path of the .OPDx dataset Vision64 auto-saved (its 12-byte header is checked).}
+        db_file: {type: string, nullable: true, notes: Full path of the database CSV the analysis recipe logged to; null when none is configured.}
+        step_height_nm: {type: number, unit: nm, nullable: true, notes: The step-height result (ASH or the lab's column) from the database CSV row for this scan; null when the row or column is absent.}
+        scan_length_um: {type: number, unit: um}
+        stylus_force_mg: {type: number, unit: mg}
+        duration_s: {type: number, unit: s, notes: From running the scan to the files appearing.}
+    examples:
+      - {recipe: "step_height_2um.visrcp", sample_id: "wafer12_die3", length_um: 1000, force_mg: 3, speed_um_s: 100, range: 65.5um, profile: hills_and_valleys}
+  - name: tower_up
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Raises the tower to its home position (the tower-up command, unverified). Safe at any time; it is what a person does before touching the stage.
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 30
+  hardware_stop: >
+    The EMO box's power-off button cuts the instrument's power; Vision64 then loses the
+    instrument and a person restarts it after resetting the button (Dektak XT user manual).
+    The package sees it only as connected false.
+  notes: >
+    E-stop sends the abort and tower-up commands, so the stylus leaves the surface; the stage
+    does not move. A controller silent for 30 s during a scan aborts it and raises the tower.
+    The stylus is the fragile part: a crash costs a stylus, not a person, but the tower and the
+    motorised stage are pinch points and hands stay clear while status is not idle.

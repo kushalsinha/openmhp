@@ -1,0 +1,29 @@
+name: scan_5_60
+project: demo-assay
+action: queue_scan
+params:
+  sample_id: sample
+  position: null
+  program:
+    start_2theta: 5
+    end_2theta: 60
+    step: 0.02
+    speed_deg_min: 10
+    mode: continuous
+    axis: TwoThetaTheta
+compounds:
+- demo compound
+version: 1
+hash: e49369f363e6
+created: 1794446424.39981
+updated: 1794446424.39981
+validated:
+  at: 1794446424.39981
+  hash: e49369f363e6
+status: active
+author: package author
+notes: 'Example only: a 5-60 deg scan at 0.02 deg and 10 deg/min (about 5.5 min).
+  sample_id and position are passed per run.'
+source:
+  kind: person
+  ref: shipped example

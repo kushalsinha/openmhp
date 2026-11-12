@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: labjack-t-series-01
-class: daq
+class: data_acquisition_device
 make: LabJack
 model: T4 / T7 / T8 (LJM library)
 location: ""

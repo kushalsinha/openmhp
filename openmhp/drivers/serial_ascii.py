@@ -85,7 +85,24 @@ class SerialAsciiDriver(Driver):
     def _encode(self, cmd: str) -> bytes:
         if any(ord(c) < 0x20 or ord(c) == 0x7F for c in cmd):
             raise InvalidValue(f"refusing to send a command containing control characters: {cmd!r}")
-        return (cmd + self.eol).encode()
+        return (cmd + self._checksum(cmd) + self.eol).encode()
+
+    def _checksum(self, cmd: str) -> str:
+        """Optional frame checksum from the descriptor: `checksum: {kind: xor|sum8, format: "{:02X}"}`."""
+        spec = self.cfg.get("checksum")
+        if not spec:
+            return ""
+        data = cmd.encode()
+        kind = str(spec.get("kind", "xor")).lower()
+        if kind == "xor":
+            value = 0
+            for b in data:
+                value ^= b
+        elif kind == "sum8":
+            value = sum(data) & 0xFF
+        else:
+            raise InvalidValue(f"unknown checksum kind {kind!r}; use xor or sum8")
+        return str(spec.get("prefix", "")) + str(spec.get("format", "{:02X}")).format(value)
 
     @staticmethod
     def _text(raw) -> str:

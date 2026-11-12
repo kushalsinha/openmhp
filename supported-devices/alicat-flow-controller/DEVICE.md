@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: alicat-flow-controller-01
-class: flow_controller
+class: mass_flow_controller
 make: Alicat Scientific
 model: MC / MCR mass flow controller (PC / PCD pressure controller compatible)
 location: ""

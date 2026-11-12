@@ -1,0 +1,94 @@
+device:
+  notes: >
+    A Rigaku SmartLab, SmartLab SE or MiniFlex powder/thin-film diffractometer run by SmartLab
+    Studio II on its Windows PC, with an ASC-6/-8/-10 sample changer where fitted. The package
+    queues one scan per request by writing a job file into the folder the lab's Studio II flow
+    (or Rigaku Automation Interface client) imports from, waits for the .rasx or .ras result in
+    the results folder, and reports the pattern's size, range and the tube conditions from the
+    header. Studio II aligns, moves the changer, opens the shutter and measures; the package never
+    touches the instrument.
+
+physical:
+  automated_load: true
+  notes: >
+    Samples are in holders at numbered positions of the ASC changer (6, 8 or 10 on the standard
+    changers, 48 on the ASC-48). A handling robot can place a holder at a free position while the
+    changer is idle (Rigaku offers robot-compatible enclosure access), but Studio II writes the
+    changer's state to no file, so no robot_access_ready signal is declared: coordinate loading
+    with the person at the instrument. X-rays: the enclosure interlocks and the shutter are
+    hardware, outside this package.
+
+signals:
+  - {name: connected, type: boolean, notes: True when config.json names the job folder (writable) and the results folder (exists).}
+  - {name: queue_depth, type: integer, unit: 1, notes: Job files (*.csv) still waiting in the job folder, from this package or anyone else; the import flow removes a file once taken.}
+  - {name: sample_changer_position, type: integer, unit: 1, nullable: true, notes: "Position of the scan this package is waiting on once its job was taken; null when idle or when the scan was queued without a position. It is the position requested, not a readback from the changer."}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent queue_scan from here (same shape as its returns); null before the first.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True from writing the job file until the result appears or the wait times out.}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state): the optics alignment and the Si/LaB6 standard checks live in Studio II and are not read here."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next alignment check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Scans queued from here (the lab's recorded count, or the number of finished queue_scan jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: queue_scan
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    notes: >
+      Writes one job file (sample id, changer position, scan axis, start, stop, step, speed, mode,
+      result file name) and waits for <sample_id>_<token>.rasx or .ras in the results folder.
+      Confirm-gated because the import flow starts the changer and the X-ray shutter as soon as it
+      takes the job. A saved method is the scan recipe per project (range, step, speed, mode); the
+      caller passes the sample id and position. Cancelling before the job was taken removes the
+      file; afterwards the measurement is stopped in Studio II.
+    params:
+      sample_id: {type: string, notes: Names the result file (<sample_id>_<token>.rasx); letters, digits, underscore, hyphen, dot.}
+      position: {type: integer, unit: 1, limits: {min: 1, max: 48}, nullable: true, notes: Changer position the holder sits in; null measures the holder already on the stage (no changer move). Also bounded by changer_positions in config.json.}
+      program:
+        type: object
+        required: [start_2theta, end_2theta, step, speed_deg_min]
+        notes: The scan recipe; a saved method carries one per project. Studio II's General Measurement takes exactly these fields.
+        properties:
+          start_2theta: {type: number, unit: deg, limits: {min: 2, max: 145}, notes: Scan start on the 2theta/theta axis; below 2 deg the direct beam reaches the detector. The MiniFlex range ends at 145 deg; a SmartLab goes further and the lab raises the bound.}
+          end_2theta: {type: number, unit: deg, limits: {min: 2, max: 145}, notes: Must be above start_2theta.}
+          step: {type: number, unit: deg, limits: {min: 0.005, max: 0.5}, notes: 2theta increment; 0.01 or 0.02 deg is usual. 0.005 deg is the MiniFlex minimum step width.}
+          speed_deg_min: {type: number, unit: deg/min, limits: {min: 0.01, max: 100}, notes: Scan speed in deg/min as Studio II takes it (MiniFlex 0.01 to 100 deg/min); the whole scan is bounded by max_scan_hours in config.json.}
+          mode: {type: string, limits: {enum: [continuous, step]}, default: continuous, notes: Studio II scan mode; continuous is the usual powder scan, step counts at each position for step/speed minutes.}
+          axis: {type: string, limits: {enum: [TwoThetaTheta, TwoTheta, TwoThetaOmega]}, default: TwoThetaTheta, notes: Studio II internal axis name as written to the file header; TwoThetaTheta is the coupled Bragg-Brentano scan.}
+    required: [sample_id, program]
+    returns:
+      type: object
+      required: [sample_id, file, format, points, two_theta_range, duration_s]
+      properties:
+        sample_id: {type: string}
+        file: {type: string, notes: Full path of the result file (.rasx preferred, else .ras).}
+        format: {type: string, notes: rasx or ras.}
+        points: {type: integer, notes: Data rows read (first scan of a multi-scan file).}
+        two_theta_range: {type: array, items: {type: number, unit: deg}, notes: "[first, last] 2theta of the rows read."}
+        scan_speed_deg_min: {type: number, unit: deg/min, nullable: true, notes: From the header; null when the header lacks it.}
+        target: {type: string, nullable: true, notes: Tube anode from the header (Cu, Co, ...).}
+        voltage_kv: {type: number, unit: kV, nullable: true, notes: Tube voltage from the header.}
+        current_ma: {type: number, unit: mA, nullable: true, notes: Tube current from the header.}
+        duration_s: {type: number, unit: s, notes: From writing the job file to the result file appearing.}
+    examples:
+      - sample_id: "batch12_formA"
+        position: 2
+        program: {start_2theta: 5, end_2theta: 60, step: 0.02, speed_deg_min: 10, mode: continuous, axis: TwoThetaTheta}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 900
+  watchdog_action: release
+  notes: >
+    X-ray safety is hardware: the enclosure interlocks and the shutter are outside any software,
+    and Studio II's own Stop ends a measurement. An e-stop here removes job files this package
+    queued that the import flow has not taken yet and fails the waiting job; a scan already
+    started continues in Studio II. A controller silent for 15 minutes loses its lease and the
+    scan finishes: interrupting it is worse than completing it, and the window must outlast the
+    changer cycle and the optics alignment that precedes a scan.

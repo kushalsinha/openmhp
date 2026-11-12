@@ -1,0 +1,30 @@
+name: gonio_5_60
+project: demo-assay
+action: queue_scan
+params:
+  sample_id: sample
+  position: null
+  program:
+    start_2theta: 5
+    end_2theta: 60
+    step: 0.026
+    time_per_step_s: 0.5
+    mode: continuous
+    scan_axis: Gonio
+    program_file: null
+compounds:
+- demo compound
+version: 1
+hash: d66a1481ff6e
+created: 1794446633.87253
+updated: 1794446633.87253
+validated:
+  at: 1794446633.87253
+  hash: d66a1481ff6e
+status: active
+author: package author
+notes: 'Example only: a 5-60 deg Gonio scan at 0.026 deg and 0.5 s per step (about
+  18 min on a point detector). sample_id and position are passed per run.'
+source:
+  kind: person
+  ref: shipped example

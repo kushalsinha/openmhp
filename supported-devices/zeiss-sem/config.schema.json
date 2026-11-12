@@ -1,0 +1,14 @@
+{
+  "image_dir": {
+    "ask": "Folder on the SmartSEM PC the grabbed TIFFs are written to",
+    "kind": "path",
+    "example": "C:/lab/data/zeiss",
+    "help": "A local path on the microscope PC (the API writes the file there); share it if agents elsewhere need the images."
+  },
+  "pump_timeout_s": {"ask": "Seconds to wait for a pump or vent before the job is failed", "kind": "int", "advanced": true},
+  "smartsem": {
+    "ask": "SmartSEM Remote API ProgID, member, parameter and command names (JSON object), from the API reference",
+    "advanced": true,
+    "help": "Every shipped name is a placeholder; correct them from ZEISS's SmartSEM Remote API reference (or the SmartSEM API Test application) before the first hardware test."
+  }
+}

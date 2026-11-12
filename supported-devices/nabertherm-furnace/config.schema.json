@@ -1,0 +1,16 @@
+{
+  "host": {
+    "ask": "IP address or host name of the furnace controller's communication module",
+    "kind": "text",
+    "example": "192.168.1.70",
+    "help": "Shown on the controller under Settings / Ethernet (or printed as the hostname N<serial> on the module); DHCP with a reservation or a fixed address. Port 502 is assumed; put `port` in config.json if your network maps it elsewhere."
+  },
+  "unit": {
+    "ask": "Modbus unit (slave) id",
+    "kind": "int",
+    "example": 1,
+    "required": false,
+    "advanced": true,
+    "help": "1 on every controller this package was written for; change only if Nabertherm service set another."
+  }
+}

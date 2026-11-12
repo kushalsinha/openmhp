@@ -1,0 +1,131 @@
+device:
+  notes: >
+    Mettler Toledo XPR/XSR analytical balance with a Quantos or XPR automatic powder dosing head,
+    driven over RS-232 or USB with MT-SICS: level 0/1 weighing and tare commands plus A10 (target
+    weight and tolerances) from the XPR/XSR MT-SICS reference manual, and three placeholder dosing
+    commands (QD) that Mettler has not published. TEMPLATE for the dosing half; the balance half is
+    verified against the manual. Not yet run on hardware.
+
+physical:
+  automated_load: false
+  notes: >
+    A bench balance with a motorised dosing head on top of the draft shield and a vial on the pan,
+    placed by a person in this package (Quantos sample changers and the XPR automatic sample feeder are not
+    driven here, so automated_load is false). The draft shield doors are motorised on XPR balances
+    and open by hand or by the WS command; a handling robot that would meet the pan is not
+    supported, so robot_access_ready is not declared. The dosing head rotates slowly; nothing heats.
+
+signals:
+  - {name: mass_stable, type: number, unit: g, notes: "Next stable net weight (S), in the host unit (grams). Waits for stability, so the read takes up to a few seconds; S I, S + and S - carry no number and are reported as failed reads."}
+  - {name: mass_immediate, type: number, unit: g, notes: Current weight regardless of stability (SI); S S stable, S D dynamic. Only the number is returned.}
+  - {name: tare_value, type: number, unit: g, notes: Weight in the tare memory (TA query).}
+  - {name: balance_data, type: string, notes: "Balance type and capacity (I2), e.g. I2 A \"XPR205 220.00900 g\"."}
+  - {name: serial_number, type: string, notes: Serial number of the balance (I4).}
+  - {name: software_version, type: string, notes: Software version and type definition number (I3).}
+  - {name: head_present, type: boolean, notes: A dosing head is mounted and its RFID was read (placeholder command QDH, unverified; the twin answers QDH A 1 or 0).}
+  - {name: head_info, type: string, notes: The dosing head's own data (substance name, lot, remaining doses) as the balance reports it (placeholder QDH, unverified).}
+  - {name: last_dose_result, type: string, notes: The last dose report (placeholder QDR, unverified; the twin answers QDR A <mass> mg <status>).}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a dose or another job runs; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, from calibration_due in the lab's config.json self_state record. The XPR MT-SICS manual lists no command that reports the date or result of the last adjustment (C0 reports only the adjustment setting), so the record is the source; internal_adjustment runs one on request.}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next adjustment or check-weight test is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown (IQ/OQ/PQ as the lab records it in config.json self_state).}
+  - {name: usage_count, type: integer, source: record, notes: dose jobs completed here (doses dispensed), from this device's job records unless the lab records its own count.}
+
+settings:
+  - name: target_mass
+    type: number
+    unit: mg
+    limits: {min: 0.1, max: 5000}
+    resolution: 0.01
+    approval: auto
+    notes: >
+      Target weight for the SmartTrac and the dosing head (A10 0 <value> mg). dose writes it from its
+      own parameter; this setting exists for a dose started at the balance. The 5 g maximum is a
+      placeholder for a 220 g XPR with a standard head; set it to the head's capacity. A10 L means
+      the balance refused the decimals for its tolerance profile.
+  - name: tolerance_plus
+    type: number
+    unit: "%"
+    limits: {min: 0.1, max: 50}
+    resolution: 0.1
+    approval: auto
+    notes: Upper tolerance in percent of the target (A10 1 <value> %).
+  - name: tolerance_minus
+    type: number
+    unit: "%"
+    limits: {min: 0.1, max: 50}
+    resolution: 0.1
+    approval: auto
+    notes: Lower tolerance in percent of the target (A10 2 <value> %).
+
+actions:
+  - name: dose
+    duration: long
+    approval: auto
+    interlocks: [head_present, connected]
+    cancellable: true
+    params:
+      target_mg: {type: number, unit: mg, limits: {min: 0.1, max: 5000}, resolution: 0.01, notes: Mass of powder to dispense into the tared vial, mg. 5000 is a placeholder for the head's capacity.}
+      tolerance_pct: {type: number, unit: "%", default: 2, limits: {min: 0.1, max: 50}, resolution: 0.1, notes: Symmetric tolerance, percent of the target, written as both A10 tolerances. The head stops inside it; the result says whether it did.}
+    required: [target_mg, tolerance_pct]
+    examples: [{target_mg: 25, tolerance_pct: 2}]
+    returns:
+      type: object
+      properties:
+        replies: {type: array, items: {type: string}, notes: The balance's reply to each command in order (three A10 A, the start acknowledgement, the result line).}
+        dispensed_mg: {type: number, nullable: true, notes: Mass the head reports as dispensed, parsed from the result reply; null when the reply carries no number (template placeholder answered with ES on a real balance until the command is known).}
+    notes: >
+      Sets the target (A10 0), both tolerances (A10 1, A10 2), starts the dosing head (placeholder
+      QDS, unverified) and reads the result (placeholder QDR, unverified). Tare the vial first. Takes
+      10-60 s on a real head; the driver checkpoints between commands, so cancelling before QDS
+      starts nothing. Refused unless a head is mounted.
+  - {name: tare, duration: short, approval: auto, interlocks: [connected], notes: Stores the next stable weight as the tare (T). Answers T S <value> g; T I on timeout.}
+  - {name: zero, duration: short, approval: auto, interlocks: [connected], notes: Sets a new zero and clears the tare memory (Z). Do it with an empty pan.}
+  - {name: clear_tare, duration: short, approval: auto, interlocks: [connected], notes: Clears the tare memory without zeroing (TAC).}
+  - {name: internal_adjustment, duration: short, approval: confirm, interlocks: [connected], notes: Starts the adjustment with the built-in weight (C3). The balance answers C3 B at once and C3 A minutes later; this package returns the first reply only. Confirmed by a person because the balance is unusable while it runs and a head must not be dosing.}
+  - {name: reset, duration: short, approval: confirm, interlocks: [connected], notes: Cancels every pending command, including a running dose, and restarts the balance software without zeroing (@). Confirmed by a person because it aborts whatever the head is doing.}
+
+safety:
+  estop: true
+  interlocks: [head_present, connected]
+  watchdog_s: 60
+  notes: >
+    E-stop sends @ (abort all pending commands and restart the balance software without zeroing),
+    which is the only documented way to stop a dosing head from the host; the head stops turning
+    and the balance returns its serial number. The only motion is the head's slow rotation and the
+    draft shield doors, so a 60 s watchdog with the default stop action is enough. No physical stop
+    exists beyond the mains switch.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600
+  eol: "\r\n"
+  read:
+    mass_stable: S
+    mass_immediate: SI
+    tare_value: TA
+    balance_data: I2
+    serial_number: I4
+    software_version: I3
+    head_present: QDH
+    head_info: QDH
+    last_dose_result: QDR
+  write:
+    target_mass: "A10 0 {value} mg"
+    tolerance_plus: "A10 1 {value} %"
+    tolerance_minus: "A10 2 {value} %"
+  actions:
+    dose: ["A10 0 {target_mg} mg", "A10 1 {tolerance_pct} %", "A10 2 {tolerance_pct} %", "QDS", "QDR"]
+    tare: [T]
+    zero: [Z]
+    clear_tare: [TAC]
+    internal_adjustment: [C3]
+    reset: ["@"]
+  estop: ["@"]
+  booleans:
+    head_present: {true: ["QDH A 1"], false: ["QDH A 0"]}
+  parse:
+    head_present: {regex: "(QDH A [01])", group: 1}

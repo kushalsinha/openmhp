@@ -1,0 +1,27 @@
+name: step_height_1mm
+project: demo-assay
+action: scan
+params:
+  recipe: step_height_2um.visrcp
+  sample_id: sample
+  length_um: 1000
+  force_mg: 3
+  speed_um_s: 100
+  range: 65.5um
+  profile: hills_and_valleys
+compounds:
+- demo compound
+version: 1
+hash: 214d37a441b7
+created: 1794447282.335053
+updated: 1794447282.335053
+validated:
+  at: 1794447282.335053
+  hash: 214d37a441b7
+status: active
+author: package author
+notes: 'Example only: a 1 mm scan at 100 um/s (10 s) and 3 mg in the 65.5 um range
+  with the 2 um stylus recipe. sample_id is passed per run.'
+source:
+  kind: person
+  ref: shipped example

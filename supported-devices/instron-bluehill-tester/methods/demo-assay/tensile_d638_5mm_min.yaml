@@ -1,0 +1,30 @@
+name: tensile_d638_5mm_min
+project: demo-assay
+action: run_test
+params:
+  bluehill_method: Tensile_ASTM_D638.im_tens
+  specimen:
+    label: specimen
+    width_mm: null
+    thickness_mm: null
+    gauge_length_mm: null
+  rate_mm_min: 5
+  limits:
+    max_load_N: 2000
+    max_extension_mm: 100
+compounds:
+- demo compound
+version: 1
+hash: 0f0edfd49e4c
+created: 1794447252.055019
+updated: 1794447252.055019
+validated:
+  at: 1794447252.055019
+  hash: 0f0edfd49e4c
+status: active
+author: package author
+notes: 'Example only: an ASTM D638 tensile method at 5 mm/min with 2 kN and 100 mm
+  stop limits. The specimen (label and geometry) is passed per run.'
+source:
+  kind: person
+  ref: shipped example

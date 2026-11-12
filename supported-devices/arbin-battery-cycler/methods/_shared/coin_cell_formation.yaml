@@ -1,0 +1,42 @@
+name: coin_cell_formation
+project: _shared
+action: start_protocol
+params:
+  schedule: Formation_C2_3cyc.sdu
+  steps:
+  - mode: cc_charge
+    current_a: 0.0225
+    voltage_v: 4.2
+    time_limit_s: 14400
+  - mode: cv_charge
+    voltage_v: 4.2
+    current_a: 0.002
+    time_limit_s: 3600
+  - mode: rest
+    time_limit_s: 600
+  - mode: cc_discharge
+    current_a: 0.0225
+    voltage_v: 3.0
+    time_limit_s: 14400
+  - mode: rest
+    time_limit_s: 600
+  cycles: 3
+compounds:
+- coin cell
+- lithium-ion
+- formation
+version: 1
+hash: c86ace558e5c
+created: 1794446658
+updated: 1794446658
+validated:
+  at: 1794446658
+  hash: c86ace558e5c
+status: active
+author: package example
+notes: 'C/2 formation of a 45 mAh lithium-ion coin cell with the MITS Pro schedule
+  Formation_C2_3cyc.sdu: CC charge to 4.2 V, CV hold to C/20, rest, CC discharge to
+  3.0 V, rest, three cycles. Channel and barcode are given per run.'
+source:
+  kind: manual
+  ref: example record shipped with the package; replace with the lab's own schedule

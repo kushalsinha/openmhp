@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: thermo-quantstudio-qpcr-01
-class: qpcr
+class: real_time_pcr_machine
 make: Applied Biosystems (Thermo Fisher Scientific)
 model: QuantStudio 5/7 under QuantStudio Design & Analysis Software 2
 location: ""

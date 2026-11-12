@@ -1,0 +1,50 @@
+{
+  "job_dir": {
+    "ask": "Folder the RheoCompass workflow takes job files from",
+    "kind": "path",
+    "example": "C:\\ProgramData\\Anton Paar\\RheoCompass\\Jobs\\openmhp",
+    "help": "The folder the lab's Test Analysis Designer workflow, AP Connect task or operator routine watches (see references/rheocompass_files.md). Must exist and be writable by the account running mhp on the RheoCompass PC."
+  },
+  "results_dir": {
+    "ask": "Folder where the ASCII exports of the queued tests are written",
+    "kind": "path",
+    "example": "C:\\ProgramData\\Anton Paar\\RheoCompass\\Export\\openmhp",
+    "help": "The export folder of the workflow's export action; the package waits for <sample_name>_<token>.txt there."
+  },
+  "hood_state_file": {
+    "ask": "One-line file that reads 'closed' when the hood is down (blank if the lab has no way to write it)",
+    "kind": "path",
+    "required": false,
+    "help": "The MCR does not report its hood. A workflow step or a switch script writes 'closed' or 'open' here; without it the hood_closed interlock stays open and queue_test refuses."
+  },
+  "live_export_file": {
+    "ask": "Live export file the workflow keeps writing during a test (blank if none)",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  },
+  "equilibration_s": {
+    "ask": "Seconds the temperature device needs before the first point (for progress and the wait)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "max_test_hours": {
+    "ask": "Longest test an agent may queue (hours)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between checks of the results folder",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "result_wait_s": {
+    "ask": "Longest wait for a result before the job fails (seconds)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}
