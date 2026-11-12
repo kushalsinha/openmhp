@@ -235,6 +235,8 @@ def test_fleet_scan_and_lab_tool(tmp_home=None):
     # a device somewhere "on the network"
     threading.Thread(target=serve_http, args=(SimThermocycler(),), kwargs={"port": 18933}, daemon=True).start()
     time.sleep(0.5)
+    import openmhp.discovery as discovery
+    discovery.scan_mdns = lambda *a, **k: []     # hermetic: an MHP device advertising on this LAN would be found too
     fleet = Fleet()
     assert fleet.list() == []
     found = fleet.scan(ports=[18933])
