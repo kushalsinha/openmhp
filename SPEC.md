@@ -161,7 +161,7 @@ The frontmatter is the card. `description` is what a directory ranks and what an
 ---
 mhp: "2026-09-12"
 id: thermocycler-01
-class: thermocycler
+class: thermal_cycler
 make: SimBio
 model: TC-96
 location: bay 3, bench 3
@@ -823,25 +823,78 @@ Every error carries `ts`, the device's own clock at the moment it refused, so a 
 
 ---
 
-## 13. Device classes (initial vocabulary)
+## 13. Device classes
 
-`thermocycler`, `liquid_handler`, `robot_arm`, `microscope`, `plate_reader`, `centrifuge`, `incubator`, `hotplate`, `balance`, `pump`, `valve`, `spectrometer`, `laser`, `stage`, `cnc`, `3d_printer`, `oven`, `power_supply`, `camera`, `generic`,
-`chromatograph`, `mass_spectrometer`, `titrator`, `reactor`, `bioreactor`, `circulator`, `shaker`, `cell_counter`, `dissolution_tester`, `evaporator`, `freeze_dryer`, `flow_controller`, `source_meter`, `vacuum_gauge`, `lock_in_amplifier`, `daq`, `oscilloscope`, `sensor`, `environmental_chamber`, `potentiostat`, `nmr`, `diffractometer`, `particle_analyzer`, `biosensor`, `electrophoresis`, `cytometer`, `qpcr`, `thermal_analyzer`, `stirrer`, `temperature_controller`, `sampler`.
+`class` is a short snake_case name that tells an agent what kind of instrument it is looking at and gives the conventions below a namespace. The vocabulary is `openmhp/classes.json`, built by `scripts/build_classes.py`. There is no UCUM for instruments, so OpenMHP aligns with the published vocabularies wherever one has the term: each class is the snake_case form of a label from the Allotrope Foundation Ontology equipment branch (AFE, CC-BY; preferred for analytical equipment), the Chemical Methods Ontology (CHMO, CC-BY), the Ontology for Biomedical Investigations (OBI, CC-BY) or the NCI Thesaurus (NCIT), and carries that term's reference and definition. A class of OpenMHP's own is minted only where no vocabulary has the term (spin coater, glovebox, battery cycler, rheometer, dissolution tester and a few more); those are marked *none yet* and are candidates to propose upstream. `match` is *exact* unless the reference is broader or narrower than the class, which the table says.
 
-A class is a hint for the agent and a namespace for conventions. Classes are not enforced by the protocol; `mhp validate` names the nearest known class for one it does not recognise, because agents and directories filter on the known ones. The conventions, each a SHOULD:
+Classes are not enforced by the protocol; an unknown class still loads, `mhp validate` names the nearest known one because agents and directories filter on the known ones, and an older name listed under *also* is accepted with a warning that names the published one. A descriptor MAY carry `class_ref` with a more specific term from the same vocabularies (for example `CHMO:0000941`, scanning electron microscope, under class `electron_microscope`); `device/describe` includes it in the card so a directory can filter on the ontology term. The conventions, each a SHOULD:
 
-| class | convention |
-|---|---|
-| `robot_arm`, `stage` | a `locations` map; `robot_access_ready` on anything it serves |
-| `microscope`, `camera` | an `acquire` action returning an image URI in `returns` |
-| `chromatograph`, `mass_spectrometer`, `nmr`, `diffractometer`, `thermal_analyzer`, `plate_reader`, `dissolution_tester`, `electrophoresis`, `qpcr`, `cytometer` | one method-driven run action (`methods: true`, §4.5) whose `returns` names the result file or table; `usage_count` counts injections, scans or runs |
-| `balance` | `weigh` returning `{mass, unit, stable}`; `tare`; `calibration_status` from the instrument's own log where it has one |
-| `pump`, `flow_controller`, `valve` | `flow`/`pressure` signals in UCUM; a `stop` that zeroes the setpoint; `estop: true` |
-| `hotplate`, `stirrer`, `circulator`, `temperature_controller`, `incubator`, `oven`, `environmental_chamber`, `bioreactor`, `reactor`, `shaker` | the measured value and the setpoint as separate signals; `door_closed`/`lid_closed` as a signal and an interlock where there is one; `robot_access_ready` where a handling system loads it |
-| `centrifuge`, `freeze_dryer`, `evaporator`, `thermocycler` | `lid_closed` interlock on the run action; `robot_access_ready`; a run action that is `cancellable` |
-| `potentiostat`, `source_meter`, `lock_in_amplifier`, `oscilloscope`, `power_supply`, `daq` | output enable as a boolean setting; `estop` disables every output; `returns` on acquisitions names the data file |
-| `sensor`, `vacuum_gauge`, `biosensor`, `particle_analyzer`, `cell_counter` | measurements as signals with units; `out_of_spec` from the instrument's self-check where it has one |
-| `sampler`, `liquid_handler` | `robot_access_ready`; positions named as the vendor names them in `notes` |
+| class | reference | convention |
+|---|---|---|
+| `thermal_cycler` (also `thermocycler`) | [OBI:0400116](http://purl.obolibrary.org/obo/OBI_0400116) | `lid_closed` interlock on the run action; `robot_access_ready`; a run action that is `cancellable` |
+| `liquid_handler` | [OBI:0400112](http://purl.obolibrary.org/obo/OBI_0400112) | `robot_access_ready`; positions named as the vendor names them in `notes` |
+| `robot_arm` | [NCIT:C20678](http://purl.obolibrary.org/obo/NCIT_C20678) (broader) | a `locations` map; `robot_access_ready` on anything it serves |
+| `stage` | none yet | a `locations` map; `robot_access_ready` on anything it serves |
+| `microscope` | [AFE_0000825](http://purl.allotrope.org/ontologies/equipment#AFE_0000825) | an `acquire` action returning an image URI in `returns` |
+| `electron_microscope` | [CHMO:0001088](http://purl.obolibrary.org/obo/CHMO_0001088) | `vacuum_ready`, `beam_on`, `stage_position` signals; `load_sample` with `robot_access_ready` and `physical.automated_load`; `acquire_image` whose `returns` names the file and magnification; e-stop turns the beam off |
+| `camera` | none yet | an `acquire` action returning an image URI in `returns` |
+| `sampler` (also `autosampler`) | [AFE_0001711](http://purl.allotrope.org/ontologies/equipment#AFE_0001711) | `robot_access_ready`; positions named as the vendor names them in `notes` |
+| `chromatograph` (also `gc`, `hplc`) | [AFE_0000392](http://purl.allotrope.org/ontologies/equipment#AFE_0000392) | one method-driven run action (`methods: true`, SPEC 4.5) whose `returns` names the result file or table; `usage_count` counts injections |
+| `mass_spectrometer` | [AFE_0000648](http://purl.allotrope.org/ontologies/equipment#AFE_0000648) | one method-driven run action whose `returns` names the result file; `usage_count` counts scans or runs |
+| `nuclear_magnetic_resonance_spectrometer` (also `nmr`, `nmr_spectrometer`) | [AFE_0002280](http://purl.allotrope.org/ontologies/equipment#AFE_0002280) | one method-driven run action whose `returns` names the result folder; `usage_count` counts experiments |
+| `diffractometer` | [CHMO:0000950](http://purl.obolibrary.org/obo/CHMO_0000950) | one method-driven scan action whose `returns` names the pattern file; `usage_count` counts scans |
+| `thermal_analyzer` | [AFE_0000733](http://purl.allotrope.org/ontologies/equipment#AFE_0000733) (narrower) | one method-driven run action (DSC, TGA) whose `returns` names the result file; `usage_count` counts runs |
+| `microplate_reader` (also `plate_reader`) | [OBI:0001058](http://purl.obolibrary.org/obo/OBI_0001058) | one protocol-driven read action whose `returns` names the result table; `robot_access_ready` when the tray is out |
+| `dissolution_tester` | none yet | a run action with typed media, speed and sampling times and `returns` naming the sample table; `usage_count` counts runs |
+| `capillary_electrophoresis_instrument` (also `electrophoresis`) | [OBI:0001132](http://purl.obolibrary.org/obo/OBI_0001132) | one method-driven run action whose `returns` names the result file; `usage_count` counts injections |
+| `real_time_pcr_machine` (also `qpcr`) | [OBI:0001110](http://purl.obolibrary.org/obo/OBI_0001110) | one plate-run action whose `returns` names the result export; `lid_closed` interlock; `usage_count` counts runs |
+| `flow_cytometer` (also `cytometer`) | [CHMO:0001957](http://purl.obolibrary.org/obo/CHMO_0001957) | one acquisition action whose `returns` names the FCS files; `usage_count` counts tubes or wells |
+| `spectrometer` (also `spectrophotometer`) | [AFE_0000857](http://purl.allotrope.org/ontologies/equipment#AFE_0000857) | an `acquire` action with typed integration time whose `returns` carries the spectrum or names its file |
+| `particle_analyzer` | none yet | measurements as signals with units; a `measure` action whose `returns` carries the size distribution summary |
+| `biosensor` | [CHMO:0002795](http://purl.obolibrary.org/obo/CHMO_0002795) | measurements as signals with units; `out_of_spec` from the instrument's self-check where it has one |
+| `cell_counter` | [AFE_0000524](http://purl.allotrope.org/ontologies/equipment#AFE_0000524) | measurements as signals with units; a `count` action whose `returns` carries concentration and viability |
+| `profilometer` | [CHMO:0001994](http://purl.obolibrary.org/obo/CHMO_0001994) | a `scan` action with typed length and force whose `returns` names the profile file and the step height |
+| `surface_analyzer` | [CHMO:0002648](http://purl.obolibrary.org/obo/CHMO_0002648) (narrower) | a method-driven acquisition whose `returns` names the spectrum or image; vacuum readiness as a signal and interlock |
+| `rheometer` | none yet | measured and setpoint temperature as separate signals; a method-driven run action whose `returns` names the result file; `lid_closed` interlock |
+| `mechanical_tester` | none yet | `load`, `extension` and `crosshead_state` signals; `run_test` with typed rate and limits whose `returns` carries peak load and modulus; e-stop halts the crosshead; `hardware_stop: true` |
+| `balance` | [AFE_0000693](http://purl.allotrope.org/ontologies/equipment#AFE_0000693) | `weigh` returning `{mass, unit, stable}`; `tare`; `calibration_status` from the instrument's own log where it has one |
+| `dispenser` (also `powder_dispenser`) | [NCIT:C69095](http://purl.obolibrary.org/obo/NCIT_C69095) (broader) | a `dose` action with typed target mass and tolerance whose `returns` carries the dispensed mass; `calibration_status` from the balance |
+| `pump` | [AFE_0000499](http://purl.allotrope.org/ontologies/equipment#AFE_0000499) | `flow`/`pressure` signals in UCUM; a `stop` that zeroes the setpoint; `estop: true` |
+| `mass_flow_controller` (also `flow_controller`) | [AFE_0001671](http://purl.allotrope.org/ontologies/equipment#AFE_0001671) | `flow`/`pressure` signals in UCUM; a `stop` that zeroes the setpoint; `estop: true` |
+| `valve` | [AFE_0000795](http://purl.allotrope.org/ontologies/equipment#AFE_0000795) | position as a setting with the vendor's names; `estop` leaves the valve where it is unless `safety.notes` says otherwise |
+| `titrator` | [AFE_0000876](http://purl.allotrope.org/ontologies/equipment#AFE_0000876) | one method-driven titration whose `returns` carries the result and its unit; `usage_count` counts titrations |
+| `hotplate` | none yet | the measured value and the setpoint as separate signals; `estop` turns heating and stirring off |
+| `stirrer` | [AFE_0000812](http://purl.allotrope.org/ontologies/equipment#AFE_0000812) | the measured value and the setpoint as separate signals; `estop` stops the motor |
+| `circulator` (also `water_bath`) | [OBI:0400155](http://purl.obolibrary.org/obo/OBI_0400155) (broader) | the measured value and the setpoint as separate signals; `circulating` as a signal |
+| `temperature_controller` | [AFE_0000528](http://purl.allotrope.org/ontologies/equipment#AFE_0000528) | the measured value and the setpoint as separate signals per loop |
+| `incubator` | [OBI:0000136](http://purl.obolibrary.org/obo/OBI_0000136) | the measured value and the setpoint as separate signals; `door_closed` as a signal and an interlock; `robot_access_ready` where a handling system loads it |
+| `oven` | [AFE_0000816](http://purl.allotrope.org/ontologies/equipment#AFE_0000816) | the measured value and the setpoint as separate signals; `door_closed` as a signal and an interlock |
+| `furnace` (also `tube_furnace`, `muffle_furnace`) | [NCIT:C49965](http://purl.obolibrary.org/obo/NCIT_C49965) | `temperature` and `temperature_setpoint` separate; `program_running` and `segment` signals; `run_program` with typed `segments` (target, ramp, dwell) and `returns`; `door_closed` interlock; watchdog `release`, because an abort mid-sinter is the damage |
+| `environmental_chamber` (also `stability_chamber`, `climate_chamber`) | none yet | temperature and humidity measured and setpoint as separate signals; `door_closed` as a signal and an interlock |
+| `glovebox` (also `glove_box`) | none yet | `o2_ppm`, `h2o_ppm`, `box_pressure` signals; `antechamber_state` enum; `antechamber_cycle` with a typed purge count; inner and outer door actions interlocked on each other; `robot_access_ready` only when the inner door is open and the box is still |
+| `shaker` (also `incubator_shaker`) | [OBI:0001076](http://purl.obolibrary.org/obo/OBI_0001076) (narrower) | the measured value and the setpoint as separate signals; `lid_closed` interlock; `robot_access_ready` where a handling system loads it |
+| `centrifuge` | [OBI:0400106](http://purl.obolibrary.org/obo/OBI_0400106) | `lid_closed` interlock on the run action; `robot_access_ready`; a run action that is `cancellable` |
+| `lyophilizer` (also `freeze_dryer`) | [OBI:0001087](http://purl.obolibrary.org/obo/OBI_0001087) | `lid_closed`/`door_closed` interlock on the run action; a recipe-driven run that is `cancellable`; watchdog `release` |
+| `rotary_evaporator` (also `evaporator`, `rotavap`) | [CHMO:0002199](http://purl.obolibrary.org/obo/CHMO_0002199) | bath temperature, rotation and vacuum each as measured and setpoint; `lid_closed`-style interlock on lowering the flask; a run that is `cancellable` |
+| `reactor` | [AFE_0000153](http://purl.allotrope.org/ontologies/equipment#AFE_0000153) | the measured value and the setpoint as separate signals; `door_closed`/`lid_closed` as a signal and an interlock where there is one; a recipe-driven run with `returns` |
+| `bioreactor` | [OBI:0001046](http://purl.obolibrary.org/obo/OBI_0001046) | the measured value and the setpoint as separate signals per loop; a recipe-driven run with `returns`; `robot_access_ready` where a sampler meets it |
+| `cryostat` | [OBI:0001072](http://purl.obolibrary.org/obo/OBI_0001072) | temperature and field measured and setpoint as separate signals; `chamber_state` enum; watchdog `release` |
+| `spin_coater` | none yet | a `run_recipe` action with typed steps (speed, acceleration, duration) and `returns`; `lid_closed` and `vacuum_ok` interlocks; `estop` stops the chuck |
+| `mill` (also `ball_mill`) | none yet | a `run` action with typed speed and duration and `returns`; `lid_closed` interlock; `estop` stops the drive |
+| `deposition_system` (also `sputter_system`, `evaporation_system`) | [CHMO:0002122](http://purl.obolibrary.org/obo/CHMO_0002122) (narrower) | `base_pressure`, `process_pressure`, `power`/`power_setpoint`, `shutter_open`, `substrate_temperature` signals; `deposit` with `returns` carrying the thickness estimate; `base_pressure_ok` and `door_closed` interlocks; `hardware_stop: true` where the tool has one |
+| `3d_printer` | none yet | a `print` action taking a file URI whose `returns` names the job; `door_closed` interlock; `estop` disables the heaters |
+| `cnc` | none yet | a `run_program` action taking a file URI; `door_closed` interlock; `estop: true` |
+| `laser` | [OBI:0400064](http://purl.obolibrary.org/obo/OBI_0400064) | output enable as a boolean setting; `shutter_open` as a signal; `estop` closes the shutter and disables emission |
+| `potentiostat` | [CHMO:0002427](http://purl.obolibrary.org/obo/CHMO_0002427) | output enable as a boolean setting; `estop` disables every output; `returns` on acquisitions names the data file |
+| `battery_cycler` (also `battery_tester`) | none yet | a `channel` parameter on every action; `start_protocol` with typed steps (mode, current, voltage, time limits) and `returns` carrying cycle count and last capacity; `channel_state` signal; `estop` opens every channel |
+| `source_meter` (also `source_measure_unit`) | none yet | output enable as a boolean setting; `estop` disables every output; `returns` on sweeps names the data file |
+| `lock_in_amplifier` | [CHMO:0002340](http://purl.obolibrary.org/obo/CHMO_0002340) | output enable as a boolean setting; `estop` disables every output; `returns` on acquisitions names the data file |
+| `oscilloscope` | [OBI:0000948](http://purl.obolibrary.org/obo/OBI_0000948) | an `acquire` action whose `returns` names the waveform file |
+| `power_supply` | [OBI:0400142](http://purl.obolibrary.org/obo/OBI_0400142) | output enable as a boolean setting; `estop` disables every output |
+| `data_acquisition_device` (also `daq`) | [AFE_0000555](http://purl.allotrope.org/ontologies/equipment#AFE_0000555) | channels as signals with units; output enable as a boolean setting; `estop` disables every output |
+| `sensor` | [AFE_0002184](http://purl.allotrope.org/ontologies/equipment#AFE_0002184) | measurements as signals with units; `out_of_spec` from the instrument's self-check where it has one |
+| `vacuum_gauge` (also `pressure_gauge`) | none yet | pressure as a signal in UCUM; `out_of_spec` from the gauge's self-check where it has one |
+| `generic` | none yet | no convention; name the capabilities plainly and say in `notes` what the device is |
 
 ---
 

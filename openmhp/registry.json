@@ -456,7 +456,7 @@
   },
   {
    "name": "bruker-nmr-iconnmr",
-   "class": "nmr",
+   "class": "nuclear_magnetic_resonance_spectrometer",
    "make": "Bruker",
    "model": "Avance NEO / III HD under TopSpin with ICON-NMR",
    "kind": "file",
@@ -618,7 +618,7 @@
   },
   {
    "name": "protein-simple-maurice-ce",
-   "class": "electrophoresis",
+   "class": "capillary_electrophoresis_instrument",
    "make": "ProteinSimple (Bio-Techne)",
    "model": "Maurice (cIEF and CE-SDS) under Compass for iCE",
    "kind": "file",
@@ -658,7 +658,7 @@
   },
   {
    "name": "thermo-quantstudio-qpcr",
-   "class": "qpcr",
+   "class": "real_time_pcr_machine",
    "make": "Applied Biosystems (Thermo Fisher Scientific)",
    "model": "QuantStudio 5/7 under QuantStudio Design & Analysis Software 2",
    "kind": "file",
@@ -697,7 +697,7 @@
   },
   {
    "name": "cytek-aurora-flow-cytometer",
-   "class": "cytometer",
+   "class": "flow_cytometer",
    "make": "Cytek Biosciences",
    "model": "Aurora / Northern Lights under SpectroFlo",
    "kind": "file",
@@ -816,7 +816,7 @@
   },
   {
    "name": "sp-lyostar-freeze-dryer",
-   "class": "freeze_dryer",
+   "class": "lyophilizer",
    "make": "SP Scientific",
    "model": "LyoStar 3 / LyoStar 4 (Martin Christ Epsilon 2-4 LSCplus via notes)",
    "kind": "modbus",
@@ -894,7 +894,7 @@
   },
   {
    "name": "bmg-clariostar-plate-reader",
-   "class": "plate_reader",
+   "class": "microplate_reader",
    "make": "BMG LABTECH (also Molecular Devices, Tecan)",
    "model": "CLARIOstar / PHERAstar (SpectraMax via SoftMax Pro, Spark via SiLA 2)",
    "kind": "sdk",
@@ -1288,7 +1288,7 @@
   },
   {
    "name": "buchi-rotavapor-r300",
-   "class": "evaporator",
+   "class": "rotary_evaporator",
    "make": "Büchi",
    "model": "Rotavapor R-300 with Interface I-300 Pro, VacuBox and V-300 pump",
    "kind": "rest",
@@ -1798,7 +1798,7 @@
   },
   {
    "name": "labjack-t-series",
-   "class": "daq",
+   "class": "data_acquisition_device",
    "make": "LabJack",
    "model": "T4 / T7 / T8 (LJM library)",
    "kind": "sdk",
@@ -1838,7 +1838,7 @@
   },
   {
    "name": "ni-daqmx",
-   "class": "daq",
+   "class": "data_acquisition_device",
    "make": "National Instruments",
    "model": "USB-6001/6008/6009, USB-621x, 63xx (NI-DAQmx)",
    "kind": "sdk",
@@ -2225,7 +2225,7 @@
   },
   {
    "name": "alicat-flow-controller",
-   "class": "flow_controller",
+   "class": "mass_flow_controller",
    "make": "Alicat Scientific",
    "model": "MC / MCR mass flow controller (PC / PCD pressure controller compatible)",
    "kind": "serial",

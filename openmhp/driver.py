@@ -1158,6 +1158,7 @@ class Driver:
             "id": d["id"], "class": d["class"], "make": d.get("make"), "model": d.get("model"),
             "location": d.get("location"), "tags": d.get("tags", []),
             "description": description,
+            **({"class_ref": d["class_ref"]} if d.get("class_ref") else {}),    # SPEC 13: ontology term
             "state": self.state,
             "signals": list(self._index["signals"]), "settings": list(self._index["settings"]),
             "actions": list(self._index["actions"]),

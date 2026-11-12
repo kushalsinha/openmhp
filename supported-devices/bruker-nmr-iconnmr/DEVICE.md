@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: bruker-nmr-iconnmr-01
-class: nmr
+class: nuclear_magnetic_resonance_spectrometer
 make: Bruker
 model: Avance NEO / III HD under TopSpin with ICON-NMR
 location: ""
