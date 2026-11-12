@@ -335,7 +335,7 @@ to, so they name it; the package carries the vendor route and the node serves wh
 are in its folder:
 
 ```bash
-pip install openmhp
+pip install "openmhp[node]"       # the `node` extra adds serial, MQTT and mDNS, which a bench PC needs
 mhp node add                      # lists the ready-made packages
 mhp node add waters-empower-hplc  # fetches it, then asks the questions and leaves the node running
 ```
@@ -369,6 +369,23 @@ node then generates a token the first time it starts (`~/.openmhp/device_token`)
 (`export OPENMHP_DEVICE_TOKEN=...`); discovery stays open, so `mhp lab scan` still finds the
 devices. `--no-auth` serves the network without one, and callers from off the machine can then no
 longer confirm approval-gated operations.
+
+### An instrument PC that only has Python
+
+A bench PC needs no Node, no agent and no second environment. Python 3.10 or newer and one
+install are enough. The node pulls its package from this repository's `main`; `add` asks for the
+gateway pairing line (from `mhp gateway pair` on the gateway) and offers to keep the node running:
+
+```bash
+pip install "openmhp[node]"
+mhp node add waters-empower-hplc          # fetch, configure, pair with the gateway, install the service
+mhp node --join https://gw.office ab12-cd34 --install-service   # or, for packages already in the folder
+```
+
+`npx openmhp-node setup` does the same through a prompt, for a PC that already has Node. Neither
+is required: everything `openmhp-node` does is `mhp node`. Packages are downloaded when you add
+one, not shipped in the wheel, so a package merged to `main` can be added before the next release,
+and `pip install -U openmhp` is what refreshes the list `mhp node add` shows.
 
 ### Instruments behind the lab firewall
 
