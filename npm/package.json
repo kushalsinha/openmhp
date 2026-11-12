@@ -1,6 +1,6 @@
 {
   "name": "openmhp-cli",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Open Model Hardware Protocol: run the OpenMHP MCP server and add lab instruments so any AI agent harness can control them safely.",
   "bin": { "openmhp": "bin/openmhp.js" },
   "files": ["bin", "lib", "README.md"],

@@ -161,9 +161,42 @@ def test_relay_end_to_end():
     b.write("pressure_setpoint_ch1", 200)
 
     # ---- directory: one URL, every relayed device, targets are gateway URLs, live state from the node
+    st, plate = raw("/directory/mhp.json", token=A)              # the open nameplate, with an agent token
+    assert st == 200 and plate["device"]["id"] == "directory" and plate["capabilities"]["devices"] == len(drivers)
     d = connect(f"{base}/directory/", "dir")
     res = d.call("directory/search", {"query": "thermocycler"})["results"]
     assert res and res[0]["target"].startswith(f"{base}/bench/") and res[0]["state"] not in (None, "offline")
+
+    # ---- an agent machine pairs with a code (SPEC 9.2): nothing to paste, the certificate is pinned
+    from openmhp import agent as AG
+    from openmhp.client import HttpDevice
+    with contextlib.redirect_stderr(log):
+        assert G.pair_agent("laptop") == 0 and G.pair() == 0
+    acode = next(c for c, v in G.load()["codes"].items() if v.get("kind") == "agent")
+    ncode = next(c for c, v in G.load()["codes"].items() if v.get("kind", "node") == "node")
+    with raises(SystemExit) as ei:                              # a lab PC cannot join with an agent code
+        R.join(base, acode, drivers, name="bench3", quiet=True)
+    assert "refused the code" in str(ei.value)
+    with raises(SystemExit) as ei:                              # and an agent machine cannot join with a lab PC code
+        AG.join(base, ncode, quiet=True)
+    assert "refused the code" in str(ei.value)
+    acfg = AG.join(base, acode, quiet=True)
+    assert acfg["name"] == "laptop" and acfg["directory"] == f"{base}/directory/" and AG.AGENT_FILE.is_file()
+    assert Path(acfg["pin"]).is_file() and "laptop" in G.load()["agents"].values()
+    with raises(SystemExit):                                    # single use
+        AG.join(base, acode, quiet=True)
+    dev = HttpDevice(f"{base}/bench/{oid}/", "laptop-test")      # no token given, no env: agent.json supplies both
+    assert dev.token == acfg["token"] and dev._ctx is not None and dev.call("ping")["ok"] is True
+    assert AG.access("https://elsewhere.example/dev") == (None, None)   # the token and the pin are not offered elsewhere
+    assert AG.access(base + "x/dev") == (None, None)                     # nor to a lookalike host
+    with contextlib.redirect_stderr(log):
+        assert G.pair_agent("laptop") == 0                       # pairing again: same name, old token stops working
+    acode2 = next(c for c, v in G.load()["codes"].items() if v.get("kind") == "agent")
+    acfg2 = AG.join(base, acode2, quiet=True)
+    assert acfg2["name"] == "laptop" and raw("/", token=acfg["token"])[0] == 401 and raw("/", token=acfg2["token"])[0] == 200
+    with contextlib.redirect_stderr(log):
+        assert AG.status() == 0 and AG.leave() == 0 and AG.status() == 1
+    assert not AG.AGENT_FILE.is_file() and AG.access(f"{base}/bench/{oid}/") == (None, None)
 
     # ---- node goes away: 503, nothing queued; comes back: re-registers, works, nothing replayed
     node.close()

@@ -335,7 +335,7 @@ to, so they name it; the package carries the vendor route and the node serves wh
 are in its folder:
 
 ```bash
-pip install openmhp
+pip install "openmhp[node]"       # the `node` extra adds serial, MQTT and mDNS, which a bench PC needs
 mhp node add                      # lists the ready-made packages
 mhp node add waters-empower-hplc  # fetches it, then asks the questions and leaves the node running
 ```
@@ -370,6 +370,23 @@ node then generates a token the first time it starts (`~/.openmhp/device_token`)
 devices. `--no-auth` serves the network without one, and callers from off the machine can then no
 longer confirm approval-gated operations.
 
+### An instrument PC that only has Python
+
+A bench PC needs no Node, no agent and no second environment. Python 3.10 or newer and one
+install are enough. The node pulls its package from this repository's `main`; `add` asks for the
+gateway pairing line (from `mhp gateway pair` on the gateway) and offers to keep the node running:
+
+```bash
+pip install "openmhp[node]"
+mhp node add waters-empower-hplc          # fetch, configure, pair with the gateway, install the service
+mhp node --join https://gw.office ab12-cd34 --install-service   # or, for packages already in the folder
+```
+
+`npx openmhp-node setup` does the same through a prompt, for a PC that already has Node. Neither
+is required: everything `openmhp-node` does is `mhp node`. Packages are downloaded when you add
+one, not shipped in the wheel, so a package merged to `main` can be added before the next release,
+and `pip install -U openmhp` is what refreshes the list `mhp node add` shows.
+
 ### Instruments behind the lab firewall
 
 In most companies the instrument network is one nothing outside may enter, and IT will not open
@@ -384,11 +401,14 @@ as being at your desk.
 # on the gateway machine, once
 mhp gateway init
 mhp gateway serve --install-service
-mhp gateway pair                    # one-time code for one lab PC
-mhp gateway add-agent my-laptop     # token + one line for each agent machine
+mhp gateway pair                    # one-time code for one lab PC (15 minutes)
+mhp gateway pair-agent              # one-time code for one agent machine (1 hour); send it in chat
 
 # on the lab PC: `mhp node add <package>` asks for this line; or, for packages already there, once:
 mhp node --join https://gw.office ab12-cd34
+
+# on the agent machine, once; after that plain `mhp-mcp` reaches every instrument behind the gateway
+mhp agent --join https://gw.office ef56-ab78
 ```
 
 ![One call through the relay: the lab PC holds a long-poll open on the gateway; the agent posts its request with its token; the gateway queues it under the agent's name and hands it to the open poll once; the driver runs it on the bench with every limit enforced; the reply comes back the same way. Offline means 503 at once, no answer means 504, and nothing is re-sent.](assets/openmhp-relay-flow.svg)

@@ -1221,6 +1221,12 @@ def main(argv=None):
         from .fleet import Fleet
         fleet = Fleet()                  # ~/.openmhp/fleet.json, possibly empty: mhp_lab fills it
         print(f"MHP bridge: lab from {fleet.path} ({len(fleet.devices)} devices)", file=sys.stderr)
+        from .agent import load_agent_config
+        joined = load_agent_config()     # `mhp agent --join`: the gateway's directory, with its token and pinned certificate
+        if joined:
+            from .client import connect
+            directory = connect(joined["directory"], "directory")
+            print(f"MHP bridge: directory {joined['directory']} (gateway joined as '{joined['name']}')", file=sys.stderr)
     bridge = Bridge(targets, directory, fleet, scripts=scripts)
     if not bridge.scripts:
         print("MHP bridge: running no scripts; mhp_run is not offered and recipes are read-only", file=sys.stderr)

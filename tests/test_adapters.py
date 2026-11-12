@@ -194,6 +194,30 @@ def test_directory_live_state():
     assert ghost["state"] == "unreachable"
 
 
+def test_directory_answers_its_nameplate_when_served():
+    """GET /mhp.json on a served directory used to drop the connection: transport asked the directory for
+    device/describe, which it did not answer. The gateway's /directory/mhp.json went the same way."""
+    import socket
+    import threading
+    import urllib.request
+    from openmhp import transport
+    d = Directory(state_ttl=0)
+    d.add({"id": "oven-01", "class": "oven", "notes": "pcr oven"}, "http://127.0.0.1:1")
+    plate = d.rpc("device/describe", {})
+    assert plate["device"]["id"] == "directory" and plate["role"] == "directory" and plate["capabilities"]["devices"] == 1
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+    threading.Thread(target=lambda: transport.serve_http(d, "127.0.0.1", port), daemon=True).start()
+    for _ in range(50):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/mhp.json", timeout=2) as r:
+                assert json.loads(r.read())["device"]["class"] == "directory"
+                break
+        except (ConnectionError, OSError):
+            time.sleep(0.1)
+    else:
+        raise AssertionError("served directory never answered GET /mhp.json")
+
+
 # ------------------------------------------------------- device packages ---- #
 def test_device_package_three_levels():
     import pathlib
@@ -235,6 +259,8 @@ def test_fleet_scan_and_lab_tool(tmp_home=None):
     # a device somewhere "on the network"
     threading.Thread(target=serve_http, args=(SimThermocycler(),), kwargs={"port": 18933}, daemon=True).start()
     time.sleep(0.5)
+    import openmhp.discovery as discovery
+    discovery.scan_mdns = lambda *a, **k: []     # hermetic: an MHP device advertising on this LAN would be found too
     fleet = Fleet()
     assert fleet.list() == []
     found = fleet.scan(ports=[18933])

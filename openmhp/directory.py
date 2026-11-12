@@ -243,8 +243,20 @@ class Directory:
             return {**self.cards[cid], "state": self.live_state(cid), "target": self.targets[cid]}
         if method == "directory/stats":
             return self.stats()
+        if method == "device/describe":                  # the nameplate: GET /mhp.json on a served directory
+            return self.nameplate()
         raise MethodNotFound(f"unknown method {method}")
 
+    def nameplate(self) -> dict:
+        """What ``GET /mhp.json`` returns for a directory, served directly or through a gateway:
+        the descriptor shape a device answers with, so discovery tools read it the same way."""
+        return {**self.descriptor, "mhp": PROTOCOL_VERSION, "role": "directory", "state": "idle",
+                "capabilities": {"search": True, "liveState": True, "devices": len(self.cards)},
+                "methods": ["initialize", "ping", "directory/search", "directory/get", "directory/stats",
+                            "device/describe"]}
+
     # so transport.serve_http/serve_stdio can host a directory unchanged
-    descriptor = {"device": {"id": "directory", "class": "directory"}}
+    descriptor = {"device": {"id": "directory", "class": "directory",
+                             "description": "Searchable index of the devices this directory knows; "
+                                            "cards, live state and the URL to reach each one."}}
     subscribers: list = []
