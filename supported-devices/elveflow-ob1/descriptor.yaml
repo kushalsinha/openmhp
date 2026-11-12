@@ -4,19 +4,26 @@ device:
     flow with the sensor rather than assuming it from pressure.
 
 physical:
+  automated_load: false
   notes: Pressurised reservoirs and tubing. Needs a clean dry gas supply above the highest setpoint.
 
 signals:
   - {name: connected, type: boolean, notes: True when the Elveflow SDK session is open.}
-  - {name: pressure_ch1, type: number, unit: mbar}
-  - {name: pressure_ch2, type: number, unit: mbar}
-  - {name: pressure_ch3, type: number, unit: mbar}
-  - {name: pressure_ch4, type: number, unit: mbar}
-  - {name: flow_ch1, type: number, unit: uL/min, notes: MFS reading on this channel; null if no sensor is configured.}
-  - {name: flow_ch2, type: number, unit: uL/min}
-  - {name: flow_ch3, type: number, unit: uL/min}
-  - {name: flow_ch4, type: number, unit: uL/min}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job started here is active; the actions here finish in seconds, so it is rarely true.}
+  - {name: pressure_ch1, type: number, unit: mbar, nullable: true, notes: Measured pressure; null if the channel has no regulator in config.json.}
+  - {name: pressure_ch2, type: number, unit: mbar, nullable: true}
+  - {name: pressure_ch3, type: number, unit: mbar, nullable: true}
+  - {name: pressure_ch4, type: number, unit: mbar, nullable: true}
+  - {name: flow_ch1, type: number, unit: uL/min, nullable: true, notes: MFS reading on this channel; null if no sensor is configured.}
+  - {name: flow_ch2, type: number, unit: uL/min, nullable: true}
+  - {name: flow_ch3, type: number, unit: uL/min, nullable: true}
+  - {name: flow_ch4, type: number, unit: uL/min, nullable: true}
   - {name: flow_control_active, type: boolean, notes: True while the OB1 feedback loop is holding a flow.}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); the sensor calibration file is applied by the driver but the OB1 reports no calibration state of its own."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next calibration is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Jobs completed here (set_flow, stop_flow_control and vent), unless the lab's record carries its own count.}
 
 settings:
   - name: pressure_setpoint_ch1
@@ -51,16 +58,21 @@ actions:
     approval: auto
     interlocks: [connected]
     params:
-      channel: "integer 1..4: the regulator channel that drives the liquid"
-      flow_ul_min: "number: target flow in uL/min"
-      sensor_channel: "integer 1..4 (optional): channel the MFS is plugged into; defaults to channel"
-      p: "number (optional): proportional gain"
-      i: "number (optional): integral gain"
+      channel: {type: integer, notes: The regulator channel (1..4) that drives the liquid.}
+      flow_ul_min: {type: number, unit: uL/min, notes: Target flow.}
+      sensor_channel: {type: integer, limits: {min: 1, max: 4}, nullable: true, notes: Channel the MFS is plugged into. Omitted or null means the same channel as `channel`.}
+      p: {type: number, unit: "1", nullable: true, notes: Proportional gain of the feedback loop. Omitted or null uses config.json `pid.p` (0.05 when that is not set).}
+      i: {type: number, unit: "1", nullable: true, notes: Integral gain of the feedback loop. Omitted or null uses config.json `pid.i` (0.01 when that is not set).}
     required: [channel, flow_ul_min]
     limits:
       channel: [1, 4]
-      sensor_channel: [1, 4]
       flow_ul_min: [0, 5000]
+    returns:
+      type: object
+      properties:
+        channel: {type: integer, notes: Regulator channel under flow control.}
+        sensor_channel: {type: integer, notes: Sensor channel the loop reads.}
+        target_ul_min: {type: number, unit: uL/min}
     notes: Starts the OB1 feedback loop holding a flow. PROVISIONAL flow limit; set it to the MFS model's range.
     examples:
       - {channel: 1, flow_ul_min: 500}
@@ -68,11 +80,20 @@ actions:
     duration: short
     approval: auto
     interlocks: [connected]
+    returns:
+      type: object
+      properties:
+        stopped: {type: boolean}
     notes: Stops the feedback loop; channels return to fixed-pressure control at 0 mbar.
   - name: vent
     duration: short
     approval: auto
     interlocks: [connected]
+    returns:
+      type: object
+      properties:
+        vented: {type: boolean}
+        pressures: {type: object, notes: "Regulated channel -> pressure in mbar read after venting."}
     notes: Sets every channel to 0 mbar. The safe state.
 
 safety:

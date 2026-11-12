@@ -147,7 +147,9 @@ class OB1(Driver):
                 return False
         if name == "flow_control_active":
             return bool(self.flow_loops)
-        kind, _, ch = name.rpartition("_ch")
+        kind, sep, ch = name.rpartition("_ch")
+        if not sep or not ch.isdigit():               # state, busy, self-state: the base answers those
+            raise InvalidValue(f"unknown signal {name}")
         ch = int(ch)
         if kind == "pressure":
             return round(self._hw().pressure(ch), 2) if self._regulated(ch) else None
@@ -169,7 +171,9 @@ class OB1(Driver):
     def validate_params(self, action: str, params: dict) -> None:
         if action == "set_flow":
             ch = params.get("channel")
-            sch = params.get("sensor_channel", ch)
+            sch = params.get("sensor_channel")
+            if sch is None:                           # omitted or null: the sensor is on the driving channel
+                sch = ch
             if isinstance(ch, int) and self.cfg and not self._regulated(ch):
                 raise InvalidValue(f"channel {ch} has no regulator in config.json")
             if isinstance(sch, int) and self.cfg and not self._has_sensor(sch):
@@ -180,10 +184,11 @@ class OB1(Driver):
         p = job.params
         if job.action == "set_flow":
             ch = int(p["channel"])
-            sch = int(p.get("sensor_channel", ch))
-            pid = self.cfg.get("pid") or {}
-            hw.start_flow_control(ch, sch, float(p["flow_ul_min"]), float(p.get("p", pid.get("p", 0.05))),
-                                  float(p.get("i", pid.get("i", 0.01))))
+            sch = int(p["sensor_channel"]) if p.get("sensor_channel") is not None else ch
+            pid = self.cfg.get("pid") or {}          # omitted or null gains come from config.json, then the SDK defaults
+            gain_p = float(p["p"]) if p.get("p") is not None else float(pid.get("p", 0.05))
+            gain_i = float(p["i"]) if p.get("i") is not None else float(pid.get("i", 0.01))
+            hw.start_flow_control(ch, sch, float(p["flow_ul_min"]), gain_p, gain_i)
             self.flow_loops[ch] = sch
             return {"channel": ch, "sensor_channel": sch, "target_ul_min": float(p["flow_ul_min"])}
         if job.action == "stop_flow_control":

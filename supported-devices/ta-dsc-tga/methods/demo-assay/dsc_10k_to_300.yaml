@@ -1,0 +1,30 @@
+name: dsc_10k_to_300
+project: demo-assay
+action: queue_run
+params:
+  instrument: dsc
+  sample_name: sample
+  mass_mg: 3.0
+  pan_position: null
+  program:
+    segments:
+    - type: ramp
+      rate_k_min: 10
+      to_c: 300
+      hold_min: 0
+compounds:
+- demo compound
+version: 1
+hash: fd2d225c1ffc
+created: 1794432004.372735
+updated: 1794432004.372735
+validated:
+  at: 1794432004.372735
+  hash: fd2d225c1ffc
+status: active
+author: package author
+notes: 'Example only: a 10 K/min DSC heating ramp from standby to 300 degC in a crimped
+  aluminium pan. sample_name, pan_position and mass_mg are passed per run.'
+source:
+  kind: person
+  ref: shipped example

@@ -382,6 +382,8 @@ class EmpowerHPLC(Driver):
             return self._hw().status()
         if name == "busy":
             return self.is_busy
+        if name == "robot_access_ready":
+            return not self.is_busy                        # vials may be loaded while no sample set from here runs
         if name == "last_result":
             return self.last_result
         raise InvalidValue(f"unknown signal {name}")

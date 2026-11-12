@@ -1,0 +1,12 @@
+{
+  "job_dir": "C:\\ProgramData\\Bruker AXS\\DIFFRAC.SUITE\\Jobs\\openmhp",
+  "results_dir": "C:\\ProgramData\\Bruker AXS\\DIFFRAC.SUITE\\Results\\openmhp",
+  "xy_dir": "",
+  "methods_dir": "C:\\ProgramData\\Bruker AXS\\DIFFRAC.SUITE\\Methods",
+  "changer_positions": 9,
+  "changer_s": 60,
+  "max_points": 20000,
+  "max_scan_hours": 12,
+  "poll_s": 10,
+  "result_wait_s": 7200
+}

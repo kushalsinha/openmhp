@@ -4,10 +4,13 @@ device:
     UNICORN's OPC Data Access server. UNICORN keeps its own pressure alarms and user rights.
 
 physical:
-  notes: Pumps to 20 MPa (system); column limits are usually far lower and are set in the method. Buffers may be corrosive or flammable (ethanol storage solution).
+  automated_load: false
+  notes: Samples are loaded by a person (sample loop, pump or superloop as the method expects); no handling system loads it. Pumps to 20 MPa (system); column limits are usually far lower and are set in the method. Buffers may be corrosive or flammable (ethanol storage solution).
 
 signals:
   - {name: connected, type: boolean, notes: True when the UNICORN OPC DA server answers.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job from here (run_method) is in progress; run_state says what UNICORN itself is doing.}
   - {name: in_control, type: boolean, notes: True when this package holds control of the system (UNICORN AssignState = Control).}
   - {name: run_state, type: string, notes: "UNICORN run state: Ready, Method Run, System Pause, Hold, Manual Pause, Wash, Alarms and errors, Starting method run, ..."}
   - {name: current_method, type: string}
@@ -18,7 +21,11 @@ signals:
   - {name: pressure_MPa, type: number, unit: MPa, notes: System pressure as configured (pre-column pressure if the avant has the sensor).}
   - {name: flow_ml_min, type: number, unit: mL/min}
   - {name: live, type: object, notes: Pushed every few seconds during a run with all of the above.}
-  - {name: last_result, type: object}
+  - {name: last_result, type: object, notes: Result of the most recent run_method from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); UNICORN's own system checks are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Method runs started from here (the lab's recorded count, or the number of finished run_method jobs when none is recorded).}
 
 settings: []
 
@@ -51,6 +58,28 @@ actions:
     notes: >
       Takes control, writes variables, questions, batch id and result name, then starts the method,
       and follows it until UNICORN returns to Ready. Cancelling the job ends the run (result saved).
+    returns:
+      type: object
+      required: [method, result_name, variables, duration_s, final, note]
+      properties:
+        method: {type: string}
+        result_name: {type: string, notes: The UNICORN result the chromatogram and peak table are stored under.}
+        variables: {type: object, notes: "The Start Protocol variables written, {name: value}; empty when none were given."}
+        duration_s: {type: number, unit: s, notes: Wall time from the start command to UNICORN returning to Ready.}
+        last_live: {type: object, nullable: true, notes: "The last live snapshot pushed during the run: t_s plus the keys of final; null if none was pushed."}
+        final:
+          type: object
+          notes: The snapshot read when UNICORN returned to Ready.
+          properties:
+            run_state: {type: string}
+            uv_mAU: {type: number, unit: "{mAU}", nullable: true, notes: null when config.json maps no OPC item for it.}
+            conductivity_mS_cm: {type: number, unit: mS/cm, nullable: true}
+            pressure_MPa: {type: number, unit: MPa, nullable: true}
+            flow_ml_min: {type: number, unit: mL/min, nullable: true}
+            current_method: {type: string, nullable: true}
+            current_result: {type: string, nullable: true}
+            current_block: {type: string, nullable: true}
+        note: {type: string, notes: Where the data is.}
     examples:
       - {method: "HisTrap_5ml_purification", result_name: "batch12_IMAC", variables: {"Sample volume": 20, "Flow rate": 1.0}}
   - name: pause

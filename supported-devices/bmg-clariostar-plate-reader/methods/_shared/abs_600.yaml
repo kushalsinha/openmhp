@@ -1,0 +1,23 @@
+name: abs_600
+project: _shared
+action: read
+params:
+  protocol: abs_600
+  export_path: null
+compounds:
+- od600
+- cell density
+version: 1
+hash: 5d58bbcbddae
+created: 1794432388
+updated: 1794432388
+validated:
+  at: 1794432388
+  hash: 5d58bbcbddae
+status: active
+author: package example
+notes: Endpoint absorbance at 600 nm, 96-well, as the vendor protocol abs_600 defines
+  it; plate_id is given per run.
+source:
+  kind: manual
+  ref: example record shipped with the package; replace with the lab's own

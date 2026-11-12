@@ -1,0 +1,8 @@
+{
+  "import_dir": "C:\\OpenMHP\\cary\\requests",
+  "results_dir": "C:\\OpenMHP\\cary\\results",
+  "software": "Cary WinUV 5.1 (Cary 60) and MicroLab 5.7 (Cary 630)",
+  "write_adl": false,
+  "result_wait_s": 900,
+  "poll_s": 5
+}

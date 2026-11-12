@@ -1,0 +1,125 @@
+device:
+  notes: >
+    Applied Biosystems QuantStudio 5 or 7 real-time PCR instrument under QuantStudio Design & Analysis
+    Software 2. The software imports a plate setup file into a run template and exports results per plate; the
+    run itself is started at the instrument's touchscreen (or by the lab's helper). This package writes the
+    plate setup and a request naming the template, and reads the results export back.
+
+physical:
+  automated_load: true
+  notes: >
+    96-well (0.2 mL or 0.1 mL) or 384-well block with a heated cover. A handling system can place a sealed plate
+    on the block between runs; the block's plate-access cover and the heated cover state are not exported by the
+    software, so robot_access_ready is not declared and a handling system must take that state from elsewhere.
+    The heated cover reaches 105 degC; the block ramps to 100 degC. The block temperature is not exported either.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the plate folder and the results folder in config.json exist and are writable from this host.}
+  - {name: queue_depth, type: integer, unit: "1", notes: Plate requests written by this package that have not been started and exported yet.}
+  - {name: block_temperature, type: number, unit: Cel, nullable: true, notes: "Always null: Design & Analysis exports no live block temperature. Declared so an orchestrator reads one name on every thermal instrument."}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent queue_run from here (same shape as its returns); null until one has run.}
+  - {name: run_state, type: string, notes: "What the folders say: 'queued' while a request waits in the plate folder, else 'idle'. The instrument's own run state is not exported; the twin also reports 'running'."}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a plate queued from here waits for its results export.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state). The instrument's dye, background and ROI calibration dates are shown on its touchscreen and are not exported.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Plates queued from here (the lab's recorded count, or the number of finished queue_run jobs when none is recorded). The instrument's run counter is not exported.}
+
+settings: []
+
+actions:
+  - name: queue_run
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      plate_id: {type: string, notes: "Plate barcode or name for the request and the record: letters, digits, space, '_', '.', '-'; at most 64 characters."}
+      plate_setup:
+        type: array
+        notes: One entry per used well; the job token is appended to each sample name so the export can be matched.
+        items:
+          type: object
+          required: [well, sample, target]
+          properties:
+            well: {type: string, notes: Well position A1..H12 (96-well); each well once.}
+            sample: {type: string, notes: Sample Name column of the plate setup file.}
+            target: {type: string, notes: Target Name column (the assay).}
+            task: {type: string, limits: {enum: [UNKNOWN, STANDARD, NTC, POSITIVE]}, default: UNKNOWN, notes: Task column as the software spells it.}
+      template: {type: string, notes: "Run template (.edt) in the software's library that holds the run method, dyes and analysis settings, e.g. 'Assay_X_fast.edt'; optionally restricted by allowed_templates in config.json."}
+      program:
+        type: object
+        nullable: true
+        notes: The cycling program the template is expected to contain, written into the request so the person starting the run can check it; null leaves it to the template. It does not change the template.
+        required: [stages]
+        properties:
+          stages:
+            type: array
+            items:
+              type: object
+              required: [steps, cycles]
+              properties:
+                steps:
+                  type: array
+                  items:
+                    type: object
+                    required: [temp, hold_s]
+                    properties:
+                      temp: {type: number, unit: Cel, limits: {min: 4, max: 100}, resolution: 0.1}
+                      hold_s: {type: number, unit: s, limits: {min: 1, max: 3600}}
+                cycles: {type: integer, limits: {min: 1, max: 60}}
+    required: [plate_id, plate_setup, template]
+    notes: >
+      Writes mhp_<job>_plate_setup.txt (Well, Sample Name, Target Name, Task, Reporter, Quencher) and
+      mhp_<job>.json (template, program) to the watched folder and waits for the results export
+      *mhp_<job>* in the results folder. On a QuantStudio 5/7 a run is started from the touchscreen (or the
+      software connected to the instrument), so by default this only queues work; if the lab's helper starts
+      the run from the file, the request can start a 100 degC block and a 105 degC heated cover, which is why
+      each call is confirmed by a person. Cancelling withdraws the request if nobody has started it; a run
+      already started finishes on the instrument.
+    returns:
+      type: object
+      required: [plate_id, file, wells, results, duration_s]
+      properties:
+        plate_id: {type: string}
+        file: {type: string, notes: Path of the results export.}
+        wells: {type: integer, notes: Distinct wells with a result row for this plate.}
+        results:
+          type: array
+          notes: One row per well and target from the export's Results table, sample names with the token removed.
+          items:
+            type: object
+            required: [well, sample, target, amp_status]
+            properties:
+              well: {type: string}
+              sample: {type: string}
+              target: {type: string}
+              ct: {type: number, nullable: true, notes: Cq/CT; null when the software reports Undetermined.}
+              quantity: {type: number, nullable: true, notes: From the standard curve when the template has one; null otherwise.}
+              amp_status: {type: string, notes: "Amp, No Amp, Inconclusive or N/A as the software reports it."}
+        duration_s: {type: number, unit: s, notes: From writing the request to reading the export.}
+    examples:
+      - plate_id: "QS5-2026-0142"
+        template: "GAPDH_TaqMan_fast.edt"
+        plate_setup:
+          - {well: "A1", sample: "calibrator", target: "GAPDH", task: UNKNOWN}
+          - {well: "A2", sample: "lot 42 harvest", target: "GAPDH", task: UNKNOWN}
+          - {well: "A3", sample: "NTC", target: "GAPDH", task: NTC}
+        program:
+          stages:
+            - {steps: [{temp: 95, hold_s: 20}], cycles: 1}
+            - {steps: [{temp: 95, hold_s: 1}, {temp: 60, hold_s: 20}], cycles: 40}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 900
+  watchdog_action: release
+  notes: >
+    No stop command reaches the instrument: a run is stopped at its touchscreen or from the connected software,
+    and the heated cover (105 degC) is the instrument's own hazard. An e-stop here withdraws every plate request
+    not yet started, so nothing further is queued; a run already started finishes on the instrument. Fifteen
+    minutes of silence from the controller releases the lease and lets a waiting job finish, since a PCR plate
+    mid-run should not be abandoned.

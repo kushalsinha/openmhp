@@ -1,37 +1,2385 @@
 {
-  "packages": [
-    {"name": "ika-c-mag-hs7", "class": "hotplate", "make": "IKA", "model": "C-MAG HS 7", "kind": "serial",
-     "description": "IKA C-MAG HS 7 magnetic stirrer hotplate over its USB/RS-232 port (NAMUR command set). Heating to 500 C, stirring to 1500 rpm.",
-     "tags": ["heating", "stirring", "chemistry"], "target": "github:kushalsinha/openmhp/supported-devices/ika-c-mag-hs7", "sim": true},
-    {"name": "opentrons-flex", "class": "liquid_handler", "make": "Opentrons", "model": "Flex", "kind": "adapter",
-     "description": "Opentrons Flex liquid handler through PyLabRobot's Opentrons backend. Pipetting, tips, plate moves with the gripper.",
-     "tags": ["pipetting", "plates", "biology"], "target": "github:kushalsinha/openmhp/supported-devices/opentrons-flex", "sim": true},
-    {"name": "manual-benchtop-centrifuge", "class": "centrifuge", "make": "generic", "model": "benchtop", "kind": "manual",
-     "description": "Any benchtop centrifuge operated by a person. The agent instructs the operator (balance, speed, time) and records results. A template to copy for your own model.",
-     "tags": ["spin", "biology", "manual"], "target": "github:kushalsinha/openmhp/supported-devices/manual-benchtop-centrifuge", "sim": true},
-    {"name": "elveflow-ob1", "os": "windows", "class": "pump", "make": "Elveflow", "model": "OB1", "kind": "sdk",
-     "description": "Elveflow OB1 pressure controller through the Elveflow SDK (Windows). Pressure per channel, flow feedback on an MFS flow sensor, vent.",
-     "tags": ["microfluidics", "pressure", "flow"], "target": "github:kushalsinha/openmhp/supported-devices/elveflow-ob1", "sim": true},
-    {"name": "elveflow-mux-distributor", "os": "windows", "class": "valve", "make": "Elveflow", "model": "MUX Distributor", "kind": "sdk",
-     "description": "Elveflow MUX Distributor rotary selection valve through the Elveflow SDK (Windows). Select which port feeds the common line.",
-     "tags": ["microfluidics", "valve", "selector"], "target": "github:kushalsinha/openmhp/supported-devices/elveflow-mux-distributor", "sim": true},
-    {"name": "biologic-sp300", "os": "windows", "class": "potentiostat", "make": "BioLogic", "model": "SP-300", "kind": "sdk",
-     "description": "BioLogic SP-300 potentiostat through easy-biologic and the EC-Lab Development Package (Windows). OCV, static and pulsed chronopotentiometry, CV, with a live potential relay.",
-     "tags": ["electrochemistry", "potentiostat", "pulsed-electrolysis"], "target": "github:kushalsinha/openmhp/supported-devices/biologic-sp300", "sim": true},
-    {"name": "wasatch-raman-blaze", "os": "windows", "class": "spectrometer", "make": "Wasatch Photonics / BlazeMetrics", "model": "Raman spectrometer with Blaze probe", "kind": "sdk",
-     "description": "Wasatch Photonics Raman spectrometer (Wasatch.PY) behind a BlazeMetrics Blaze probe. Single spectra and time series with band intensities; laser gated on a person.",
-     "tags": ["raman", "spectroscopy", "in-situ"], "target": "github:kushalsinha/openmhp/supported-devices/wasatch-raman-blaze", "sim": true},
-    {"name": "sri-8610c-gc", "os": "windows", "class": "gas_chromatograph", "make": "SRI Instruments", "model": "8610C", "kind": "sdk",
-     "description": "SRI 8610C gas chromatograph through PeakSimple's .NET connector (Windows). Runs a saved control file and returns the peak table.",
-     "tags": ["gc", "gas-analysis", "methods"], "target": "github:kushalsinha/openmhp/supported-devices/sri-8610c-gc", "sim": true},
-    {"name": "cytiva-akta-avant", "os": "windows", "class": "chromatography_system", "make": "Cytiva (GE Healthcare)", "model": "ÄKTA avant", "kind": "opc-da",
-     "description": "Cytiva/GE ÄKTA avant through the UNICORN OPC Data Access server (Windows). Runs saved UNICORN methods with their Start Protocol variables; live UV, conductivity, pressure, flow; pause, hold, continue, end.",
-     "tags": ["chromatography", "fplc", "protein-purification"], "target": "github:kushalsinha/openmhp/supported-devices/cytiva-akta-avant", "sim": true},
-    {"name": "waters-empower-hplc", "class": "hplc", "make": "Waters", "model": "HPLC/UPLC under Empower 3", "kind": "rest",
-     "description": "Waters HPLC/UPLC through the Empower Web API (opti-hplc-handler). Builds and runs injection sample sets on a node and system and follows the system status.",
-     "tags": ["hplc", "chromatography", "analysis"], "target": "github:kushalsinha/openmhp/supported-devices/waters-empower-hplc", "sim": true},
-    {"name": "globalfia-flopro-sampler", "os": "windows", "class": "sampler", "make": "Global FIA", "model": "FloPro Sampler", "kind": "serial-handshake",
-     "description": "Global FIA FloPro reactor sampler and diluter run by FloZF; FloZF polls OpenMHP over a virtual serial pair and runs the owner's sampling sequences.",
-     "tags": ["sampling", "dilution", "reactor"], "target": "github:kushalsinha/openmhp/supported-devices/globalfia-flopro-sampler", "sim": true}
-  ]
+ "packages": [
+  {
+   "name": "ika-c-mag-hs7",
+   "category": "chemistry",
+   "class": "hotplate",
+   "make": "IKA",
+   "model": "C-MAG HS 7",
+   "kind": "serial",
+   "description": "IKA C-MAG HS 7 magnetic stirrer hotplate over its USB/RS-232 port (NAMUR command set). Heating to 500 C, stirring to 1500 rpm.",
+   "tags": [
+    "heating",
+    "stirring",
+    "chemistry"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/ika-c-mag-hs7",
+   "sim": true,
+   "via": "serial, NAMUR commands",
+   "status": "twin tested",
+   "rubric": {
+    "score": 21.0,
+    "max": 23,
+    "percent": 91,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "opentrons-flex",
+   "category": "biology",
+   "class": "liquid_handler",
+   "make": "Opentrons",
+   "model": "Flex",
+   "kind": "adapter",
+   "description": "Opentrons Flex liquid handler through PyLabRobot's Opentrons backend. Pipetting, tips, plate moves with the gripper.",
+   "tags": [
+    "pipetting",
+    "plates",
+    "biology"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/opentrons-flex",
+   "sim": true,
+   "via": "PyLabRobot",
+   "status": "twin tested",
+   "rubric": {
+    "score": 22.0,
+    "max": 25,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Partial",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Fail",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "manual-benchtop-centrifuge",
+   "category": "biology",
+   "class": "centrifuge",
+   "make": "generic",
+   "model": "benchtop",
+   "kind": "manual",
+   "description": "Any benchtop centrifuge operated by a person. The agent instructs the operator (balance, speed, time) and records results. A template to copy for your own model.",
+   "tags": [
+    "spin",
+    "biology",
+    "manual"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/manual-benchtop-centrifuge",
+   "sim": true,
+   "via": "operator prompts",
+   "status": "template",
+   "rubric": {
+    "score": 18.0,
+    "max": 21,
+    "percent": 86,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "N/A",
+     "C14": "Pass",
+     "C15": "N/A",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "elveflow-ob1",
+   "category": "chemistry",
+   "os": "windows",
+   "class": "pump",
+   "make": "Elveflow",
+   "model": "OB1 pressure controller",
+   "kind": "sdk",
+   "description": "Elveflow OB1 pressure controller through the Elveflow SDK (Windows). Pressure per channel, flow feedback on an MFS flow sensor, vent.",
+   "tags": [
+    "microfluidics",
+    "pressure",
+    "flow"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/elveflow-ob1",
+   "sim": true,
+   "via": "Elveflow SDK",
+   "status": "twin tested",
+   "rubric": {
+    "score": 20.0,
+    "max": 23,
+    "percent": 87,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "elveflow-mux-distributor",
+   "category": "chemistry",
+   "os": "windows",
+   "class": "valve",
+   "make": "Elveflow",
+   "model": "MUX Distributor (rotary selection valve)",
+   "kind": "sdk",
+   "description": "Elveflow MUX Distributor rotary selection valve through the Elveflow SDK (Windows). Select which port feeds the common line.",
+   "tags": [
+    "microfluidics",
+    "valve",
+    "selector"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/elveflow-mux-distributor",
+   "sim": true,
+   "via": "Elveflow SDK",
+   "status": "twin tested",
+   "rubric": {
+    "score": 19.0,
+    "max": 23,
+    "percent": 83,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "biologic-sp300",
+   "category": "chemistry",
+   "os": "windows",
+   "class": "potentiostat",
+   "make": "BioLogic",
+   "model": "SP-300",
+   "kind": "sdk",
+   "description": "BioLogic SP-300 potentiostat through easy-biologic and the EC-Lab Development Package (Windows). OCV, static and pulsed chronopotentiometry, CV, with a live potential relay.",
+   "tags": [
+    "electrochemistry",
+    "potentiostat",
+    "pulsed-electrolysis"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/biologic-sp300",
+   "sim": true,
+   "via": "EC-Lab Development Package, easy-biologic",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "wasatch-raman-blaze",
+   "category": "chemistry",
+   "os": "windows",
+   "class": "spectrometer",
+   "make": "BlazeMetrics / Wasatch Photonics",
+   "model": "Blaze Raman probe on a Wasatch spectrometer",
+   "kind": "sdk",
+   "description": "Wasatch Photonics Raman spectrometer (Wasatch.PY) behind a BlazeMetrics Blaze probe. Single spectra and time series with band intensities; laser gated on a person.",
+   "tags": [
+    "raman",
+    "spectroscopy",
+    "in-situ"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/wasatch-raman-blaze",
+   "sim": true,
+   "via": "Wasatch.PY",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "sri-8610c-gc",
+   "category": "chemistry",
+   "os": "windows",
+   "class": "chromatograph",
+   "make": "SRI Instruments",
+   "model": "8610C (PeakSimple)",
+   "kind": "sdk",
+   "description": "SRI 8610C gas chromatograph through PeakSimple's .NET connector (Windows). Runs a saved control file and returns the peak table.",
+   "tags": [
+    "gc",
+    "gas-analysis",
+    "methods"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/sri-8610c-gc",
+   "sim": true,
+   "via": "PeakSimple .NET connector, pythonnet",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "cytiva-akta-avant",
+   "category": "pharma-biologics",
+   "os": "windows",
+   "class": "chromatograph",
+   "make": "Cytiva (GE Healthcare)",
+   "model": "ÄKTA avant 25/150 with UNICORN 6/7",
+   "kind": "opc-da",
+   "description": "Cytiva/GE ÄKTA avant through the UNICORN OPC Data Access server (Windows). Runs saved UNICORN methods with their Start Protocol variables; live UV, conductivity, pressure, flow; pause, hold, continue, end.",
+   "tags": [
+    "chromatography",
+    "fplc",
+    "protein-purification"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/cytiva-akta-avant",
+   "sim": true,
+   "via": "UNICORN OPC Data Access, OpenOPC",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "waters-empower-hplc",
+   "category": "pharma-small-molecule",
+   "class": "chromatograph",
+   "make": "Waters",
+   "model": "HPLC/UPLC system under Empower 3",
+   "kind": "rest",
+   "description": "Waters HPLC/UPLC through the Empower Web API (opti-hplc-handler) or the Empower Toolkit (COM). Builds and runs injection sample sets on a node and system, follows the system status and returns result rows.",
+   "tags": [
+    "hplc",
+    "chromatography",
+    "analysis"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/waters-empower-hplc",
+   "sim": true,
+   "via": "Empower Web API (opti-hplc-handler) or Empower Toolkit (COM, pywin32)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 27.0,
+    "max": 28,
+    "percent": 96,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "globalfia-flopro-sampler",
+   "category": "chemistry",
+   "os": "windows",
+   "class": "sampler",
+   "make": "Global FIA (Zone Fluidics)",
+   "model": "FloPro Sampler, run by FloZF",
+   "kind": "serial-handshake",
+   "description": "Global FIA FloPro reactor sampler and diluter run by FloZF; FloZF polls OpenMHP over a virtual serial pair and runs the owner's sampling sequences.",
+   "tags": [
+    "sampling",
+    "dilution",
+    "reactor"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/globalfia-flopro-sampler",
+   "sim": true,
+   "via": "FloZF serial handshake (virtual COM pair)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "lcms-worklist",
+   "class": "mass_spectrometer",
+   "make": "Waters, SCIEX, Agilent or Thermo",
+   "model": "LC-MS sample queue under MassLynx, SCIEX OS, MassHunter or Xcalibur",
+   "kind": "file",
+   "category": "chemistry",
+   "description": "Builds the LC-MS sample list/batch/worklist/sequence import file for MassLynx, SCIEX OS, MassHunter or Xcalibur; never starts a run.",
+   "tags": [
+    "lcms",
+    "mass-spectrometry",
+    "worklist",
+    "sample-list",
+    "masslynx",
+    "xcalibur"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/lcms-worklist",
+   "sim": true,
+   "via": "vendor import file written to a folder",
+   "status": "twin tested",
+   "rubric": {
+    "score": 22.0,
+    "max": 23,
+    "percent": 96,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "bruker-nmr-iconnmr",
+   "class": "nmr",
+   "make": "Bruker",
+   "model": "Avance NEO / III HD under TopSpin with ICON-NMR",
+   "kind": "file",
+   "category": "pharma-small-molecule",
+   "description": "Queues an NMR experiment through an ICON-NMR automation job file and reads the TopSpin dataset (acqus, pdata/1/1r) back.",
+   "tags": [
+    "nmr",
+    "bruker",
+    "topspin",
+    "iconnmr",
+    "1h",
+    "13c"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/bruker-nmr-iconnmr",
+   "sim": true,
+   "via": "ICON-NMR automation import folder + TopSpin data dir",
+   "status": "twin tested",
+   "rubric": {
+    "score": 25.0,
+    "max": 26,
+    "percent": 96,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "bruker-d8-pxrd",
+   "class": "diffractometer",
+   "make": "Bruker AXS",
+   "model": "D8 Advance / D8 Discover under DIFFRAC.SUITE",
+   "kind": "file",
+   "category": "pharma-small-molecule",
+   "description": "Queues a powder XRD scan via a DIFFRAC.MEASUREMENT CENTER job file and parses the .brml raw file and .xy export.",
+   "tags": [
+    "pxrd",
+    "xrd",
+    "diffractometer",
+    "bruker",
+    "diffrac",
+    "form-screen"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/bruker-d8-pxrd",
+   "sim": true,
+   "via": "DIFFRAC.SUITE job folder + .brml results folder",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "ta-dsc-tga",
+   "class": "thermal_analyzer",
+   "make": "TA Instruments",
+   "model": "Discovery / Q-series DSC and TGA under TRIOS",
+   "kind": "file",
+   "category": "pharma-small-molecule",
+   "description": "Queues a DSC or TGA temperature program via a TRIOS run list and parses the TRIOS text export (onset, peak, mass loss estimates).",
+   "tags": [
+    "dsc",
+    "tga",
+    "thermal-analysis",
+    "trios",
+    "melting-point",
+    "decomposition"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/ta-dsc-tga",
+   "sim": true,
+   "via": "TRIOS run-list folder + text export folder",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "agilent-cary-uvvis-ftir",
+   "class": "spectrometer",
+   "make": "Agilent",
+   "model": "Cary 60/3500 UV-Vis (Cary WinUV) and Cary 630 FTIR (MicroLab)",
+   "kind": "file",
+   "category": "pharma-small-molecule",
+   "description": "Agilent Cary 60/3500 UV-Vis and Cary 630 FTIR through a watched request folder and the CSV spectra Cary WinUV/MicroLab export.",
+   "tags": [
+    "uv-vis",
+    "ftir",
+    "spectroscopy",
+    "absorbance",
+    "identity"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/agilent-cary-uvvis-ftir",
+   "sim": true,
+   "via": "watched folder + CSV export (Cary WinUV / MicroLab)",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 22.0,
+    "max": 26,
+    "percent": 85,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "protein-simple-maurice-ce",
+   "class": "electrophoresis",
+   "make": "ProteinSimple (Bio-Techne)",
+   "model": "Maurice (cIEF and CE-SDS) under Compass for iCE",
+   "kind": "file",
+   "category": "pharma-biologics",
+   "description": "ProteinSimple Maurice cIEF/CE-SDS through a sample-table batch file and the peak-table CSV Compass for iCE exports.",
+   "tags": [
+    "cief",
+    "ce-sds",
+    "capillary-electrophoresis",
+    "charge-variants",
+    "purity"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/protein-simple-maurice-ce",
+   "sim": true,
+   "via": "watched folder + peak-table CSV (Compass for iCE)",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "thermo-quantstudio-qpcr",
+   "class": "qpcr",
+   "make": "Applied Biosystems (Thermo Fisher Scientific)",
+   "model": "QuantStudio 5/7 under QuantStudio Design & Analysis Software 2",
+   "kind": "file",
+   "category": "pharma-biologics",
+   "description": "QuantStudio 5/7 qPCR through a plate setup file (TXT) plus template request and the Results export of Design & Analysis 2.",
+   "tags": [
+    "qpcr",
+    "real-time-pcr",
+    "taqman",
+    "quantstudio",
+    "biologics"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/thermo-quantstudio-qpcr",
+   "sim": true,
+   "via": "plate setup TXT import + Results CSV export (D&A 2)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 25.0,
+    "max": 26,
+    "percent": 96,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "cytek-aurora-flow-cytometer",
+   "class": "cytometer",
+   "make": "Cytek Biosciences",
+   "model": "Aurora / Northern Lights under SpectroFlo",
+   "kind": "file",
+   "category": "pharma-biologics",
+   "description": "Cytek Aurora/Northern Lights through a worklist file and the FCS 3.1 file (plus optional stats CSV) SpectroFlo exports.",
+   "tags": [
+    "flow-cytometry",
+    "spectral",
+    "immunophenotyping",
+    "fcs",
+    "biologics"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/cytek-aurora-flow-cytometer",
+   "sim": true,
+   "via": "watched folder + FCS 3.1 export (SpectroFlo)",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "thermo-heracell-co2-incubator",
+   "class": "incubator",
+   "make": "Thermo Scientific",
+   "model": "Heracell VIOS 160i / 250i (also Steri-Cycle i160 / i250)",
+   "kind": "modbus",
+   "category": "pharma-biologics",
+   "description": "Thermo Heracell VIOS / Steri-Cycle CO2 incubator over Modbus: temperature, CO2, O2, humidity, door and alarm, with the three setpoints writable. Register map is a template.",
+   "tags": [
+    "incubator",
+    "co2",
+    "cell-culture",
+    "biologics",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/thermo-heracell-co2-incubator",
+   "sim": true,
+   "via": "Modbus TCP/RTU, placeholder register map",
+   "status": "template",
+   "rubric": {
+    "score": 22.0,
+    "max": 25,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Fail",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "binder-stability-chamber",
+   "class": "environmental_chamber",
+   "make": "BINDER",
+   "model": "KBF / KBF P / KMF (MB2 controller); Memmert ICH / HPP via notes",
+   "kind": "modbus",
+   "category": "pharma-biologics",
+   "description": "BINDER KBF/KMF ICH stability chamber (MB2) over Modbus TCP: temperature, humidity, door, alarm and light, confirm-gated setpoints for GxP studies. Register map is a template.",
+   "tags": [
+    "stability",
+    "ich",
+    "climate-chamber",
+    "humidity",
+    "gxp",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/binder-stability-chamber",
+   "sim": true,
+   "via": "Modbus TCP on the MB2 Ethernet port, placeholder map",
+   "status": "template",
+   "rubric": {
+    "score": 20.0,
+    "max": 25,
+    "percent": 80,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Fail",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "sp-lyostar-freeze-dryer",
+   "class": "freeze_dryer",
+   "make": "SP Scientific",
+   "model": "LyoStar 3 / LyoStar 4 (Martin Christ Epsilon 2-4 LSCplus via notes)",
+   "kind": "modbus",
+   "category": "pharma-small-molecule",
+   "description": "SP LyoStar laboratory freeze dryer over Modbus: shelf, condenser, product and pressure signals, phase code, recipe start/hold/stop and condenser defrost. Register map is a template.",
+   "tags": [
+    "lyophilisation",
+    "freeze-drying",
+    "formulation",
+    "small-molecule",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/sp-lyostar-freeze-dryer",
+   "sim": true,
+   "via": "Modbus TCP to the control PLC, placeholder map",
+   "status": "template",
+   "rubric": {
+    "score": 24.0,
+    "max": 28,
+    "percent": 86,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Fail",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "sartorius-biostat-bioreactor",
+   "class": "bioreactor",
+   "make": "Sartorius",
+   "model": "Biostat B / Biostat STR (DCU 4, Biobrain)",
+   "kind": "opcua",
+   "category": "pharma-biologics",
+   "description": "Sartorius Biostat B/STR bioreactor via the Biobrain OPC UA server: start and follow a recipe, read T/pH/DO/agitation/gas/weight, move setpoints, feed, stop.",
+   "tags": [
+    "bioreactor",
+    "cell-culture",
+    "upstream",
+    "opc-ua",
+    "fed-batch"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/sartorius-biostat-bioreactor",
+   "sim": true,
+   "via": "Biobrain OPC UA server, asyncua",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "bmg-clariostar-plate-reader",
+   "class": "plate_reader",
+   "make": "BMG LABTECH (also Molecular Devices, Tecan)",
+   "model": "CLARIOstar / PHERAstar (SpectraMax via SoftMax Pro, Spark via SiLA 2)",
+   "kind": "sdk",
+   "category": "pharma-biologics",
+   "description": "Microplate reader through BMG Reader Control ActiveX, SoftMax Pro Automation API or the Spark SiLA 2 server: tray in/out, run a saved protocol, get the well table.",
+   "tags": [
+    "plate-reader",
+    "absorbance",
+    "fluorescence",
+    "luminescence",
+    "microplate"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/bmg-clariostar-plate-reader",
+   "sim": true,
+   "via": "BMG ActiveX / SoftMax Pro .NET / Spark SiLA 2 (config)",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 27.0,
+    "max": 28,
+    "percent": 96,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "hamilton-star",
+   "class": "liquid_handler",
+   "make": "Hamilton",
+   "model": "Microlab STAR / STARlet (Vantage via the STAR backend)",
+   "kind": "adapter",
+   "category": "pharma-biologics",
+   "description": "Hamilton Microlab STAR/STARlet through PyLabRobot: tips, aspirate, dispense (0.5-1000 uL per channel), iSWAP plate moves, front-cover state for robot loading.",
+   "tags": [
+    "pipetting",
+    "liquid-handling",
+    "plates",
+    "pylabrobot",
+    "iswap"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/hamilton-star",
+   "sim": true,
+   "via": "PyLabRobot STAR backend (USB)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 27.0,
+    "max": 28,
+    "percent": 96,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Partial",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "beckman-vicell-blu",
+   "class": "cell_counter",
+   "make": "Beckman Coulter",
+   "model": "Vi-CELL BLU",
+   "kind": "opcua",
+   "category": "pharma-biologics",
+   "description": "Beckman Coulter Vi-CELL BLU via its OPC UA automation interface: count a sample from the cup or carousel with a cell type and dilution; viability, concentration, diameter; prime, clean.",
+   "tags": [
+    "cell-counter",
+    "viability",
+    "trypan-blue",
+    "opc-ua",
+    "cell-culture"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/beckman-vicell-blu",
+   "sim": true,
+   "via": "Vi-CELL BLU OPC UA automation, asyncua",
+   "status": "twin tested",
+   "rubric": {
+    "score": 28.0,
+    "max": 28,
+    "percent": 100,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "sartorius-octet-bli",
+   "class": "biosensor",
+   "make": "Sartorius (ForteBio)",
+   "model": "Octet RH16 / RH96 (R8 unverified)",
+   "kind": "socket",
+   "category": "pharma-biologics",
+   "description": "Sartorius Octet RH16/RH96 BLI through the Octet BLI Discovery automation interface (TCP command protocol): run a method on a plate and sensor tray, present/close the stage, set temperature.",
+   "tags": [
+    "bli",
+    "biosensor",
+    "kinetics",
+    "binding",
+    "quantitation"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/sartorius-octet-bli",
+   "sim": true,
+   "via": "Octet automation interface, TCP/IP socket",
+   "status": "twin tested",
+   "rubric": {
+    "score": 28.0,
+    "max": 28,
+    "percent": 100,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "malvern-zetasizer-dls",
+   "class": "particle_analyzer",
+   "make": "Malvern Panalytical",
+   "model": "Zetasizer Ultra / Pro (ZS Xplorer); Nano ZS by the same shape",
+   "kind": "sdk",
+   "category": "pharma-biologics",
+   "description": "Malvern Zetasizer Ultra/Pro under ZS Xplorer via its .NET SDK (member names unverified, configurable): size (Z-average, PDI, peaks) and zeta potential with a saved SOP per sample type.",
+   "tags": [
+    "dls",
+    "zeta-potential",
+    "particle-size",
+    "formulation",
+    "aggregation"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/malvern-zetasizer-dls",
+   "sim": true,
+   "via": "ZS Xplorer SDK (.NET), pythonnet",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "opentrons-ot2",
+   "class": "liquid_handler",
+   "make": "Opentrons",
+   "model": "OT-2",
+   "kind": "adapter",
+   "category": "biology",
+   "description": "Opentrons OT-2 through PyLabRobot's OT-2 backend: single/8-channel tips, aspirate, dispense (1-1000 uL by pipette), door switch read from the robot HTTP API for robot loading.",
+   "tags": [
+    "pipetting",
+    "liquid-handling",
+    "plates",
+    "pylabrobot",
+    "biology"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/opentrons-ot2",
+   "sim": true,
+   "via": "PyLabRobot OT-2 backend (HTTP API)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 27.0,
+    "max": 28,
+    "percent": 96,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Partial",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "agilent-openlab-hplc",
+   "class": "chromatograph",
+   "make": "Agilent",
+   "model": "1260/1290 Infinity II under OpenLab CDS 2.x with Sample Scheduler",
+   "kind": "file",
+   "category": "pharma-small-molecule",
+   "description": "Agilent Infinity II HPLC under OpenLab CDS 2.x through Sample Scheduler's watched XML command folder; submits sample lists and returns the LIMS report rows.",
+   "tags": [
+    "hplc",
+    "chromatography",
+    "analysis",
+    "openlab",
+    "sample-scheduler"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/agilent-openlab-hplc",
+   "sim": true,
+   "via": "Sample Scheduler LIMS command/result folders",
+   "status": "twin tested",
+   "rubric": {
+    "score": 27.0,
+    "max": 28,
+    "percent": 96,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "thermo-chromeleon-hplc",
+   "class": "chromatograph",
+   "make": "Thermo Fisher Scientific",
+   "model": "Vanquish or UltiMate 3000 under Chromeleon 7.x",
+   "kind": "sdk",
+   "category": "pharma-small-molecule",
+   "os": "windows",
+   "description": "Thermo Vanquish/UltiMate 3000 HPLC through the Chromeleon 7 SDK (pythonnet, 32-bit Windows): creates and queues a sequence, waits for every injection, reads the peak table.",
+   "tags": [
+    "hplc",
+    "chromatography",
+    "analysis",
+    "chromeleon",
+    "methods"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/thermo-chromeleon-hplc",
+   "sim": true,
+   "via": "Chromeleon SDK (.NET) through pythonnet",
+   "status": "twin tested",
+   "rubric": {
+    "score": 26.0,
+    "max": 28,
+    "percent": 93,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "mettler-easymax-reactor",
+   "class": "reactor",
+   "make": "Mettler Toledo",
+   "model": "EasyMax 102/402 or OptiMax 1001 under iControl",
+   "kind": "opcua",
+   "category": "pharma-small-molecule",
+   "os": "windows",
+   "description": "Mettler EasyMax/OptiMax synthesis reactor under iControl through its OPC UA server: temperature recipes with ramps and holds, dosing, Tr/Tj/stirrer/pH live.",
+   "tags": [
+    "reactor",
+    "synthesis",
+    "process-chemistry",
+    "opc-ua",
+    "dosing"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/mettler-easymax-reactor",
+   "sim": true,
+   "via": "iControl OPC UA server (node ids per lab)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "metrohm-titrino-kf",
+   "class": "titrator",
+   "make": "Metrohm",
+   "model": "870 KF Titrino plus (or 758 KFD / 784 KFP / 787 KF Titrino) over RS-232",
+   "kind": "serial",
+   "category": "pharma-small-molecule",
+   "description": "Metrohm volumetric Karl Fischer Titrinos over RS-232 remote control: load a method, condition the cell, run a determination, read water content, titrant volume and drift.",
+   "tags": [
+    "titrator",
+    "karl-fischer",
+    "water-content",
+    "serial",
+    "metrohm"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/metrohm-titrino-kf",
+   "sim": true,
+   "via": "RS-232 ($G/$S/$D/$L/$Q or Titrino object tree)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "buchi-rotavapor-r300",
+   "class": "evaporator",
+   "make": "Büchi",
+   "model": "Rotavapor R-300 with Interface I-300 Pro, VacuBox and V-300 pump",
+   "kind": "rest",
+   "category": "pharma-small-molecule",
+   "description": "Büchi Rotavapor R-300 / I-300 Pro through the BUCHI OpenInterface (HTTPS JSON): bath, rotation, vacuum, chiller, lift, start/stop/vent and timed distillation methods.",
+   "tags": [
+    "evaporator",
+    "rotavap",
+    "solvent-removal",
+    "rest",
+    "buchi"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/buchi-rotavapor-r300",
+   "sim": true,
+   "via": "BUCHI OpenInterface REST /api/v1 (basic auth)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "crystal16-solubility",
+   "class": "reactor",
+   "make": "Technobis",
+   "model": "Crystal16 under CrystalClear",
+   "kind": "file",
+   "category": "pharma-small-molecule",
+   "os": "windows",
+   "description": "Technobis Crystal16 under CrystalClear through files: writes a heat/cool program for import and parses the exported transmission CSVs into clear and cloud points per reactor.",
+   "tags": [
+    "solubility",
+    "crystallisation",
+    "clear-point",
+    "cloud-point",
+    "file-based"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/crystal16-solubility",
+   "sim": true,
+   "via": "CrystalClear program and export folders",
+   "status": "twin tested",
+   "rubric": {
+    "score": 22.0,
+    "max": 26,
+    "percent": 85,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "vapourtec-rseries",
+   "class": "reactor",
+   "make": "Vapourtec",
+   "model": "R-Series (R2 pump module, R4 reactor heater) under Flow Commander",
+   "kind": "opcua",
+   "category": "pharma-small-molecule",
+   "os": "windows",
+   "description": "Vapourtec R-Series flow system under Flow Commander through its optional OPC UA server: pumps, four reactor channels, BPR, collection valve; one flow experiment per method.",
+   "tags": [
+    "flow-chemistry",
+    "reactor",
+    "pumps",
+    "opc-ua",
+    "vapourtec"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/vapourtec-rseries",
+   "sim": true,
+   "via": "Flow Commander OPC UA server (node ids per lab)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "keithley-smu",
+   "class": "source_meter",
+   "make": "Keithley (Tektronix)",
+   "model": "2400 series SourceMeter (2400, 2401, 2410, 2420)",
+   "kind": "scpi",
+   "category": "physics",
+   "description": "Keithley 2400-series SourceMeter over SCPI on GPIB or RS-232: source V or I with compliance, measure the other, output enable, e-stop turns the output off.",
+   "tags": [
+    "source-meter",
+    "iv-curve",
+    "scpi",
+    "electronics",
+    "gpib"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/keithley-smu",
+   "sim": true,
+   "via": "SCPI over VISA (GPIB) or RS-232, pyvisa",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "lakeshore-temperature",
+   "class": "temperature_controller",
+   "make": "Lake Shore Cryotronics",
+   "model": "335 / 336 / 350 cryogenic temperature controller",
+   "kind": "scpi",
+   "category": "physics",
+   "description": "Lake Shore 335/336/350 cryogenic temperature controller over Ethernet (7777) or GPIB: kelvin readings on A/B, setpoint, heater range, ramp; e-stop turns all heaters off.",
+   "tags": [
+    "cryogenic",
+    "temperature",
+    "pid",
+    "heater",
+    "lakeshore"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/lakeshore-temperature",
+   "sim": true,
+   "via": "Lake Shore ASCII over TCP 7777 or GPIB (VISA)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "srs-lockin",
+   "class": "lock_in_amplifier",
+   "make": "Stanford Research Systems",
+   "model": "SR830 DSP lock-in amplifier (SR810; SR860/SR865A with notes)",
+   "kind": "scpi",
+   "category": "physics",
+   "description": "SRS SR830 lock-in amplifier over GPIB or RS-232: X/Y/R/theta, reference frequency, sine amplitude, sensitivity and time constant indices, four aux outputs.",
+   "tags": [
+    "lock-in",
+    "phase-sensitive",
+    "modulation",
+    "physics",
+    "gpib"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/srs-lockin",
+   "sim": true,
+   "via": "SRS ASCII commands over VISA (GPIB) or RS-232",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "thorlabs-power-meter",
+   "class": "sensor",
+   "make": "Thorlabs",
+   "model": "PM100D optical power meter console (PM100A, PM100USB, PM400)",
+   "kind": "scpi",
+   "category": "physics",
+   "description": "Thorlabs PM100D-family optical power meter over SCPI/USBTMC: power in W at a set wavelength, averaging, auto-range, dark zero; measures only, no e-stop.",
+   "tags": [
+    "optical-power",
+    "photodiode",
+    "laser",
+    "photonics",
+    "usbtmc"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/thorlabs-power-meter",
+   "sim": true,
+   "via": "SCPI over USBTMC (pyvisa-py + pyusb)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "bench-power-supply",
+   "class": "power_supply",
+   "make": "Rigol",
+   "model": "DP832 programmable DC power supply (DP831, DP821, DP811; Siglent and Aim-TTi by notes)",
+   "kind": "scpi",
+   "category": "engineering",
+   "description": "Rigol DP800 three-channel bench DC supply over LAN or USB: per-channel setpoint, current limit, OVP/OCP, measured V/I/P, confirm-gated output enable; e-stop turns all outputs off.",
+   "tags": [
+    "power-supply",
+    "bench",
+    "dc",
+    "scpi",
+    "electronics"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/bench-power-supply",
+   "sim": true,
+   "via": "SCPI over TCP 5555, VISA or USBTMC",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "rigol-oscilloscope",
+   "class": "oscilloscope",
+   "make": "Rigol",
+   "model": "DS1000Z / MSO1000Z oscilloscope (DS1054Z, DS1104Z; MSO5000 and DHO800/900 by notes)",
+   "kind": "scpi",
+   "category": "engineering",
+   "description": "Rigol DS1000Z oscilloscope over LAN or USB: run/stop/single/autoset, timebase, CH1 scale/offset, edge trigger, automatic measurements and sample rate; measurements only, no waveform download.",
+   "tags": [
+    "oscilloscope",
+    "waveform",
+    "measurement",
+    "scpi",
+    "electronics"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/rigol-oscilloscope",
+   "sim": true,
+   "via": "SCPI over TCP 5555, VISA or USBTMC",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "ocean-insight-spectrometer",
+   "class": "spectrometer",
+   "make": "Ocean Insight (Ocean Optics)",
+   "model": "USB2000+, USB4000, Flame, QE Pro, HR series (python-seabreeze)",
+   "kind": "sdk",
+   "category": "chemistry",
+   "description": "Ocean Insight USB spectrometer through python-seabreeze: integration time, averaging, dark storage, full spectrum as arrays and CSV, TEC on cooled models.",
+   "tags": [
+    "spectrometer",
+    "uv-vis",
+    "absorbance",
+    "fluorescence",
+    "seabreeze"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/ocean-insight-spectrometer",
+   "sim": true,
+   "via": "python-seabreeze over USB",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "palmsens-potentiostat",
+   "class": "potentiostat",
+   "make": "PalmSens",
+   "model": "EmStat Pico, EmStat4 LR/HR, Sensit (MethodSCRIPT over USB virtual COM)",
+   "kind": "serial",
+   "category": "chemistry",
+   "description": "PalmSens MethodSCRIPT potentiostat over USB virtual COM: chronoamperometry, CV, LSV and OCP as typed scripts, (t, E, i) CSV back, Z abort and cell_off on stop.",
+   "tags": [
+    "potentiostat",
+    "electrochemistry",
+    "voltammetry",
+    "methodscript",
+    "serial"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/palmsens-potentiostat",
+   "sim": true,
+   "via": "MethodSCRIPT text over pyserial (USB CDC)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "thermo-orbitrap-iapi",
+   "class": "mass_spectrometer",
+   "make": "Thermo Fisher Scientific",
+   "model": "Orbitrap Fusion / Lumos / Eclipse / Ascend (Tribrid) via IAPI",
+   "kind": "sdk",
+   "category": "chemistry",
+   "description": "Thermo Orbitrap Tribrid through the Instrument API (pythonnet): watch the scan stream, request single custom full scans and get the centroid list as CSV.",
+   "tags": [
+    "mass-spectrometer",
+    "orbitrap",
+    "proteomics",
+    "iapi",
+    "custom-scan"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/thermo-orbitrap-iapi",
+   "sim": true,
+   "via": "Thermo IAPI .NET assemblies via pythonnet",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "micro-manager-microscope",
+   "class": "microscope",
+   "make": "any (Micro-Manager)",
+   "model": "Micro-Manager hardware configuration via pymmcore-plus",
+   "kind": "sdk",
+   "category": "biology",
+   "description": "Any Micro-Manager microscope through pymmcore-plus: exposure, channel presets, XY and Z moves, single TIFF snaps and Z stacks up to 500 planes.",
+   "tags": [
+    "microscope",
+    "imaging",
+    "micro-manager",
+    "pymmcore",
+    "stage"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/micro-manager-microscope",
+   "sim": true,
+   "via": "pymmcore-plus (CMMCorePlus) in-process",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "labjack-t-series",
+   "class": "daq",
+   "make": "LabJack",
+   "model": "T4 / T7 / T8 (LJM library)",
+   "kind": "sdk",
+   "category": "engineering",
+   "description": "LabJack T4/T7/T8 through the LJM library: AIN0-3 reads and timed records to CSV (paced or streamed), DAC0/1 and FIO0-3 outputs, e-stop zeroes every output.",
+   "tags": [
+    "daq",
+    "analog-input",
+    "analog-output",
+    "digital-io",
+    "labjack",
+    "ljm"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/labjack-t-series",
+   "sim": true,
+   "via": "labjack-ljm (LJM library) over USB or Ethernet",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "ni-daqmx",
+   "class": "daq",
+   "make": "National Instruments",
+   "model": "USB-6001/6008/6009, USB-621x, 63xx (NI-DAQmx)",
+   "kind": "sdk",
+   "category": "engineering",
+   "description": "NI multifunction DAQ through nidaqmx (Windows or Linux): ai0-3 reads and hardware-timed records to CSV, ao0/ao1 and port0 line0-3 outputs, e-stop zeroes every output.",
+   "tags": [
+    "daq",
+    "analog-input",
+    "analog-output",
+    "digital-io",
+    "national-instruments",
+    "nidaqmx"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/ni-daqmx",
+   "sim": true,
+   "via": "nidaqmx Python package on the NI-DAQmx runtime",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "ika-eurostar-overhead",
+   "class": "stirrer",
+   "make": "IKA",
+   "model": "EUROSTAR 60 control / EUROSTAR 100 control",
+   "kind": "serial",
+   "category": "chemistry",
+   "description": "IKA EUROSTAR 60/100 control overhead stirrer over USB/RS-232 (NAMUR IN_PV_4, OUT_SP_4, START_4/STOP_4, IN_PV_5 torque). Speed capped at 1200 rpm.",
+   "tags": [
+    "stirring",
+    "overhead",
+    "chemistry",
+    "namur"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/ika-eurostar-overhead",
+   "sim": true,
+   "via": "serial, NAMUR commands",
+   "status": "twin tested",
+   "rubric": {
+    "score": 21.0,
+    "max": 23,
+    "percent": 91,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "julabo-corio-circulator",
+   "class": "circulator",
+   "make": "JULABO",
+   "model": "CORIO CD / CP, MAGIO, DYNEO",
+   "kind": "serial",
+   "category": "chemistry",
+   "description": "JULABO CORIO/MAGIO/DYNEO circulator over USB virtual COM or RS-232 (in_pv_00, out_sp_00, out_mode_05). Bath and Pt100 temperature, setpoint, start/stop.",
+   "tags": [
+    "temperature",
+    "circulator",
+    "bath",
+    "chemistry"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/julabo-corio-circulator",
+   "sim": true,
+   "via": "serial, JULABO interface commands",
+   "status": "twin tested",
+   "rubric": {
+    "score": 21.0,
+    "max": 23,
+    "percent": 91,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "mettler-toledo-balance",
+   "class": "balance",
+   "make": "Mettler Toledo",
+   "model": "MT-SICS balances (Excellence XP/XS/XA, XPR/XSR, MS, ML and others)",
+   "kind": "serial",
+   "category": "pharma-small-molecule",
+   "description": "Mettler Toledo balance over RS-232/USB with MT-SICS level 0/1 (S, SI, T, Z, TA, @, I2, I4, D). Stable and immediate mass, tare, zero, display text.",
+   "tags": [
+    "weighing",
+    "balance",
+    "pharma",
+    "mt-sics"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/mettler-toledo-balance",
+   "sim": true,
+   "via": "serial, MT-SICS level 0/1",
+   "status": "twin tested",
+   "rubric": {
+    "score": 20.0,
+    "max": 23,
+    "percent": 87,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "sartorius-balance",
+   "class": "balance",
+   "make": "Sartorius",
+   "model": "SBI balances (Entris II, Secura, Quintix, Practum, Cubis, Cubis II in SBI mode)",
+   "kind": "serial",
+   "category": "pharma-small-molecule",
+   "description": "Sartorius balance over RS-232/USB with the SBI command set (ESC P print, ESC T tare, ESC V zero, ESC x1_ model). Mass from the print frame, tare, zero, key lock.",
+   "tags": [
+    "weighing",
+    "balance",
+    "pharma",
+    "sbi"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/sartorius-balance",
+   "sim": true,
+   "via": "serial, Sartorius SBI (ESC commands)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 20.0,
+    "max": 23,
+    "percent": 87,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "atlas-ezo-sensors",
+   "class": "sensor",
+   "make": "Atlas Scientific",
+   "model": "EZO-pH / EZO-ORP / EZO-DO / EZO-EC / EZO-RTD (UART mode)",
+   "kind": "serial",
+   "category": "biology",
+   "description": "One Atlas Scientific EZO circuit (pH, ORP, DO, EC or RTD) in UART mode: reading via R, calibration state via Cal,?, temperature compensation, confirm-gated calibration.",
+   "tags": [
+    "ph",
+    "orp",
+    "dissolved-oxygen",
+    "conductivity",
+    "temperature",
+    "biology"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/atlas-ezo-sensors",
+   "sim": true,
+   "via": "serial, EZO UART commands",
+   "status": "twin tested",
+   "rubric": {
+    "score": 20.0,
+    "max": 23,
+    "percent": 87,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "new-era-syringe-pump",
+   "class": "pump",
+   "make": "New Era Pump Systems",
+   "model": "NE-1000 / NE-4000 (NE-1000 series)",
+   "kind": "serial",
+   "category": "biology",
+   "description": "New Era NE-1000/NE-4000 syringe pump over RS-232 (Basic mode: DIA, RAT, VOL, DIR, RUN, STP, DIS). Infuse/withdraw a volume at a rate and wait for the pump to stop.",
+   "tags": [
+    "syringe-pump",
+    "infusion",
+    "withdrawal",
+    "biology"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/new-era-syringe-pump",
+   "sim": true,
+   "via": "serial, NE-1000 pump network protocol",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "tecan-cavro-pump",
+   "class": "pump",
+   "make": "Tecan",
+   "model": "Cavro XLP 6000 / XCalibur (DT protocol)",
+   "kind": "serial",
+   "category": "biology",
+   "description": "Tecan Cavro XLP 6000/XCalibur OEM syringe pump over RS-232 (DT protocol: ZR, A/P/D moves, I/O valve, Q status). Volumes converted to plunger steps from the syringe size.",
+   "tags": [
+    "syringe-pump",
+    "oem",
+    "aspirate",
+    "dispense",
+    "biology"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/tecan-cavro-pump",
+   "sim": true,
+   "via": "serial, Cavro DT protocol",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "pfeiffer-tpg-gauge",
+   "class": "vacuum_gauge",
+   "make": "Pfeiffer Vacuum",
+   "model": "TPG 361 / 362 / 366 (TPG 261 / 262 compatible)",
+   "kind": "serial",
+   "category": "physics",
+   "description": "Pfeiffer TPG 36x/26x gauge controller over USB/RS-232 (mnemonic + ENQ/ACK): pressure and status per channel, gauge types, gauge on/off.",
+   "tags": [
+    "vacuum",
+    "pressure",
+    "gauge",
+    "pirani",
+    "serial"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/pfeiffer-tpg-gauge",
+   "sim": true,
+   "via": "serial, Pfeiffer mnemonic protocol with ENQ/ACK",
+   "status": "twin tested",
+   "rubric": {
+    "score": 21.0,
+    "max": 23,
+    "percent": 91,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "srs-rga",
+   "class": "mass_spectrometer",
+   "make": "Stanford Research Systems",
+   "model": "RGA100 / RGA200 / RGA300",
+   "kind": "serial",
+   "category": "physics",
+   "description": "SRS RGA head over RS-232: filament, electron/ion energy, focus and CDEM settings, status/error registers, calibration. Spectra need a code driver.",
+   "tags": [
+    "residual-gas-analyzer",
+    "mass-spectrometer",
+    "vacuum",
+    "filament",
+    "serial"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/srs-rga",
+   "sim": true,
+   "via": "serial, SRS RGA ASCII commands at 28800 baud",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "alicat-flow-controller",
+   "class": "flow_controller",
+   "make": "Alicat Scientific",
+   "model": "MC / MCR mass flow controller (PC / PCD pressure controller compatible)",
+   "kind": "serial",
+   "category": "engineering",
+   "description": "Alicat MC/MCR mass flow controller over RS-232/RS-485/USB: data frame (pressure, temperature, flows, setpoint, gas), setpoint, hold, tare, stop.",
+   "tags": [
+    "mass-flow",
+    "gas",
+    "flow-controller",
+    "serial",
+    "rs-485"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/alicat-flow-controller",
+   "sim": true,
+   "via": "serial, Alicat ASCII polling protocol (unit id)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 21.0,
+    "max": 23,
+    "percent": 91,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "eppendorf-innova-shaker",
+   "class": "shaker",
+   "make": "Eppendorf (New Brunswick Scientific)",
+   "model": "Innova 44 / 44R (Innova 40, 42, 43 compatible)",
+   "kind": "serial",
+   "category": "pharma-biologics",
+   "description": "New Brunswick Innova 44/44R incubator shaker over RS-232 (Slave mode): speed, temperature, humidity, setpoints, stored profiles.",
+   "tags": [
+    "incubator-shaker",
+    "shaking",
+    "incubation",
+    "cell-culture",
+    "serial"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/eppendorf-innova-shaker",
+   "sim": true,
+   "via": "serial, Innova two-letter remote-programming commands",
+   "status": "twin tested",
+   "rubric": {
+    "score": 21.0,
+    "max": 23,
+    "percent": 91,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "N/A",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "sigma-4-16ks-centrifuge",
+   "class": "centrifuge",
+   "make": "Sigma Laborzentrifugen",
+   "model": "4-16KS (Spincontrol serial interface; 3-18KS, 4-5KRL, 4-16KR and other Spincontrol models)",
+   "kind": "serial",
+   "category": "pharma-biologics",
+   "description": "Sigma 4-16KS and other Spincontrol centrifuges over RS-232: speed, temperature, time, lid state, start/stop/open lid, robot_access_ready.",
+   "tags": [
+    "centrifuge",
+    "refrigerated",
+    "benchtop",
+    "spincontrol",
+    "serial",
+    "robot"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/sigma-4-16ks-centrifuge",
+   "sim": true,
+   "via": "serial, Sigma Spincontrol word commands at 9600 baud",
+   "status": "twin tested",
+   "rubric": {
+    "score": 28.0,
+    "max": 28,
+    "percent": 100,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Pass",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "agilent-dissolution-708ds",
+   "class": "dissolution_tester",
+   "make": "Agilent Technologies (Varian / VanKel)",
+   "model": "708-DS dissolution apparatus (template; VK 7000 / 7010 / 7025 family)",
+   "kind": "serial",
+   "category": "pharma-small-molecule",
+   "description": "TEMPLATE: Agilent 708-DS dissolution bath signals, settings and actions with placeholder RS-232 frames; the command set is not public and must be traced.",
+   "tags": [
+    "dissolution",
+    "usp-apparatus-2",
+    "paddle",
+    "pharma",
+    "serial",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/agilent-dissolution-708ds",
+   "sim": true,
+   "via": "serial, 10-digit Comm-ID frames (placeholders)",
+   "status": "template",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  }
+ ]
 }

@@ -1,0 +1,47 @@
+{
+  "import_dir": {
+    "ask": "Folder where plate setup files and run requests are dropped (on the Design & Analysis PC, or a share)",
+    "kind": "path",
+    "example": "\\\\QS5-PC\\OpenMHP\\plates",
+    "help": "The package writes mhp_<job>_plate_setup.txt and mhp_<job>.json here. The person at the software imports the plate setup into the named template (More Options > Import Plate Setup), sends the plate to the instrument and starts the run."
+  },
+  "results_dir": {
+    "ask": "Folder where the software's results exports land",
+    "kind": "path",
+    "example": "\\\\QS5-PC\\OpenMHP\\results",
+    "help": "Actions > Export, CSV or TXT, with the Results table included; name the export after the request token (mhp_<job>)."
+  },
+  "software": {
+    "ask": "Design & Analysis version on the PC (for the record)",
+    "example": "QuantStudio Design & Analysis Software 2.8",
+    "required": false
+  },
+  "wells": {
+    "ask": "Block size (96 or 384)",
+    "kind": "int",
+    "advanced": true
+  },
+  "reporter": {
+    "ask": "Reporter dye written into the plate setup file",
+    "advanced": true
+  },
+  "quencher": {
+    "ask": "Quencher written into the plate setup file (NFQ-MGB for TaqMan, None for SYBR)",
+    "advanced": true
+  },
+  "allowed_templates": {
+    "ask": "Template file names an agent may queue (JSON list; empty allows any)",
+    "advanced": true,
+    "required": false
+  },
+  "result_wait_s": {
+    "ask": "Seconds to wait for the results export before the job fails",
+    "kind": "int",
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between looks at the results folder",
+    "kind": "int",
+    "advanced": true
+  }
+}

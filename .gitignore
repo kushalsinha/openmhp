@@ -7,3 +7,4 @@ dist/
 .DS_Store
 supported-devices/*/config.json
 supported-devices/*/data/
+supported-devices/*/methods/**/*.runs.jsonl

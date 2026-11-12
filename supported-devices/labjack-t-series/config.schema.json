@@ -1,0 +1,14 @@
+{
+  "identifier": {
+    "ask": "Which LabJack: its serial number, IP address, or ANY for the first one found",
+    "kind": "choice",
+    "choices_from": "devices",
+    "example": "ANY",
+    "help": "The serial number is on the label and in Kipling. Use the serial or IP when more than one LabJack is reachable from this host."
+  },
+  "data_dir": {
+    "ask": "Folder where sample records are saved as CSV",
+    "kind": "path",
+    "example": "C:/lab/data/labjack"
+  }
+}

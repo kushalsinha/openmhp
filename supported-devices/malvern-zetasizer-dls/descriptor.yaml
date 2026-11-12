@@ -1,0 +1,93 @@
+device:
+  notes: >
+    Dynamic and electrophoretic light scattering instrument for particle size (Z-average, PDI, intensity peaks)
+    and zeta potential of proteins, antibodies, liposomes and LNPs. A SOP (material, dispersant, cell, temperature,
+    equilibration, number of runs) is written in ZS Xplorer; this package loads one, measures a named sample and
+    returns the headline numbers plus the exported record. The laser is interlocked by the instrument's cell area.
+
+physical:
+  automated_load: false
+  notes: A person inserts the cuvette (DTS0012 size, DTS1070 folded capillary for zeta, or a quartz low-volume cell)
+    into the cell area and closes its cover; no handling robot meets this instrument. Peltier cell holder 0-90 Cel as
+    bounded here (the Ultra reaches 120 with dry purge); condensation below the dew point without purge.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the ZS Xplorer SDK assembly loads and the instrument connection opens.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a measurement from here runs.}
+  - {name: status, type: string, notes: "The SDK's instrument status word (Idle, Measuring, ...; member unverified)."}
+  - {name: cell_temperature, type: number, unit: Cel, notes: Temperature of the cell holder; wait for it to sit within 0.1 Cel of the setpoint before measuring. The SOP's equilibration time starts after that.}
+  - {name: last_result, type: object, notes: Result of the most recent measure_size or measure_zeta from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the latex-standard and zeta-transfer-standard checks are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next standard check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Measurements run from here (the lab's recorded count, or finished measurement jobs when none is recorded).}
+
+settings:
+  - {name: temperature_setpoint, type: number, unit: Cel, limits: {min: 0, max: 90}, resolution: 0.1, approval: auto,
+     notes: "Cell holder setpoint. 0-90 Cel is a conservative bound (aqueous samples boil before 100; the Ultra's holder reaches 120 with purge); the lab sets its own. Proteins above 40 unfold. Refused while a measurement runs; the SOP may override it."}
+  - {name: equilibration_s, type: number, unit: s, limits: {min: 0, max: 600}, resolution: 1, approval: auto,
+     notes: Time the instrument waits at temperature before the first run; 120 s is usual for a 25 Cel SOP. The SOP's own value applies when it sets one.}
+
+actions:
+  - name: measure_size
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      sop: {type: string, notes: SOP file name (.zsop) inside sop_dir; it fixes material, dispersant, cell type, temperature and runs. One per sample type; saved methods pin it.}
+      sample_name: {type: string, notes: Sample name recorded with the measurement and used in the export file name.}
+    required: [sop, sample_name]
+    notes: Loads the SOP, measures size, waits for the instrument, reads the record and exports it. Cancelling aborts the measurement; the laser shutters itself.
+    returns:
+      type: object
+      required: [sample_name, z_average_nm, pdi, peaks, file]
+      properties:
+        sample_name: {type: string}
+        z_average_nm: {type: number, unit: nm, notes: Cumulants Z-average hydrodynamic diameter.}
+        pdi: {type: number, unit: 1, notes: Polydispersity index; above 0.3 the distribution is too broad for cumulants to mean much.}
+        peaks:
+          type: array
+          notes: Intensity-weighted peaks of the distribution.
+          items:
+            type: object
+            properties:
+              diameter_nm: {type: number, unit: nm}
+              intensity_pct: {type: number, unit: "%"}
+              width_nm: {type: number, unit: nm}
+        temperature_c: {type: number, unit: Cel, nullable: true, notes: Cell temperature during the measurement as the record reports it.}
+        attenuator: {type: integer, nullable: true, notes: Attenuator index chosen by the instrument (1-11); 11 means a very weak scatterer, 1-3 a very strong or dirty one.}
+        file: {type: string, notes: Path of the exported record.}
+    examples:
+      - {sop: "mAb_size_25C.zsop", sample_name: "mAb-12_lot3_t0"}
+  - name: measure_zeta
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      sop: {type: string, notes: Zeta SOP file name (.zsop) inside sop_dir; needs the folded capillary cell or the dip cell.}
+      sample_name: {type: string}
+    required: [sop, sample_name]
+    notes: Loads the SOP and measures zeta potential (electrophoretic mobility with the SOP's model); reads conductivity and the quality report. Cancelling aborts.
+    returns:
+      type: object
+      required: [sample_name, zeta_mv, conductivity_ms_cm, mobility, quality, file]
+      properties:
+        sample_name: {type: string}
+        zeta_mv: {type: number, unit: mV}
+        conductivity_ms_cm: {type: number, unit: mS/cm, notes: Above about 5 mS/cm the diffusion-barrier method or a lower voltage is needed; the SOP sets that.}
+        mobility: {type: number, unit: "um.cm/(V.s)", notes: Electrophoretic mobility.}
+        quality: {type: string, notes: The instrument's quality report for the measurement.}
+        file: {type: string}
+    examples:
+      - {sop: "mAb_zeta_pH6.zsop", sample_name: "mAb-12_lot3_pH6"}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 60
+  hardware_stop: The cell area cover; opening it shutters the laser at the instrument (a Class 1 product with a Class 3B laser inside).
+  notes: E-stop aborts the running measurement; the laser is interlocked by the instrument itself and the Peltier holds its last setpoint. A controller silent for 60 s aborts the measurement.

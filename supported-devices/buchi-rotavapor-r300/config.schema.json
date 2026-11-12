@@ -1,0 +1,34 @@
+{
+  "host": {
+    "ask": "IP address or host name of the Interface I-300 Pro (Settings > Network on the interface)",
+    "kind": "text",
+    "example": "192.168.1.60",
+    "help": "The I-300 Pro must have 'Rotavapor Open Interface' enabled (Settings > Rotavapor Open Interface) and been restarted after enabling it."
+  },
+  "password": {
+    "ask": "OpenInterface password for the read/write user 'rw' (shown on the I-300 Pro when the interface is enabled)",
+    "kind": "secret",
+    "keyring": ["BuchiRotavapor", "{host}"]
+  },
+  "user": {
+    "ask": "OpenInterface user (rw for control, ro for read only)",
+    "required": false,
+    "advanced": true
+  },
+  "verify_tls": {
+    "ask": "Check the interface's TLS certificate? (needs ca_cert set to Büchi's root_cert.crt)",
+    "kind": "bool",
+    "advanced": true
+  },
+  "ca_cert": {
+    "ask": "Path to Büchi's root_cert.crt when verify_tls is true",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  },
+  "timeout_s": {
+    "ask": "HTTP timeout in seconds",
+    "kind": "int",
+    "advanced": true
+  }
+}

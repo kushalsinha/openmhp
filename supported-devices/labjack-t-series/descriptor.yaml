@@ -1,0 +1,119 @@
+device:
+  notes: >
+    Multifunction USB/Ethernet DAQ (LabJack T4, T7, T8) through the LJM library: four analog inputs read on
+    demand or sampled to a CSV, two 0-5 V analog outputs and four digital outputs written as settings. Register
+    names are LabJack's (AIN0, DAC0, FIO0, DIO_STATE). What is wired to the terminals is the lab's business and
+    is not known here.
+
+physical:
+  automated_load: false
+  notes: >
+    Screw terminals on a bench box; nothing is loaded. The outputs are low power (DAC 0-5 V, a few mA; FIO
+    3.3 V logic) but whatever they switch (a relay, a valve driver, a heater SSR) can be dangerous; set the
+    output limits and approvals for that, not for the LabJack. E-stop drives every output to 0 V / low.
+
+signals:
+  - {name: connected, type: boolean, notes: True when LJM opened the device named by identifier (or the first one for ANY).}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while a sample job started here is running.}
+  - {name: ain0, type: number, unit: V, notes: AIN0 single-ended, one eReadName. Its range follows ain_range_0 on a T7/T8.}
+  - {name: ain1, type: number, unit: V, notes: AIN1 single-ended.}
+  - {name: ain2, type: number, unit: V, notes: AIN2 single-ended.}
+  - {name: ain3, type: number, unit: V, notes: AIN3 single-ended.}
+  - {name: dio_state, type: integer, unit: "1", notes: "DIO_STATE register: bit n is the level of DIO n (FIO0 = bit 0 ... ); inputs read their pin, outputs their driven level."}
+  - {name: device_type, type: string, notes: "T4, T7 or T8 from getHandleInfo."}
+  - {name: serial_number, type: string, notes: Serial number from getHandleInfo.}
+  - {name: dac0, type: number, unit: V, notes: Last value written to DAC0 from here (the DAC is not read back).}
+  - {name: dac1, type: number, unit: V, notes: Last value written to DAC1 from here.}
+  - {name: last_sample, type: object, nullable: true, notes: Result of the most recent sample job from here; null before the first.}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); the factory calibration constants in the device are not checked here."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next calibration is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Sample jobs completed here, unless the lab's record carries its own count.}
+
+settings:
+  - name: dac0
+    type: number
+    unit: V
+    limits: {min: 0, max: 5}
+    resolution: 0.001
+    approval: auto
+    during_job: true
+    notes: DAC0 output, 0-5 V (the DAC's full range). Narrow the limits to what the connected circuit may receive.
+  - name: dac1
+    type: number
+    unit: V
+    limits: {min: 0, max: 5}
+    resolution: 0.001
+    approval: auto
+    during_job: true
+    notes: DAC1 output, 0-5 V.
+  - name: fio0
+    type: boolean
+    approval: auto
+    during_job: true
+    notes: FIO0 as a digital output, true = high (3.3 V). Writing it makes the line an output.
+  - name: fio1
+    type: boolean
+    approval: auto
+    during_job: true
+    notes: FIO1 as a digital output.
+  - name: fio2
+    type: boolean
+    approval: auto
+    during_job: true
+    notes: FIO2 as a digital output.
+  - name: fio3
+    type: boolean
+    approval: auto
+    during_job: true
+    notes: FIO3 as a digital output.
+  - name: ain_range_0
+    type: number
+    unit: V
+    limits: {min: 0.01, max: 10, enum: [10, 1, 0.1, 0.01]}
+    approval: auto
+    notes: >
+      AIN0_RANGE on a T7 (+/-10, +/-1, +/-0.1, +/-0.01 V). The T4's AIN0-AIN3 are fixed +/-10 V and the write is
+      refused; the T8 uses a different range table (+/-11 V and down) and may refuse these values. Only AIN0 is
+      exposed; the others stay at the device default.
+
+actions:
+  - name: sample
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      channels:
+        type: array
+        items: {type: string, limits: {enum: [AIN0, AIN1, AIN2, AIN3]}}
+        notes: Analog inputs to record, in column order.
+      rate_hz: {type: number, unit: Hz, limits: {min: 1, max: 1000}, default: 10, notes: Scan rate. Up to 100 Hz the driver paces eReadNames calls; above that it uses the hardware-timed stream (eStreamStart) and reports the rate the device actually ran.}
+      seconds: {type: number, unit: s, limits: {min: 0.1, max: 600}, default: 1, notes: Duration; samples = rate_hz x seconds.}
+    required: [channels]
+    limits:
+      rate_hz: [1, 1000]
+      seconds: [0.1, 600]
+    returns:
+      type: object
+      required: [csv, samples, channels, rate_hz, duration_s, mean_V]
+      properties:
+        csv: {type: string, notes: "Path of the table (t_s, one column per channel) under data_dir."}
+        samples: {type: integer, notes: Scans recorded (fewer than planned after a cancel).}
+        channels: {type: array, items: {type: string}}
+        rate_hz: {type: number, unit: Hz, notes: The scan rate actually used.}
+        duration_s: {type: number, unit: s}
+        mean_V: {type: object, notes: "Channel name -> mean over the record, V."}
+    notes: Records the chosen inputs for a fixed time. Cancelling keeps what was recorded so far.
+    examples:
+      - {channels: [AIN0, AIN1], rate_hz: 100, seconds: 2}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 30
+  notes: >
+    E-stop writes DAC0, DAC1 = 0 V and FIO0-FIO3 low in one eWriteNames, and cancels a running sample. A
+    controller silent for 30 s while holding the lease gets the same. The LabJack has no stop button; its own
+    watchdog (WATCHDOG_ENABLE_DEFAULT) could drive outputs to a safe state if the host dies and is not configured here.

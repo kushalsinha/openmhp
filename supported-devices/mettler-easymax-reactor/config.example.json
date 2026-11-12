@@ -1,0 +1,25 @@
+{
+  "url": "opc.tcp://localhost:4840",
+  "username": null,
+  "nodes": {
+    "connection_status": "ns=2;s=Local.iControl.ConnectionStatus",
+    "object": "ns=2;s=Local.iControl",
+    "tr": "ns=2;s=Local.iControl.Experiment.Tr",
+    "tj": "ns=2;s=Local.iControl.Experiment.Tj",
+    "stirrer_rpm": "ns=2;s=Local.iControl.Experiment.Stirrer",
+    "stirrer_running": null,
+    "dosing_total_ml": null,
+    "ph": null,
+    "phase": null,
+    "tr_setpoint": "ns=2;s=Local.iControl.Experiment.Tr.Setpoint",
+    "tj_setpoint": "ns=2;s=Local.iControl.Experiment.Tj.Setpoint",
+    "stirrer_setpoint": "ns=2;s=Local.iControl.Experiment.Stirrer.Setpoint",
+    "ramp_rate": "ns=2;s=Local.iControl.Experiment.Tr.RampRate",
+    "thermostat_mode": null,
+    "start_experiment": null,
+    "end_experiment": null,
+    "dose": null,
+    "stop_dosing": null,
+    "safe_state": null
+  }
+}

@@ -1,0 +1,33 @@
+name: amide-coupling
+project: _shared
+action: run_experiment
+params:
+  pump_a_ml_min: 0.5
+  pump_b_ml_min: 0.5
+  reactors:
+  - channel: 2
+    temperature_c: 120
+  bpr_bar: 8
+  residence_time_min: 10
+  lead_in_min: 2
+  collect_ml: 15
+  flush_min: 5
+  tolerance_k: 2
+  keep_heaters_on: false
+compounds:
+- benzamide
+version: 1
+hash: b6a198bf53a6
+created: 1794432769.539844
+updated: 1794432769.539844
+validated:
+  at: 1794432769.539844
+  hash: b6a198bf53a6
+status: active
+notes: 'Amide coupling in a 10 mL stainless coil on channel 2: acid chloride (pump
+  A) and amine (pump B) at 0.5 mL/min each, 120 degC, 10 min residence, 8 bar BPR,
+  collect 15 mL, flush 5 min with solvent.'
+source:
+  kind: person
+  ref: example method written for the package; tune to the reaction
+author: package author

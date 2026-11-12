@@ -1,0 +1,32 @@
+name: assay-c18
+project: _shared
+action: run_samples
+params:
+  samples:
+  - name: sample
+    vial: RA1
+    injection_volume_ul: 5
+    method: Assay_C18_15min
+    processing_method: Assay_C18_proc
+    injections: 1
+  processing_method: Assay_C18_proc
+  channel: UV_VIS_1
+  sequence_name: null
+compounds:
+- api-assay
+- generic-c18-assay
+version: 1
+hash: b9bca110d09a
+created: 1794432941.946379
+updated: 1794432941.946379
+validated:
+  at: 1794432941.946379
+  hash: b9bca110d09a
+status: active
+notes: 'Generic C18 assay: 5 uL from position RA1 with Assay_C18_15min and its processing
+  method on UV_VIS_1. Override samples with the real sample list when running it.'
+source:
+  kind: person
+  ref: example record written for the package; method names must exist in the data
+    vault folder
+author: package author

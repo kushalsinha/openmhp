@@ -1,0 +1,35 @@
+{
+  "import_dir": {
+    "ask": "Folder the scan helper watches for request files (on the instrument PC, or a share of it)",
+    "kind": "path",
+    "example": "C:\\OpenMHP\\cary\\requests",
+    "help": "The package writes one mhp_<job>.json per scan here. The helper script (or the person at the Cary PC) reads it, runs the scan in Cary WinUV or MicroLab and exports the CSV. Must be writable from where mhp serves this package."
+  },
+  "results_dir": {
+    "ask": "Folder where the exported CSV spectra land",
+    "kind": "path",
+    "example": "C:\\OpenMHP\\cary\\results",
+    "help": "Save Data As / ASCII (csv) in Cary WinUV, or the CSV export in MicroLab, named after the request token (mhp_<job>.csv)."
+  },
+  "software": {
+    "ask": "Vendor software and version on the instrument PC (for the record)",
+    "example": "Cary WinUV 5.1 and MicroLab 5.7",
+    "required": false
+  },
+  "write_adl": {
+    "ask": "Also write an ADL program sketch beside each UV-Vis request?",
+    "kind": "bool",
+    "advanced": true,
+    "help": "The ADL statements are unverified; leave off unless the lab has adapted the sketch against Cary WinUV's ADL Help."
+  },
+  "result_wait_s": {
+    "ask": "Seconds to wait for the exported CSV before the job fails",
+    "kind": "int",
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between looks at the results folder",
+    "kind": "int",
+    "advanced": true
+  }
+}

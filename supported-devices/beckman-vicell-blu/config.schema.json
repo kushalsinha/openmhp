@@ -1,0 +1,28 @@
+{
+  "url": {
+    "ask": "OPC UA endpoint of the Vi-CELL BLU",
+    "kind": "url",
+    "example": "opc.tcp://vicell-blu.lab.local:4840",
+    "help": "The port is set in the Vi-CELL BLU software (Settings, automation); Beckman publishes no default. Security (user, password, certificates) must be enabled there."
+  },
+  "user": {
+    "ask": "Instrument user the automation connects as",
+    "example": "automation",
+    "help": "A Vi-CELL BLU user account with automation rights; the software ships a default automation account that should be replaced."
+  },
+  "password": {
+    "ask": "Password for {user}",
+    "kind": "secret",
+    "keyring": ["ViCellBLU", "{user}"]
+  },
+  "allowed_cell_types": {
+    "ask": "Cell types an agent may count with (JSON list; empty = any defined on the instrument)",
+    "advanced": true
+  },
+  "nodes": {
+    "ask": "OPC UA node ids of the properties and methods (from the automation kit SDK or UaExpert)",
+    "advanced": true,
+    "help": "Keep the keys of config.example.json; the shipped ids are placeholders."
+  },
+  "max_minutes": {"ask": "Longest a count, prime or clean may take", "kind": "int", "advanced": true}
+}

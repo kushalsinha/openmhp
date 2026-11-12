@@ -1,0 +1,91 @@
+device:
+  notes: >
+    Laboratory balance with the Mettler Toledo Standard Interface Command Set. Level 0 (S, SI, SIR, Z, ZI,
+    @, I0-I5) and level 1 (T, TI, TA, TAC, D, DW, K, SR) are the same on every MT-SICS balance; this package
+    uses only those, plus the level 2 C3 internal adjustment where the balance has an internal weight. The
+    balance speaks in its host unit (grams unless changed on the balance).
+
+physical:
+  automated_load: false
+  notes: >
+    A bench balance with a weighing pan and, on analytical models, a draft shield that a person opens and
+    closes (the automatic draft shield of Excellence balances is not driven here). Nothing is loaded by a
+    handling system in this package. No moving parts under power beyond the draft-shield motor.
+
+signals:
+  - {name: mass_stable, type: number, unit: g, notes: "The next stable weight (S). The balance waits for stability before answering, so this read takes up to a few seconds; a timeout answers S I, overload S +, underload S -, each reported as a failed read. Host unit: grams on every balance this package was written for."}
+  - {name: mass_immediate, type: number, unit: g, notes: "The current weight regardless of stability (SI). The reply says S S (stable) or S D (dynamic); only the number is returned, so read mass_stable when stability matters."}
+  - {name: tare_value, type: number, unit: g, notes: Weight currently in the tare memory (TA query), relative to the last zero.}
+  - {name: balance_data, type: string, notes: "Balance type and capacity as one quoted string (I2), e.g. I2 A \"XP205 ExcellencePlus 220.00900 g\"."}
+  - {name: serial_number, type: string, notes: Serial number of the balance (I4), quoted in the reply; also emitted unsolicited after power-on and after @.}
+  - {name: software_version, type: string, notes: Software version and type definition number (I3).}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, from calibration_due in the lab's config.json self_state record. MT-SICS level 0/1 has no command that reports the last adjustment (the adjustment history M27 is level 2 and Excellence-only), so the lab's record is the source, not the balance.}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next calibration or adjustment check is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown (IQ/OQ/PQ as the lab records it in config.json self_state).}
+  - {name: usage_count, type: integer, source: record, notes: tare, zero and adjustment jobs completed here (from this device's job records unless the lab records its own count); weighings are reads and are not counted.}
+
+settings:
+  - name: tare_preset
+    type: number
+    unit: g
+    limits: {min: 0, max: 220}
+    resolution: 0.001
+    approval: auto
+    notes: >
+      Presets a known tare value in grams (TA <value> g, level 1) instead of taring on the pan. The max of 220 g is
+      a placeholder for a 220 g analytical balance; set it to the capacity reported by balance_data. The balance
+      rounds the value to its readability and refuses values outside its taring range with TA L.
+
+actions:
+  - {name: tare, duration: short, approval: auto, interlocks: [connected], notes: Stores the next stable weight as the tare (T). Answers T S <value> g; T I on timeout.}
+  - {name: zero, duration: short, approval: auto, interlocks: [connected], notes: Sets a new zero and clears the tare memory (Z). Do it with an empty pan. Answers Z A.}
+  - {name: clear_tare, duration: short, approval: auto, interlocks: [connected], notes: Clears the tare memory without zeroing (TAC).}
+  - name: display_text
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    params:
+      text: {type: string, default: "", notes: Text shown left-aligned on the balance display (D). Up to the display width; an empty string clears the text and marks the display with a symbol until show_weight is invoked.}
+    examples: [{text: "SAMPLE 12"}]
+    notes: Writes a line to the display so the person at the balance sees which sample is expected. Quotes inside the text are not supported.
+  - {name: show_weight, duration: short, approval: auto, interlocks: [connected], notes: Returns the display to the weight value after display_text (DW).}
+  - {name: reset, duration: short, approval: confirm, interlocks: [connected], notes: Cancels every pending command and restarts the balance software as after power-on, without zeroing (@). The balance answers with its serial number. A person confirms because it aborts a running adjustment and clears key settings.}
+  - {name: internal_adjustment, duration: short, approval: confirm, interlocks: [connected], notes: Starts the internal adjustment with the built-in weight (C3, MT-SICS level 2; only on balances that have one). The balance answers C3 B at once and C3 A when done, minutes later; this package returns the first reply only, so wait and read mass_stable before trusting a result. Confirmed by a person because the balance is unusable while it runs.}
+
+safety:
+  estop: false
+  interlocks: []
+  watchdog_s: 60
+  watchdog_action: release
+  notes: >
+    A balance has no motion or energy to remove: no heater, no pump, no drive beyond a draft-shield motor that
+    a person can stop by hand, so estop is false and nothing is declared as a stop command. A controller silent
+    for 60 s while holding the lease loses the lease (watchdog_action release) so another controller can weigh;
+    nothing on the balance needs stopping when that happens.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600
+  eol: "\r\n"
+  read:
+    mass_stable: S
+    mass_immediate: SI
+    tare_value: TA
+    balance_data: I2
+    serial_number: I4
+    software_version: I3
+  write:
+    tare_preset: "TA {value} g"
+  actions:
+    tare: [T]
+    zero: [Z]
+    clear_tare: [TAC]
+    display_text: ['D "{text}"']
+    show_weight: [DW]
+    reset: ["@"]
+    internal_adjustment: [C3]

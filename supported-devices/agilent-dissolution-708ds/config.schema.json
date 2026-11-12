@@ -1,0 +1,8 @@
+{
+  "port": {
+    "ask": "Serial port the 708-DS's 25-pin RS232 socket is cabled to (Agilent cable 5075-0552 or 5075-0252, DB9 to DB25)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "TEMPLATE PACKAGE: do not connect a real 708-DS until the frames in descriptor.yaml have been replaced with confirmed ones (references/setup.md). The port is /dev/ttyUSB0, /dev/tty.usbserial-* or COM3; 9600 baud is fixed."
+  }
+}

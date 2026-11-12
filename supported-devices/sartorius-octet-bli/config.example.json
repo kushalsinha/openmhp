@@ -1,0 +1,7 @@
+{
+  "host": "octet-pc.lab.local",
+  "port": 7000,
+  "method_dir": "C:/Octet/Methods",
+  "allowed_methods": [],
+  "max_run_hours": 12
+}

@@ -1,0 +1,15 @@
+{
+  "command_dir": "//olab-sched/LIMS_Commands",
+  "result_dir": "//olab-sched/LIMS_Results",
+  "project": "ProcessDev",
+  "instrument": "HPLC-1290-01",
+  "injection_source": "Sampler",
+  "methods_dir": null,
+  "processing_method": null,
+  "injection_volume_ul": [0.1, 100],
+  "max_lines": 96,
+  "allowed_methods": [],
+  "poll_s": 15,
+  "accept_timeout_s": 300,
+  "max_run_hours": 24
+}

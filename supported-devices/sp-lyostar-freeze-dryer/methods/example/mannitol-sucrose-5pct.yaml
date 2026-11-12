@@ -1,0 +1,24 @@
+name: mannitol-sucrose-5pct
+project: example
+action: start_recipe
+params:
+  recipe: 3
+compounds:
+- example-small-molecule-api
+version: 1
+hash: 0e6e1d42c816
+created: 1794431133.216887
+updated: 1794431133.216887
+validated:
+  at: 1794431133.216887
+  hash: 0e6e1d42c816
+status: active
+author: package author
+notes: 'EXAMPLE record showing what a method means here: the number of the recipe
+  loaded in the controller for a 5 % mannitol / sucrose formulation (freeze -45 degC,
+  anneal -20, primary drying -20 degC shelf at 0.1 mbar, secondary 25 degC). Replace
+  with your own product''s recipe number and name; the steps live in the controller
+  software, not in this file.'
+source:
+  kind: manual
+  ref: 'example only: recipe 3 is a placeholder slot number'

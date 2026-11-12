@@ -1,0 +1,27 @@
+name: cief-charge-variants
+project: _shared
+action: queue_run
+params:
+  sample_name: mAb charge variants
+  position: A1
+  method: cIEF_mAb_pH3-10
+  replicates: 2
+compounds:
+- igg
+- mab
+- monoclonal antibody
+version: 1
+hash: ebff3616c105
+created: 1794432301.750391
+updated: 1794432301.750391
+validated:
+  at: 1794432301.750391
+  hash: ebff3616c105
+status: active
+notes: cIEF charge-variant profile with the Compass method cIEF_mAb_pH3-10 (pH 3-10
+  ampholytes, pI markers 4.05 and 9.99), two injections. Override sample_name and
+  position per sample.
+source:
+  kind: person
+  ref: lab's Compass method name; rename to match the installed method
+author: client-df2d411e0a

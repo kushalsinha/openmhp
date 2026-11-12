@@ -1,0 +1,112 @@
+device:
+  notes: >
+    National Instruments multifunction DAQ (USB-6001/6008/6009, USB-621x, PCIe/USB-63xx) through NI-DAQmx: four
+    analog inputs read on demand or sampled hardware-timed into a CSV, two analog outputs and four digital
+    lines of port0 written as settings. Channel names are NI's (Dev1/ai0, Dev1/ao0, Dev1/port0/line0). What is
+    wired to the terminals is the lab's business and is not known here.
+
+physical:
+  automated_load: false
+  notes: >
+    Screw terminals on a bench box; nothing is loaded. The outputs are low power (AO a few mA, DO 3.3 or 5 V
+    logic) but whatever they switch can be dangerous; set the output limits and approvals for that, not for the
+    DAQ. E-stop drives every output to 0 V / low. On a USB-6008/6009 the AO range is 0-5 V, not +/-10 V.
+
+signals:
+  - {name: connected, type: boolean, notes: True when NI-DAQmx lists the configured device and nidaqmx imported.}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while a sample job started here is running.}
+  - {name: ai0, type: number, unit: V, notes: One software-timed read of ai0 (default terminal configuration and +/-10 V range).}
+  - {name: ai1, type: number, unit: V, notes: One read of ai1.}
+  - {name: ai2, type: number, unit: V, notes: One read of ai2.}
+  - {name: ai3, type: number, unit: V, notes: One read of ai3.}
+  - {name: device, type: string, notes: "The NI-DAQmx device name (Dev1) from config.json."}
+  - {name: product_type, type: string, notes: "Product type NI-DAQmx reports for it (USB-6009, USB-6212, PCIe-6343 ...)."}
+  - {name: port0_state, type: integer, unit: "1", notes: "Bits 0-3 are port0 line0-3 as last written from here (bit 0 = line0). NI-DAQmx does not read an output line back, so this is the driver's record, not the pin."}
+  - {name: ao0, type: number, unit: V, notes: Last value written to ao0 from here (the AO is not read back).}
+  - {name: ao1, type: number, unit: V, notes: Last value written to ao1 from here.}
+  - {name: last_sample, type: object, nullable: true, notes: Result of the most recent sample job from here; null before the first.}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); NI MAX's self-calibration date is not read here."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next calibration is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Sample jobs completed here, unless the lab's record carries its own count.}
+
+settings:
+  - name: ao0
+    type: number
+    unit: V
+    limits: {min: -10, max: 10}
+    resolution: 0.001
+    approval: auto
+    during_job: true
+    notes: >
+      ao0 output. PLACEHOLDER +/-10 V, the range of USB-6001, 621x and 63xx; a USB-6008/6009 can only do 0-5 V and
+      NI-DAQmx refuses anything else, so set these limits to the device and to what the circuit may receive.
+  - name: ao1
+    type: number
+    unit: V
+    limits: {min: -10, max: 10}
+    resolution: 0.001
+    approval: auto
+    during_job: true
+    notes: ao1 output, same placeholder range as ao0.
+  - name: port0_line0
+    type: boolean
+    approval: auto
+    during_job: true
+    notes: port0/line0 as a digital output, true = high. USB-6008/6009 lines are open-collector by default.
+  - name: port0_line1
+    type: boolean
+    approval: auto
+    during_job: true
+    notes: port0/line1 as a digital output.
+  - name: port0_line2
+    type: boolean
+    approval: auto
+    during_job: true
+    notes: port0/line2 as a digital output.
+  - name: port0_line3
+    type: boolean
+    approval: auto
+    during_job: true
+    notes: port0/line3 as a digital output.
+
+actions:
+  - name: sample
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      channels:
+        type: array
+        items: {type: string, limits: {enum: [ai0, ai1, ai2, ai3]}}
+        notes: Analog inputs to record, in column order (one task, one sample clock).
+      rate_hz: {type: number, unit: Hz, limits: {min: 1, max: 1000}, default: 10, notes: Sample-clock rate per channel. A USB-6008/6009 does 10 kS/s aggregate; the placeholder 1 kHz is well inside every supported device.}
+      seconds: {type: number, unit: s, limits: {min: 0.1, max: 600}, default: 1, notes: Duration; samples = rate_hz x seconds.}
+    required: [channels]
+    limits:
+      rate_hz: [1, 1000]
+      seconds: [0.1, 600]
+    returns:
+      type: object
+      required: [csv, samples, channels, rate_hz, duration_s, mean_V]
+      properties:
+        csv: {type: string, notes: "Path of the table (t_s, one column per channel) under data_dir."}
+        samples: {type: integer, notes: Samples per channel recorded (fewer than planned after a cancel).}
+        channels: {type: array, items: {type: string}}
+        rate_hz: {type: number, unit: Hz, notes: The sample clock rate the device actually used.}
+        duration_s: {type: number, unit: s}
+        mean_V: {type: object, notes: "Channel name -> mean over the record, V."}
+    notes: Records the chosen inputs hardware-timed (cfg_samp_clk_timing, continuous, read in half-second blocks). Cancelling keeps what was recorded so far.
+    examples:
+      - {channels: [ai0, ai1], rate_hz: 100, seconds: 2}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 30
+  notes: >
+    E-stop stops the sampling task, writes ao0 and ao1 to 0 V and port0 line0-3 low, each in its own task, and
+    cancels a running sample. A controller silent for 30 s while holding the lease gets the same. NI-DAQmx's own
+    watchdog timer task (63xx only) is not configured here. The device has no stop button.

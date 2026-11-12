@@ -1,0 +1,76 @@
+device:
+  notes: >
+    Agilent Cary 60 or 3500 UV-Vis spectrophotometer under Cary WinUV, and a Cary 630 FTIR under MicroLab, on
+    one instrument PC. Neither program has a public API: a scan is requested by a file in a watched folder, run
+    in the vendor software by a helper or a person, and read back from the exported CSV spectrum.
+
+physical:
+  automated_load: false
+  notes: >
+    Bench instruments. A cuvette or ATR sample is placed by a person; the Cary sample compartment cover and the
+    xenon flash lamp are interlocked by the instrument itself. No sample changer state is exported by either
+    program, so robot_access_ready is not declared: a handling system cannot tell from here whether the
+    compartment is open.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the request folder and the results folder in config.json exist and are writable from this host.}
+  - {name: queue_depth, type: integer, unit: "1", notes: Request files written by this package that the helper on the instrument PC has not consumed yet.}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent scan from here (same shape as its returns); null until one has run.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a scan from here waits for its export.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state). Cary WinUV's instrument performance tests and MicroLab's system checks are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next wavelength or photometric check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Scans run from here (the lab's recorded count, or the number of finished scan jobs when none is recorded). The lamp hour counter in Cary WinUV is not read.}
+
+settings: []
+
+actions:
+  - name: scan
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      sample_name: {type: string, notes: "Goes into the request and the export file name: letters, digits, space, '_', '.', '-'; at most 64 characters."}
+      mode: {type: string, limits: {enum: [uvvis, ftir]}, notes: uvvis runs on the Cary 60/3500 under Cary WinUV (wavelengths in nm); ftir on the Cary 630 under MicroLab (wavenumbers in /cm).}
+      start: {type: number, limits: {min: 190, max: 4000}, notes: Scan start, in nm for uvvis (190..1100) or /cm for ftir (650..4000). The per-mode range is checked before the request is written.}
+      stop: {type: number, limits: {min: 190, max: 4000}, notes: Scan end, same unit as start; at least 10 away from it. Either order is accepted; the export lists wavelengths ascending and wavenumbers descending.}
+      step: {type: number, limits: {min: 0.1, max: 16}, default: 1, notes: "uvvis: data interval in nm (0.1..10). ftir: resolution in /cm, one of 1, 2, 4, 8, 16 (4 is MicroLab's usual choice)."}
+      baseline: {type: boolean, default: false, notes: Ask the helper to collect a baseline (100%T, or an ATR background) before the sample scan; roughly doubles the time.}
+    required: [sample_name, mode, start, stop]
+    notes: >
+      Writes mhp_<job>.json to the watched folder and waits for *mhp_<job>*.csv in the results folder. Whether the
+      request actually starts a scan depends on what the lab put on the instrument PC: a helper that runs the
+      vendor software unattended, or a person who reads the request. Because it can start the lamp and a
+      measurement, each call is confirmed by a person. Cancelling withdraws the request if the helper has not
+      taken it; a scan already running in the vendor software finishes there.
+    returns:
+      type: object
+      required: [sample_name, mode, file, points, x_unit, y_unit, duration_s]
+      properties:
+        sample_name: {type: string}
+        mode: {type: string}
+        file: {type: string, notes: Path of the exported CSV spectrum.}
+        points: {type: integer, notes: Number of x,y rows read from the export.}
+        x_unit: {type: string, notes: "'nm' or '/cm', taken from the export's header when it has one."}
+        y_unit: {type: string, notes: "The export's y column label, usually 'Abs' (absorbance, dimensionless) or '%T'."}
+        max_abs: {type: number, nullable: true, notes: Highest y value in the export; null when the file could not be read.}
+        lambda_max_nm: {type: number, nullable: true, notes: Wavelength of the highest absorbance; null for FTIR.}
+        duration_s: {type: number, unit: s, notes: From writing the request to reading the export.}
+    examples:
+      - {sample_name: "mAb lot 12 A280", mode: uvvis, start: 240, stop: 340, step: 1, baseline: true}
+      - {sample_name: "excipient ID", mode: ftir, start: 4000, stop: 650, step: 4}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 600
+  watchdog_action: release
+  notes: >
+    No stop command reaches the Cary: Cary WinUV and MicroLab stop the instrument, and the lamp and sample
+    compartment interlocks are the instrument's own. An e-stop here withdraws every request file the helper has
+    not taken, so nothing further starts; a scan already running finishes in the vendor software. Ten minutes
+    of silence from the controller releases the lease and leaves a waiting job to finish, since a long baseline
+    plus sample scan should not be abandoned halfway.

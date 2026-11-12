@@ -1,0 +1,106 @@
+device:
+  notes: >
+    Volumetric Karl Fischer titrator (870 KF Titrino plus, or a 7xx KF Titrino such as the 758 KFD / 784 KFP)
+    with its titration cell, stirrer and dosing unit, controlled over RS-232. The package loads a method, starts
+    a determination, follows the status to Ready and reads the result variables. Conditioning of the cell
+    (titrating the drift) runs on the instrument between determinations.
+
+physical:
+  automated_load: false
+  notes: >
+    The sample is weighed and injected or added through the cell's septum or port by a person; nothing here is
+    loaded by a handling system. The cell holds methanolic KF reagent (flammable, toxic; keep it sealed with
+    molecular sieve in the drying tubes). A sample-changer or oven would need its own package.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Titrino answers $D on the configured port.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, notes: True while a determine or condition job from here is running.}
+  - {name: titrator_status, type: string, notes: "Ready, Busy (titrating), Hold or Cond (conditioning) as $D reports it; 'unknown' for anything else."}
+  - {name: cell_conditioned, type: boolean, notes: "True when the cell is in conditioning with a stable drift: on the plus dialect, status Cond with no pending message; on the classic dialect, the $D detail .Cond.Ok. A determination started before this reads high."}
+  - {name: water_content, type: number, unit: 1, nullable: true, notes: Result R1 (plus) or RS.1 (classic) of the last determination from here, in the unit the method calculates (reported in last_result.result_unit); null before the first.}
+  - {name: water_content_ppm, type: number, unit: "[ppm]", nullable: true, notes: The last result when its unit is ppm, else null.}
+  - {name: water_mg, type: number, unit: mg, nullable: true, notes: The last result when its unit is mg (absolute water), else null.}
+  - {name: titrant_consumption_ml, type: number, unit: mL, nullable: true, notes: End volume (MCV, or C41) of the last determination; null before the first.}
+  - {name: drift_ug_min, type: number, unit: ug/min, nullable: true, notes: "Drift at the start of the last determination as water equivalent: classic dialect C43 (uL/min titrant) times config.json titer_mg_ml; the plus protocol documents no drift variable, so null there."}
+  - {name: sample_mass_g, type: number, unit: g, nullable: true, notes: Sample mass entered for the next determination; null when none is pending.}
+  - {name: last_result, type: object, notes: Result of the most recent determine from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the titer determination stored in the instrument is not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next titer or calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Determinations run from here (the lab's recorded count, or the number of finished determine jobs when none is recorded).}
+
+settings:
+  - name: sample_mass_g
+    type: number
+    unit: g
+    limits: {min: 0.001, max: 100}
+    resolution: 0.0001
+    approval: auto
+    notes: "Mass of the sample for the next determination. Classic dialect: written to SmplData.OFFSilo.ValSmpl; plus dialect: kept here and reported with the result (the plus protocol has no documented sample-size command, so the method must take its sample size from a balance or a fixed value). Cleared after each determination."
+
+actions:
+  - name: determine
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      method: {type: string, notes: Method name as stored in the Titrino (up to 12 characters; classic Titrinos allow 8).}
+      sample_mass_g: {type: number, unit: g, limits: {min: 0.001, max: 100}, resolution: 0.0001, nullable: true, notes: Omitted or null uses the sample_mass_g setting written before; required unless result_unit is mg.}
+      sample_id: {type: string, nullable: true, notes: Recorded in the result only.}
+      result_unit: {type: string, limits: {enum: [ppm, mg, "%"]}, default: ppm, notes: The unit the method's result R1 is calculated in; the package does not convert.}
+      wait_for_conditioning: {type: boolean, default: true, notes: Wait for cell_conditioned before starting; false starts at once (the instrument may still wait on its own).}
+      timeout_min: {type: number, unit: min, limits: {min: 1, max: 120}, default: 30}
+    required: [method]
+    notes: >
+      Loads the method, (classic) writes the sample size, waits for conditioning, starts with $G, follows the
+      status to Ready and reads result, end volume and duration. A method per sample type (solvent, solid,
+      oil). Cancelling stops the titration.
+    returns:
+      type: object
+      required: [method, result_unit, titrant_ml, duration_s]
+      properties:
+        method: {type: string}
+        result_unit: {type: string}
+        result: {type: number, nullable: true, notes: R1 / RS.1 as the instrument calculated it.}
+        water_content_ppm: {type: number, unit: "[ppm]", nullable: true}
+        water_mg: {type: number, unit: mg, nullable: true}
+        titrant_ml: {type: number, unit: mL, nullable: true}
+        drift_ug_min: {type: number, unit: ug/min, nullable: true}
+        sample_mass_g: {type: number, unit: g, nullable: true}
+        duration_s: {type: number, unit: s}
+        sample_id: {type: string, nullable: true}
+    examples:
+      - {method: "KF-STD", sample_mass_g: 0.5, sample_id: "batch12_t30", result_unit: ppm}
+  - name: condition
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      timeout_min: {type: number, unit: min, limits: {min: 1, max: 120}, default: 20}
+    notes: "Starts the method if it reads Ready (one start from Ready begins conditioning on a KF Titrino), then waits until the cell reports a stable drift (cell_conditioned true); fails after timeout_min."
+    returns:
+      type: object
+      required: [conditioned, status]
+      properties:
+        conditioned: {type: boolean}
+        status: {type: string}
+    examples:
+      - {timeout_min: 20}
+  - name: stop
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: "$S: stops the running titration or conditioning and the dosing unit."
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 60
+  notes: >
+    E-stop sends $S (stop), which ends the titration and stops the dosing unit; the stirrer and the cell are
+    left as they are. A controller silent for 60 s while holding the lease sends the same. There is no
+    physical emergency stop on a Titrino; the STOP key on the keypad does the same as $S.

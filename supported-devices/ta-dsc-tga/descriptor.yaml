@@ -1,0 +1,104 @@
+device:
+  notes: >
+    A TA Instruments Discovery or Q-series DSC and/or TGA run by TRIOS on its Windows PC, with
+    the pan robot (Discovery autoloader). The package queues one run per request by writing a
+    run-list file into the folder the lab's TRIOS automation reads (sample, pan position, mass,
+    temperature program, export file name), waits for TRIOS to export the run as a text file, and
+    parses the curve: an estimated onset and peak for DSC, mass loss for TGA. TRIOS loads the
+    pan, controls the furnace and exports; the package never touches the instrument. Mettler
+    STARe users: see references/setup.md for what differs.
+
+physical:
+  automated_load: true
+  notes: >
+    Sealed or open pans sit in numbered positions of the pan robot's rack (up to 50 on a
+    Discovery autoloader; a Q-series without one runs one pan at a time, pan_position null). A
+    handling robot can place pans in free positions while the pan robot is idle, but TRIOS writes
+    the robot's state to no file, so no robot_access_ready signal is declared: coordinate loading
+    with the person at the instrument. Furnace up to 600 degC (DSC) or 1000 degC (TGA); purge gas.
+
+signals:
+  - {name: connected, type: boolean, notes: True when config.json names the run-list folder (writable) and the export folder (exists).}
+  - {name: queue_depth, type: integer, unit: 1, notes: Run-list files (*.csv) still waiting in the run folder, from this package or anyone else; TRIOS' import removes a file once read.}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent queue_run from here (same shape as its returns); null before the first.}
+  - {name: sample_temperature, type: number, unit: Cel, nullable: true, notes: "Last Temperature value of the live export file named in config.json (live_export_file), which TRIOS can keep writing during a run; null when no live export is configured or it holds no rows. Not a direct instrument reading."}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True from writing the run list until the export appears or the wait times out.}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state): the indium/zinc temperature and cell-constant calibrations and the TGA weight calibration live in TRIOS and are not read here."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Runs queued from here (the lab's recorded count, or the number of finished queue_run jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: queue_run
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    notes: >
+      Writes one run-list file (sample, instrument, pan position, mass, the temperature program as
+      TRIOS segment text, data and export file names) and waits for <token>.txt in the export folder.
+      Confirm-gated because TRIOS starts the pan robot and the furnace as soon as it reads the file.
+      A saved method is the temperature program per material (segments); the caller passes the sample
+      name, pan position and mass. The onset and peak in the result are simple estimates from the
+      exported curve (references/trios_files.md), not TRIOS' analysis.
+    params:
+      sample_name: {type: string, notes: Written to the run list and the export header; letters, digits, spaces, underscore, hyphen, dot.}
+      pan_position: {type: integer, unit: 1, limits: {min: 1, max: 50}, nullable: true, notes: Autoloader rack position of the pan; null for a pan already in the cell (no autoloader move). Also bounded by pan_positions in config.json.}
+      mass_mg: {type: number, unit: mg, limits: {min: 0.1, max: 100}, notes: Sample mass as weighed; TRIOS normalises the heat flow by it. The twin's TGA curve starts from it.}
+      instrument: {type: string, limits: {enum: [dsc, tga]}, notes: Which instrument of the TRIOS workstation runs it; to_c in the program is bounded at 600 degC for dsc and 1000 degC for tga.}
+      program:
+        type: object
+        required: [segments]
+        notes: The temperature program, run from the standby temperature (25 degC) in order.
+        properties:
+          segments:
+            type: array
+            notes: In order; a ramp may carry a hold at its end temperature, an isothermal segment holds at to_c.
+            items:
+              type: object
+              required: [type, to_c]
+              properties:
+                type: {type: string, limits: {enum: [ramp, isothermal]}}
+                rate_k_min: {type: number, unit: K/min, limits: {min: 0.1, max: 50}, nullable: true, notes: Heating or cooling rate of a ramp; null (only) for an isothermal segment.}
+                to_c: {type: number, unit: Cel, limits: {min: 25, max: 1000}, notes: Target (ramp) or hold (isothermal) temperature; also bounded per instrument (600 dsc, 1000 tga) and by max_temperature_c in config.json.}
+                hold_min: {type: number, unit: min, limits: {min: 0, max: 600}, default: 0, notes: Minutes to hold at to_c after the ramp, or the length of an isothermal segment.}
+    required: [sample_name, mass_mg, instrument, program]
+    returns:
+      type: object
+      required: [sample_name, file, points, duration_s]
+      properties:
+        sample_name: {type: string}
+        file: {type: string, notes: Full path of the TRIOS text export.}
+        points: {type: integer, notes: Data rows in the export.}
+        onset_c: {type: number, unit: Cel, nullable: true, notes: Estimated extrapolated onset (baseline from the first tenth of the curve, tangent at the steepest point of the leading edge); null when no event stands out.}
+        peak_c: {type: number, unit: Cel, nullable: true, notes: DSC - temperature of the largest deviation from the baseline; TGA - temperature of the fastest mass loss. Estimate; null when none stands out.}
+        mass_loss_pct: {type: number, unit: "%", nullable: true, notes: TGA only - loss between the first and last tenth of the curve; null for DSC.}
+        duration_s: {type: number, unit: s, notes: From writing the run list to the export appearing.}
+    examples:
+      - sample_name: "batch12 formA"
+        pan_position: 4
+        mass_mg: 3.2
+        instrument: dsc
+        program: {segments: [{type: ramp, rate_k_min: 10, to_c: 300, hold_min: 0}]}
+      - sample_name: "batch12 formA"
+        pan_position: null
+        mass_mg: 8.5
+        instrument: tga
+        program: {segments: [{type: isothermal, rate_k_min: null, to_c: 30, hold_min: 5}, {type: ramp, rate_k_min: 10, to_c: 600, hold_min: 0}]}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 900
+  watchdog_action: release
+  notes: >
+    The furnace limits, the purge-gas and over-temperature protection are TRIOS' and the
+    instrument's own; a person stops a run with TRIOS Stop (or the instrument's touch screen).
+    An e-stop here removes run lists this package queued that TRIOS has not read yet and fails
+    the waiting job; a run already started continues in TRIOS. A controller silent for 15
+    minutes loses its lease and the run completes: aborting a thermal program mid-ramp wastes
+    the sample and the window must outlast the pan robot's load and equilibration.

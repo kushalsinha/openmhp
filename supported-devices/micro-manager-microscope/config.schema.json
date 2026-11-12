@@ -1,0 +1,24 @@
+{
+  "config_dir": {
+    "ask": "Folder holding your Micro-Manager hardware configuration files (.cfg)",
+    "kind": "path",
+    "example": "C:/Program Files/Micro-Manager-2.0",
+    "help": "Usually the Micro-Manager install folder. The next question lists the .cfg files found there."
+  },
+  "config_file": {
+    "ask": "Hardware configuration to load ('demo' for the built-in demo configuration with no hardware)",
+    "kind": "choice",
+    "choices_from": "configs",
+    "example": "C:/Program Files/Micro-Manager-2.0/MMConfig_scope1.cfg",
+    "help": "The .cfg the lab built with Micro-Manager's Hardware Configuration Wizard. It must define a camera, an XY stage, a focus stage and the channel config group."
+  },
+  "data_dir": {
+    "ask": "Folder where images are saved as TIFF",
+    "kind": "path",
+    "example": "C:/lab/data/microscope"
+  },
+  "channel_group": {
+    "ask": "Name of the config group that holds the channel presets",
+    "advanced": true
+  }
+}

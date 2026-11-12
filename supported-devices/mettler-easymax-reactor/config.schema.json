@@ -1,0 +1,22 @@
+{
+  "url": {
+    "ask": "OPC UA endpoint of iControl's OPC server on the bench PC",
+    "kind": "url",
+    "example": "opc.tcp://localhost:4840",
+    "help": "Shown in the iControl OPC server's configuration (or in UaExpert once you connect). The port is not published by Mettler; 4840 is the OPC UA default and a placeholder."
+  },
+  "username": {
+    "ask": "OPC UA user name, if the server requires one (Enter for anonymous)",
+    "required": false
+  },
+  "password": {
+    "ask": "Password for {username}",
+    "kind": "secret",
+    "keyring": ["iControlOPC", "{username}"]
+  },
+  "nodes": {
+    "ask": "Node ids (edit config.json after browsing the server; see references/opcua_nodes.md)",
+    "required": false,
+    "advanced": true
+  }
+}

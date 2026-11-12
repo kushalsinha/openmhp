@@ -4,13 +4,19 @@ device:
     owner's FloZF sequences, chosen by destination, with the numbers given here.
 
 physical:
-  notes: Sample probes sit in reactors; diluent reservoir 300 mL; sample 10-50 uL; diluted sample up to 1.8 mL.
+  automated_load: false
+  notes: The probes stay in the reactors and the archive vials are placed by a person; no handling system loads it. Sample probes sit in reactors; diluent reservoir 300 mL; sample 10-50 uL; diluted sample up to 1.8 mL.
 
 signals:
   - {name: connected, type: boolean, notes: True while FloZF's server sequence has polled within the last few poll intervals.}
+  - {name: state, type: string, source: runtime}
   - {name: busy, type: boolean, notes: True from the moment FloZF picks up a job until it reports DONE.}
   - {name: vials_used, type: array, notes: Archive vials filled by jobs from this package since it started.}
-  - {name: last_sample, type: object}
+  - {name: last_sample, type: object, notes: Result of the most recent take_sample from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); FloZF reports no calibration of its own.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Samples taken from here (the lab's recorded count, or the number of finished jobs when none is recorded).}
 
 settings: []
 
@@ -29,6 +35,17 @@ actions:
       label: {type: string, nullable: true, notes: Sample name for the record.}
     required: [destination, probe, dilution_1, dilution_2]
     notes: Queued for FloZF's next poll; finishes when FloZF reports DONE. Cancelling only works before FloZF picks the job up.
+    returns:
+      type: object
+      required: [destination, probe, dilution_total, started, duration_s]
+      properties:
+        label: {type: string, nullable: true, notes: The label parameter as given; null when none was given.}
+        destination: {type: string}
+        probe: {type: integer}
+        dilution_total: {type: number, notes: dilution_1 times dilution_2.}
+        vial: {type: integer, nullable: true, notes: The archive vial filled; null for inject and detector.}
+        started: {type: string, notes: Local ISO-8601 time FloZF picked the job up.}
+        duration_s: {type: number, unit: s, notes: From pickup to DONE.}
     examples:
       - {destination: archive, probe: 1, dilution_1: 5, dilution_2: 20, vial: 3, label: "reactor1_t30min"}
       - {destination: inject, probe: 2, dilution_1: 10, dilution_2: 1}
@@ -37,6 +54,13 @@ actions:
     approval: auto
     interlocks: [connected]
     notes: Runs the owner's rinse sequence (code in config.json).
+    returns:
+      type: object
+      required: [rinse, started, duration_s]
+      properties:
+        rinse: {type: boolean, notes: Always true; the sequence finished.}
+        started: {type: string, notes: Local ISO-8601 time FloZF picked the job up.}
+        duration_s: {type: number, unit: s, notes: From pickup to DONE.}
   - name: stop_server
     duration: short
     approval: auto

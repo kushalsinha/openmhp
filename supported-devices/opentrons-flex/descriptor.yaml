@@ -1,7 +1,20 @@
 physical:
   mass_kg: 70
-  notes: Enclosed deck; gripper moves plates. Keep hands out while any action runs.
+  automated_load: true
+  notes: Enclosed deck; gripper moves plates. Keep hands out while any action runs. A handling robot may place
+    or remove labware on the deck only when no action is running and the front door is open; the adapter exposes
+    no door or run-state binding, so no robot_access_ready signal is declared and the orchestrator must confirm
+    both with the operator before loading.
 safety:
   estop: true
   watchdog_s: 30
   notes: E-stop calls PyLabRobot stop(), which halts the robot.
+
+signals:                         # answered by the base, not by PyLabRobot (SPEC 4.4, 4.6)
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a pipetting or plate-move action runs from here.}
+  - {name: connected, type: boolean, source: runtime}
+  - {name: calibration_status, type: string, source: record}
+  - {name: calibration_due, type: string, source: record, nullable: true}
+  - {name: qualification_status, type: string, source: record}
+  - {name: usage_count, type: integer, source: record, notes: actions completed from here}

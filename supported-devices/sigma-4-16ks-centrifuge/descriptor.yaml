@@ -1,0 +1,149 @@
+device:
+  notes: >
+    Sigma 4-16KS benchtop refrigerated centrifuge with the RS-232 "serial control interface" (Spincontrol).
+    The agent sets speed, temperature and run time, starts and stops the run, and opens the lid at
+    standstill. The centrifuge enforces its own rotor speed limit, imbalance shutdown and lid lock; the
+    package reads them back as status codes and treats the lid as an interlock on start.
+
+physical:
+  mass_kg: 60
+  automated_load: true
+  notes: >
+    Benchtop unit with a hinged lid; the lid lock releases only at standstill. Plates or tubes are placed
+    in the rotor buckets from above once the lid is open; a handling system reads robot_access_ready
+    (lid open and rotor stopped) before reaching in. The 4-16KS lid is opened by the `door` command and
+    closed by hand or by a robot fixture; the robot models (4-5KRL, 4-16KR) have a motorised hatch.
+
+signals:
+  - {name: speed, type: number, unit: "{rev}/min", notes: "`speed`: measured rotor speed, 0 at standstill."}
+  - {name: temperature, type: number, unit: Cel, notes: "`temp`: chamber temperature at the sensor, whole degrees."}
+  - {name: time_remaining, type: number, unit: s, notes: "`time`: remaining run time of the current run (seconds, like settime; unverified on hardware). 0 at standstill or on a continuous run."}
+  - {name: speed_setpoint, type: number, unit: "{rev}/min", notes: "`getsetspeed`: the speed setpoint held, whoever set it."}
+  - {name: temperature_setpoint, type: number, unit: Cel, notes: "`getsettemp`: the temperature setpoint held."}
+  - {name: time_setpoint, type: number, unit: s, notes: "`getsettime`: the run-time setpoint; 0 means continuous."}
+  - {name: status_code, type: integer, unit: "1",
+     notes: "`status`: 0 rotor spinning, 1 standstill (lid may be opened), 2 lid open, 3 error."}
+  - {name: status_flags, type: string,
+     notes: "`status1`: four hex digits. Bits 1..0: 00 lid moving, 01 lid open, 10 lid closed; bits 3..2: 01 lid can be opened, 10 lid can be closed; bit 4: imbalance shutdown; bit 5: spinning; bit 6: error shutdown."}
+  - {name: lid_closed, type: boolean,
+     notes: "True when `status` is 0 or 1 (spinning, or standstill with the lid still shut); false when 2 (lid open). An error (3) counts as not closed for interlocks."}
+  - {name: standstill, type: boolean,
+     notes: "True when `status` is 1 or 2 (rotor stopped), false while spinning (0); an error (3) counts as not stopped."}
+  - {name: robot_access_ready, type: boolean,
+     notes: "True exactly when `status` is 2: lid open and the rotor at rest. A handling system loads or unloads only then; the centrifuge cannot be started in that state."}
+  - {name: error_code, type: integer, unit: "1", notes: "`syserror`: 0 none, otherwise the Sigma error number shown on the display (imbalance, lid, rotor code, over-temperature, drive); see the operating manual's error table."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a start job is being sent; answered by the base. The spin itself shows in status_code, not in busy.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record (speed, temperature and timer verification).}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next verification is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown (IQ/OQ/PQ), as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: "Runs started from here (the lab's recorded count, or the number of finished start jobs when none is recorded). The centrifuge's own cycle counters (`rcycle`, `bcycle`) are per rotor and bucket and are not read here."}
+
+settings:
+  - {name: target_speed, type: integer, unit: "{rev}/min", limits: {min: 50, max: 4000}, resolution: 1, approval: auto,
+     notes: "`setspeed n`: speed setpoint. 4000 is a placeholder well below the 4-16KS maximum (15,000 rpm with a fixed-angle rotor; 4,700 with a plate rotor): the fitted rotor sets the real limit and the centrifuge refuses more. Set max to the rating of the slowest rotor and bucket you use."}
+  - {name: target_temperature, type: integer, unit: Cel, limits: {min: -10, max: 40}, resolution: 1, approval: auto,
+     notes: "`settemp n`: chamber temperature setpoint, whole degrees. -10 to 40 is the refrigerated model's range; a non-refrigerated Sigma takes no settemp."}
+  - {name: run_time, type: integer, unit: s, limits: {min: 0, max: 36000}, resolution: 1, approval: auto,
+     notes: "`settime n`: run time in seconds; 0 means continuous (runs until stop). The cap of 10 h is a placeholder."}
+
+actions:
+  - name: start
+    duration: long
+    approval: auto
+    interlocks: [lid_closed, connected]
+    params:
+      speed: {type: integer, unit: "{rev}/min", limits: {min: 50, max: 4000}, resolution: 1, notes: "Speed setpoint; the rotor's rating is the real cap."}
+      temperature: {type: integer, unit: Cel, limits: {min: -10, max: 40}, resolution: 1, default: 20, notes: "Chamber setpoint; 20 for an uncooled spin."}
+      time_s: {type: integer, unit: s, limits: {min: 10, max: 36000}, resolution: 1, notes: "Run time; the timer counts from start (or from reaching speed if `raoss 1` is set on the unit)."}
+    required: [speed, time_s]
+    examples: [{speed: 1500, temperature: 4, time_s: 300}, {speed: 3000, time_s: 600}]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    cancellable: false
+    notes: "Writes setspeed, settemp and settime, then sends `start`. The job completes once the four commands are sent; the spin runs on the centrifuge and ends by itself after time_s (or on stop). Refused while the lid is open. Not cancellable because once `start` is sent only stop or fast_stop ends the spin; jobs/cancel between the setpoint writes would leave setpoints changed but no spin."
+  - name: stop
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "`stop`: decelerate on the set brake curve. Takes tens of seconds from high speed; watch `standstill`."
+  - name: fast_stop
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "`fstop`: maximum braking. Harder on the samples and the drive; what the e-stop sends."
+  - name: open_lid
+    duration: short
+    approval: confirm
+    interlocks: [standstill, connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "`door`: release the lid lock; the lid springs open. Only at standstill (interlock) and confirmed by a person, because a lid opening into a robot's path or a hand is the hazard. On robot models this is the hatch-open command."
+  - name: reset_error
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "`reseterr`: clear a logged warning or error after its cause is fixed. Does nothing harmful if there is none."
+
+safety:
+  estop: true
+  interlocks: [lid_closed]
+  watchdog_s: 120
+  watchdog_action: release
+  notes: >
+    E-stop sends `fstop` (maximum braking); the lid stays locked until the rotor stops, by the
+    centrifuge's own interlock. The centrifuge detects imbalance, over-temperature and rotor errors
+    itself and shuts down. A controller that goes silent releases the lease after 120 s and lets the
+    timed run finish: a spin interrupted at speed loses the separation, and a sealed, stopped centrifuge
+    with its lid locked is already safe. Hardware stop: the mains switch; there is no separate button.
+  hardware_stop: "Mains switch on the unit; the lid lock releases only at standstill after power returns."
+
+serial:
+  port: /dev/ttyUSB0          # placeholder: config.json `port` overrides it
+  baud: 9600                  # fixed by the Spincontrol interface
+  eol: "\r\n"
+  timeout: 1                  # set commands answer nothing with echo off; a write returns after this timeout
+  read:
+    speed: speed
+    temperature: temp
+    time_remaining: time
+    speed_setpoint: getsetspeed
+    temperature_setpoint: getsettemp
+    time_setpoint: getsettime
+    status_code: status
+    status_flags: status1
+    lid_closed: status
+    standstill: status
+    robot_access_ready: status
+    error_code: syserror
+  write:
+    target_speed: "setspeed {value}"
+    target_temperature: "settemp {value}"
+    run_time: "settime {value}"
+  actions:
+    start: ["setspeed {speed}", "settemp {temperature}", "settime {time_s}", "start"]
+    stop: ["stop"]
+    fast_stop: ["fstop"]
+    open_lid: ["door"]
+    reset_error: ["reseterr"]
+  estop: ["fstop"]
+  parse:                      # replies may be prefixed by the `SIGMA>` prompt: take the first number after it
+    speed: {regex: "^(?:[^>]*>)?\\s*(-?\\d+)", group: 1}
+    temperature: {regex: "^(?:[^>]*>)?\\s*(-?\\d+)", group: 1}
+    time_remaining: {regex: "^(?:[^>]*>)?\\s*(-?\\d+)", group: 1}
+    speed_setpoint: {regex: "^(?:[^>]*>)?\\s*(-?\\d+)", group: 1}
+    temperature_setpoint: {regex: "^(?:[^>]*>)?\\s*(-?\\d+)", group: 1}
+    time_setpoint: {regex: "^(?:[^>]*>)?\\s*(-?\\d+)", group: 1}
+    status_code: {regex: "^(?:[^>]*>)?\\s*(\\d)", group: 1}
+    lid_closed: {regex: "^(?:[^>]*>)?\\s*(\\d)", group: 1}
+    standstill: {regex: "^(?:[^>]*>)?\\s*(\\d)", group: 1}
+    robot_access_ready: {regex: "^(?:[^>]*>)?\\s*(\\d)", group: 1}
+    error_code: {regex: "^(?:[^>]*>)?\\s*(-?\\d+)", group: 1}
+  booleans:
+    lid_closed: {true: ["0", "1"], false: ["2"]}
+    standstill: {true: ["1", "2"], false: ["0"]}
+    robot_access_ready: {true: ["2"], false: ["0", "1", "3"]}

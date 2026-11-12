@@ -1,0 +1,26 @@
+name: proton_cdcl3
+project: demo-assay
+action: queue_experiment
+params:
+  experiment: PROTON
+  solvent: CDCl3
+  holder: 1
+  ns: 16
+  d1_s: 1.0
+  title: ''
+compounds:
+- demo compound
+version: 1
+hash: 5f6d4f380b13
+created: 1794431608.994761
+updated: 1794431608.994761
+validated:
+  at: 1794431608.994761
+  hash: 5f6d4f380b13
+status: active
+author: package author
+notes: 'Example only: a routine 1H in CDCl3, 16 scans, D1 1 s. The holder is overridden
+  per run.'
+source:
+  kind: person
+  ref: shipped example

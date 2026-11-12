@@ -1,0 +1,9 @@
+{
+  "resource": {
+    "ask": "How to reach the controller: tcp://<ip>:7777 (Ethernet on the 336/350), a GPIB VISA resource, or a TCPIP VISA resource",
+    "kind": "choice",
+    "choices_from": "resource",
+    "example": "tcp://192.168.1.30:7777",
+    "help": "The 336 and 350 show their IP address under Interface > Ethernet; the raw command port is 7777. GPIB (all three models): GPIB0::12::INSTR, address 12 is the factory default. The USB port is a virtual COM port at 57600 baud 7 data bits odd parity, which this generic route does not open; see references/setup.md. `pyvisa` lists what it can see; with none installed, type the string."
+  }
+}

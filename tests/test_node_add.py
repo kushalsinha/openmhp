@@ -52,7 +52,7 @@ def test_add_from_a_local_folder_creates_config_and_says_what_is_next():
         assert any("opti-hplc-handler" in p for p in r["pip"]), r["pip"]
         text = node_add.say_next(r, joined=None, service_installed=False)
         assert "pip install" in text and "config.json" in text and f"mhp node setup waters-empower-hplc {dest}" in text and "--join" in text
-        assert "address, project, username" in text, text                          # the keys to fill in, not "ports, addresses, names"
+        assert "address" in text and "project, username" in text, text            # the keys to fill in, not "ports, addresses, names"
         assert text.count(str(dest)) == 3, text                                     # the folder is named where it is needed, not on every line
         text = node_add.say_next(r, joined={"gateway": "https://gw.office", "name": "bench-3"}, service_installed=True)
         assert "gw.office" in text and "--install-service" in text

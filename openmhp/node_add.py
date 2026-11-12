@@ -252,11 +252,23 @@ def say_available() -> str:
     if not rows:
         return "no packages in the registry (is openmhp installed completely?)"
     w = max(len(e.get("name", "")) for e in rows)
-    out = ["mhp node add <name>   adds one of these to this PC:", ""]
+    out = ["mhp node add <name>   adds one of these to this PC:"]
+    titles = {"pharma-small-molecule": "Pharma, small molecule", "pharma-biologics": "Pharma, biologics",
+              "chemistry": "Chemistry", "biology": "Biology", "physics": "Physics and optics",
+              "engineering": "Engineering and data acquisition"}
+    groups: dict[str, list[dict]] = {}
     for e in rows:
-        desc = str(e.get("description", "")).split(". ")[0].rstrip(".")
-        tag = "   [Windows]" if e.get("os") == "windows" else ""
-        out.append(f"  {e.get('name', ''):{w}s}  {e.get('make', '')} {e.get('model', '')}: {desc}{tag}")
+        groups.setdefault(str(e.get("category") or "other"), []).append(e)
+    order = [k for k in titles if k in groups] + sorted(k for k in groups if k not in titles)
+    for key in order:
+        out.append(f"\n{titles.get(key, key.replace('-', ' ').capitalize())}")
+        for e in sorted(groups[key], key=lambda x: x.get("name", "")):
+            what = f"{e.get('make', '')} {e.get('model', '')}".strip()
+            if len(what) > 70:
+                what = what[:67].rsplit(" ", 1)[0] + "..."
+            tag = "   [Windows]" if e.get("os") == "windows" else ""
+            tpl = "   (template: commands unverified)" if e.get("status") == "template" else ""
+            out.append(f"  {e.get('name', ''):{w}s}  {what}{tag}{tpl}")
     out.append(f"\nthey go to {short(default_dir())} unless you name a folder.  Your own package:  mhp node add <name> --from <folder>")
     return "\n".join(out)
 

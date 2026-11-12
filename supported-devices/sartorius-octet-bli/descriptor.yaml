@@ -1,0 +1,85 @@
+device:
+  notes: >
+    Bio-layer interferometry system: biosensor tips on a read head dip into a 96- or 384-well sample plate
+    while a heated plate stage holds the temperature. Kinetics and quantitation methods (.fmf) are written
+    in Octet BLI Discovery; this package starts one with a sample plate and a sensor tray, follows it to
+    completion and reports where the experiment folder is. Analysis stays in Octet Analysis Studio.
+
+physical:
+  automated_load: true
+  notes: The RH16/RH96 have a door and a stage that the automation interface presents (Present) to a handling
+    robot for the sample plate and the sensor tray, and closes (Close) before a run; robot_access_ready reports
+    the presented, idle state. Keep hands clear of the read head. Plate temperature 15-40 Cel (R8) or ambient+4
+    to 40 Cel (RH16/RH96), 1 Cel steps.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Octet automation interface answers Version over its socket (enabled in Octet BLI Discovery options).}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a run or a stage move from here is in progress; status says what the instrument itself reports.}
+  - {name: status, type: string, notes: "The interface's status word: OK (ready), Running (nn%), Waiting, Busy, LoadSensors, Stopped, or Error: reason."}
+  - {name: temperature, type: number, unit: Cel, nullable: true, notes: The automation interface has no temperature query, so this reads null; the setpoint written from here is temperature_setpoint. The instrument shows the plate temperature on its own screen.}
+  - {name: plate_in, type: boolean, notes: True when the stage is closed (last Close from here); false after Present. The interface has no query for the door, so this is the package's own record and a run started elsewhere is not seen.}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: True exactly when the stage was presented from here, nothing from here runs and the instrument's status is neither Running, Busy, Waiting nor LoadSensors; a handling robot reads this before placing the sample plate or sensor tray.}
+  - {name: last_result, type: object, notes: Result of the most recent run_experiment from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the instrument's own performance checks are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next performance qualification due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Experiments run from here (the lab's recorded count, or finished run_experiment jobs when none is recorded).}
+
+settings:
+  - {name: temperature_setpoint, type: number, unit: Cel, limits: {min: 15, max: 40}, resolution: 1, approval: auto,
+     notes: "Plate stage heater setpoint (SetValue -t), whole degrees. 15-40 Cel is the R8's range; the RH16/RH96 cannot go below ambient + 4, so a lab with those sets min higher. Refused while a run is in progress."}
+
+actions:
+  - name: plate_out
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: "Present: opens the door and moves the stage out for a robot to place or take the sample plate and sensor tray; waits for the move to finish. Refused while the instrument is busy. RH16/RH96 only."
+  - name: plate_in
+    duration: short
+    approval: auto
+    interlocks: [connected, robot_access_ready]
+    notes: "Close: closes the door and stage and homes the read head; needs the stage presented and idle so a robot's plate is never pinched."
+  - name: run_experiment
+    duration: long
+    approval: auto
+    interlocks: [connected, plate_in]
+    methods: true
+    cancellable: true
+    params:
+      method: {type: string, notes: Octet method file name (.fmf) inside method_dir; one per assay (kinetics, quantitation, epitope binning). Saved methods pin it.}
+      sample_plate_id: {type: string, notes: Barcode of the sample plate, sent as the sample plate barcode (-1).}
+      sensor_tray_id: {type: string, notes: Identifier of the biosensor tray; sent in the sensor lot field (-l) so it lands in the experiment record.}
+    required: [method, sample_plate_id, sensor_tray_id]
+    notes: >
+      Checks the method with GetMethodInfo, starts it silently (Run -s), follows Status until it returns to OK,
+      and reads the experiment folder from GetRunInfo. A method needing a second sensor tray stops with
+      LoadSensors and fails here; run those with a person present. Cancelling sends Stop.
+    returns:
+      type: object
+      required: [method, file, sensors, duration_s, summary]
+      properties:
+        method: {type: string}
+        file: {type: string, notes: UNC path of the experiment folder Octet BLI Discovery wrote (GetRunInfo -p).}
+        sensors: {type: integer, notes: Sensor trays the method uses (GetMethodInfo -t).}
+        duration_s: {type: number, unit: s}
+        summary:
+          type: object
+          properties:
+            experiment: {type: string, nullable: true, notes: Experiment name as Octet named it.}
+            sample_plate_id: {type: string}
+            sensor_tray_id: {type: string}
+            final_status: {type: string}
+    examples:
+      - {method: "mAb_kinetics_ProA.fmf", sample_plate_id: "SP-2024-0113", sensor_tray_id: "ProA-lot-2403"}
+
+safety:
+  estop: true
+  interlocks: [connected, plate_in, robot_access_ready]
+  watchdog_s: 300
+  watchdog_action: release
+  notes: >
+    E-stop sends Stop, which ends the run and ejects the sensors if needed. A controller silent for 5 minutes
+    loses its lease but the experiment keeps running: a kinetics run interrupted midway wastes a sensor tray
+    and the sample plate, and the instrument is safe unattended.

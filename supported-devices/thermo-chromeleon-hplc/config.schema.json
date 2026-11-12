@@ -1,0 +1,32 @@
+{
+  "sdk_dir": {
+    "ask": "Folder holding Thermo.Chromeleon.Sdk.dll (the Chromeleon bin folder)",
+    "kind": "path",
+    "example": "C:/Program Files (x86)/Thermo/Chromeleon/bin"
+  },
+  "data_vault": {
+    "ask": "Data vault folder the agent creates sequences in (chrom:// URL as the Chromeleon console shows it)",
+    "example": "chrom://cm-server/ChromeleonLocal/Projects/MHP",
+    "help": "The folder must also hold (or be able to see) the instrument and processing methods the agent may use."
+  },
+  "instrument": {
+    "ask": "Instrument the sequences run on (chrom:// URL)",
+    "example": "chrom://cm-server/Instruments/Vanquish_1"
+  },
+  "username": {
+    "ask": "Chromeleon user the agent logs on as (Enter to use the interactive logon)",
+    "example": "svc_openmhp",
+    "required": false,
+    "help": "A dedicated user with rights to the data vault folder and to control the instrument; no right to edit or delete methods or data."
+  },
+  "password": {
+    "ask": "Password for {username}",
+    "kind": "secret",
+    "keyring": ["Chromeleon", "{username}"]
+  },
+  "processing_method": {
+    "ask": "Processing method used when a sample names none",
+    "required": false,
+    "advanced": true
+  }
+}

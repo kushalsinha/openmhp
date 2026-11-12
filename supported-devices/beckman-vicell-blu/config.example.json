@@ -1,0 +1,25 @@
+{
+  "url": "opc.tcp://vicell-blu.lab.local:4840",
+  "user": "automation",
+  "allowed_cell_types": [],
+  "max_minutes": 20,
+  "nodes": {
+    "object": "ns=2;s=ViCellBlu",
+    "status": "ns=2;s=ViCellBlu.CurrentStatus",
+    "lock_state": "ns=2;s=ViCellBlu.CurrentLockState",
+    "reagent": "ns=2;s=ViCellBlu.ReagentUsesRemaining",
+    "cell_types": "ns=2;s=ViCellBlu.CellTypes",
+    "sample_position": "ns=2;s=ViCellBlu.CurrentSamplePosition",
+    "carousel_present": "ns=2;s=ViCellBlu.CarouselPresent",
+    "request_lock": "ns=2;s=ViCellBlu.RequestLock",
+    "release_lock": "ns=2;s=ViCellBlu.ReleaseLock",
+    "start_sample": "ns=2;s=ViCellBlu.StartSample",
+    "stop": "ns=2;s=ViCellBlu.Stop",
+    "pause": "ns=2;s=ViCellBlu.Pause",
+    "resume": "ns=2;s=ViCellBlu.Resume",
+    "eject_stage": "ns=2;s=ViCellBlu.EjectStage",
+    "get_results": "ns=2;s=ViCellBlu.GetSampleResults",
+    "prime": "ns=2;s=ViCellBlu.Prime",
+    "clean": "ns=2;s=ViCellBlu.Clean"
+  }
+}

@@ -1,0 +1,117 @@
+device:
+  notes: >
+    Benchtop or single-use stirred-tank bioreactor (Biostat B glass vessel or Biostat STR bag) whose DCU 4 /
+    Biobrain controller runs the loops: temperature, pH (acid/base pumps), DO (gas mix and agitation cascade),
+    agitation, gas flow, feed pumps and foam control. Recipes (phases per cell line) are written and validated
+    in Biobrain; this package starts them, follows them, feeds, and stops them through the Biobrain OPC UA
+    server. The DCU's own alarms and interlocks stay primary.
+
+physical:
+  automated_load: false
+  notes: A person inoculates, connects feed bottles and samples. Vessel 0.5-50 L (Biostat B) or 50-2000 L
+    (Biostat STR); heating jacket or thermowell to 50 Cel, overlay and sparge gases (air, O2, CO2, N2), acid
+    and base bottles. No handling robot meets this instrument.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Biobrain OPC UA server accepts the session (certificate trusted, user with Remote operation).}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while start_batch or add_feed from here is in progress; phase says what the recipe itself is doing.}
+  - {name: temperature, type: number, unit: Cel, notes: Vessel temperature (TEMP PV). The jacket lags the setpoint by minutes on a 10 L vessel and by an hour on an STR bag.}
+  - {name: ph, type: number, unit: "[pH]", notes: pH PV from the in-situ probe; the DCU corrects with the base pump and CO2 in the gas mix. Drift after a day means the probe needs a one-point offline check.}
+  - {name: do, type: number, unit: "%", notes: Dissolved oxygen as percent of air saturation at the calibration point (DO PV).}
+  - {name: agitation_rpm, type: number, unit: "{rev}/min", notes: Measured stirrer speed (STIRR PV).}
+  - {name: gas_flow, type: number, unit: L/min, notes: Total sparge gas flow PV (the DCU mixes the gases to hold DO and pH).}
+  - {name: weight_kg, type: number, unit: kg, nullable: true, notes: Vessel or bag weight from the balance when the unit has one; null otherwise.}
+  - {name: foam_alarm, type: boolean, notes: True while the DCU's foam probe alarm is active; the antifoam pump is the DCU's, not this package's.}
+  - {name: phase, type: string, notes: "Phase name of the running recipe as Biobrain reports it (for example Inoculation, Growth, Production, Harvest); Complete or Stopped when none runs."}
+  - {name: agitation_running, type: boolean, notes: True when the stirrer turns above 5 rpm; feeding into an unstirred vessel pools the feed, so add_feed needs it.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); pH and DO probe calibrations live in the DCU and are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next probe calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Batches started from here (the lab's recorded count, or finished start_batch jobs when none is recorded).}
+
+settings:
+  - {name: temperature_setpoint, type: number, unit: Cel, limits: {min: 4, max: 50}, resolution: 0.1, approval: auto, during_job: true,
+     notes: "Writes TEMP SP and puts the loop in Auto. 4-50 Cel is the controller's range; the lab sets its own ceiling in config (mammalian cultures rarely exceed 37). May change mid-batch (temperature shifts)."}
+  - {name: ph_setpoint, type: number, unit: "[pH]", limits: {min: 2, max: 12}, resolution: 0.01, approval: auto, during_job: true,
+     notes: Writes PH SP and puts the loop in Auto. The DCU's deadband and CO2/base split are set in Biobrain.}
+  - {name: do_setpoint, type: number, unit: "%", limits: {min: 0, max: 100}, resolution: 1, approval: auto, during_job: true,
+     notes: Writes DO SP (percent air saturation) and puts the loop in Auto; the cascade (O2 enrichment, agitation) is configured in Biobrain.}
+  - {name: agitation_setpoint, type: number, unit: "{rev}/min", limits: {min: 0, max: 1500}, resolution: 1, approval: confirm, during_job: true,
+     notes: Writes STIRR SP and puts the loop in Auto. Confirm because high speeds shear cells and 1500 rpm is the controller range, not a safe value for any culture; the lab lowers max in config.}
+  - {name: gas_flow_setpoint, type: number, unit: L/min, limits: {min: 0, max: 20}, resolution: 0.01, approval: auto, during_job: true,
+     notes: Total gas flow SP; the mass flow controllers' range is per unit (0.02-2 L/min on a benchtop B, more on an STR). Set max in config to the installed MFC.}
+
+actions:
+  - name: start_batch
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    pausable: true
+    cancellable: true
+    params:
+      recipe: {type: string, notes: Name of the Biobrain recipe exactly as it is listed in Biobrain (recipe-level integration). One recipe per cell line and process; saved methods pin it.}
+      duration_s: {type: number, unit: s, limits: {min: 60, max: 2592000}, nullable: true, default: null, notes: Stop the recipe after this long; null follows the recipe to its own Complete phase (bounded by max_batch_hours in config).}
+    required: [recipe]
+    notes: >
+      Starts the named recipe and follows its phases until Biobrain reports it complete (or duration_s
+      passes), pushing phase updates. Cancelling the job stops the recipe. The culture keeps going if the
+      controller goes silent (watchdog releases the lease rather than stopping anything).
+    returns:
+      type: object
+      required: [recipe, duration_s, final]
+      properties:
+        recipe: {type: string}
+        duration_s: {type: number, unit: s, notes: From the start command to the recipe reporting complete (or stopped by duration_s).}
+        final:
+          type: object
+          notes: The readings when the recipe finished.
+          properties:
+            phase: {type: string}
+            temperature: {type: number, unit: Cel}
+            ph: {type: number, unit: "[pH]"}
+            do: {type: number, unit: "%"}
+            agitation_rpm: {type: number, unit: "{rev}/min"}
+            gas_flow: {type: number, unit: L/min}
+            weight_kg: {type: number, unit: kg, nullable: true}
+    examples:
+      - {recipe: "CHO_fedbatch_14d", duration_s: null}
+  - name: add_feed
+    duration: long
+    approval: auto
+    interlocks: [connected, agitation_running]
+    pausable: true
+    cancellable: true
+    params:
+      volume_ml: {type: number, unit: mL, limits: {min: 1, max: 5000}, notes: Feed volume to deliver through the SUBS feed pump line; the pump is calibrated in Biobrain (mL/h per % output).}
+      rate_ml_h: {type: number, unit: mL/h, limits: {min: 0.1, max: 2000}, notes: Feed rate; volume/rate is the job length, capped by max_feed_hours in config.}
+    required: [volume_ml, rate_ml_h]
+    notes: Sets the feed pump rate, waits volume/rate, then zeroes it. Cancelling stops the pump at once; the delivered volume is then rate x elapsed time.
+    returns:
+      type: object
+      required: [volume_ml, rate_ml_h, duration_s, weight_kg]
+      properties:
+        volume_ml: {type: number, unit: mL}
+        rate_ml_h: {type: number, unit: mL/h}
+        duration_s: {type: number, unit: s}
+        weight_kg: {type: number, unit: kg, nullable: true, notes: Weight after the feed, null without a balance.}
+    examples:
+      - {volume_ml: 150, rate_ml_h: 50}
+  - name: stop_batch
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    notes: Ends the running recipe (Biobrain keeps the batch record). A person confirms because stopping mid-batch loses the culture's schedule; the loops stay in their last mode.
+
+safety:
+  estop: true
+  interlocks: [connected, agitation_running]
+  watchdog_s: 300
+  watchdog_action: release
+  hardware_stop: The DCU's own alarm system and the mains switch on the tower; a foam or overtemperature alarm acts at the DCU before anything here does.
+  notes: >
+    E-stop zeroes the agitation, gas flow and feed setpoints and switches the stirrer, gas, feed, acid, base
+    and temperature loops to Off (motion and energy off; the vessel cools passively). The DCU's own alarms
+    stay primary. A controller silent for 5 minutes loses its lease but the recipe keeps running: interrupting a
+    two-week culture is worse than finishing it.

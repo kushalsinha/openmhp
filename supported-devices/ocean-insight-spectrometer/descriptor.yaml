@@ -1,0 +1,126 @@
+device:
+  notes: >
+    USB fibre-coupled spectrometer (USB2000+, USB4000, Flame, QE Pro, HR series) read through python-seabreeze.
+    Returns the full spectrum (wavelength and intensity arrays) and saves it as CSV. The light source, sample
+    holder and fibres are the lab's; this package only reads the detector and, on cooled models, drives the TEC.
+
+physical:
+  automated_load: false
+  notes: >
+    The sample sits in whatever holder the lab's fibres point at (a cuvette holder, a probe in a reactor);
+    nothing here can be loaded by a handling system. The only energy under software control is the
+    thermo-electric cooler of cooled models (QE Pro), which can take the detector to -20 Cel; the lamp is not
+    controlled by this package.
+
+signals:
+  - {name: connected, type: boolean, notes: True when seabreeze opens the spectrometer (the configured serial, or the first one found).}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while an acquisition job started here is active.}
+  - {name: serial_number, type: string, notes: Serial number reported by the spectrometer's EEPROM.}
+  - {name: model, type: string, notes: "Model string as seabreeze reports it (USB2000PLUS, USB4000, FLAMES, QE-PRO, HR4000 ...)."}
+  - {name: integration_time, type: integer, unit: us, notes: Integration time currently set, in microseconds.}
+  - {name: detector_temperature, type: number, unit: Cel, nullable: true, notes: Detector temperature from the TEC feature; null on models without a cooled detector.}
+  - {name: saturated, type: boolean, notes: True when the last spectrum reached the detector's max_intensity (the exposure is too long or the light too bright).}
+  - {name: dark_stored, type: boolean, notes: True when a dark spectrum taken with acquire_dark at the current integration time is held for subtraction. Changing integration_time_us discards it.}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); the wavelength calibration is checked by a person against a line source, not reported by the spectrometer."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next wavelength calibration is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Acquisition jobs (acquire and acquire_dark) completed here, unless the lab's record carries its own count.}
+
+settings:
+  - name: integration_time_us
+    type: integer
+    unit: us
+    limits: {min: 1000, max: 10000000}
+    resolution: 1
+    approval: auto
+    during_job: false
+    notes: >
+      Exposure per scan, microseconds. PLACEHOLDER range 1 ms to 10 s: each model has its own (USB2000+ 1 ms to 65 s,
+      USB4000 10 us to 65 s, QE Pro 8 ms to 1600 s per the vendor sheets); the driver also checks the value against the
+      limits the instrument reports and refuses outside them. Set the lab's own range here. A stored dark is discarded
+      when this changes.
+  - name: scans_to_average
+    type: integer
+    unit: "1"
+    limits: {min: 1, max: 100}
+    approval: auto
+    notes: Scans averaged in software into one spectrum. An acquisition takes integration_time_us x scans_to_average.
+  - name: tec_setpoint_c
+    type: number
+    unit: Cel
+    nullable: true
+    limits: {min: -20, max: 30}
+    resolution: 0.1
+    approval: auto
+    notes: >
+      Detector cooler setpoint on cooled models (QE Pro). Writing null turns the TEC off; on a model with no TEC any
+      non-null value is refused with NotSupported. Reads back the last value written, not the temperature reached
+      (read detector_temperature for that). Below the dew point condensation can form on an uncooled window; the
+      lab sets its own lower bound.
+
+actions:
+  - name: acquire
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      correct_dark_counts: {type: boolean, default: false, notes: Let seabreeze subtract the detector's electric dark pixels (models that have them).}
+      correct_nonlinearity: {type: boolean, default: false, notes: Apply the EEPROM nonlinearity polynomial.}
+      subtract_dark: {type: boolean, default: true, notes: Subtract the dark spectrum stored by acquire_dark, when one exists for the current integration time.}
+      label: {type: string, nullable: true, notes: "A tag stored with the spectrum, e.g. the sample name. Omitted or null stores no label."}
+    returns:
+      type: object
+      required: [wavelength_nm, intensity, integration_time_us, averages, saturated, dark_subtracted]
+      properties:
+        wavelength_nm: {type: array, items: {type: number}, notes: One wavelength per pixel, nm.}
+        intensity: {type: array, items: {type: number}, notes: Counts per pixel, averaged over scans_to_average, dark-subtracted when dark_subtracted is true.}
+        integration_time_us: {type: integer, unit: us}
+        averages: {type: integer, notes: scans_to_average at the time of the acquisition.}
+        saturated: {type: boolean, notes: True when any pixel reached max_intensity before dark subtraction.}
+        dark_subtracted: {type: boolean}
+        label: {type: string, nullable: true}
+        file: {type: string, nullable: true, notes: Path of the CSV (wavelength_nm, intensity) under data_dir; null when no data_dir is configured.}
+    notes: >
+      One spectrum with the current settings; takes integration_time_us x scans_to_average. Cancelling between scans
+      discards the partial average.
+    examples:
+      - {label: "sample A, cuvette 1", subtract_dark: true}
+  - name: acquire_dark
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      correct_dark_counts: {type: boolean, default: false, notes: As for acquire.}
+      correct_nonlinearity: {type: boolean, default: false, notes: As for acquire.}
+      label: {type: string, nullable: true, notes: A tag stored with the dark spectrum. Omitted or null stores no label.}
+    returns:
+      type: object
+      required: [wavelength_nm, intensity, integration_time_us, averages, saturated, dark_subtracted]
+      properties:
+        wavelength_nm: {type: array, items: {type: number}}
+        intensity: {type: array, items: {type: number}, notes: The dark counts per pixel; stored for subtraction by later acquire calls.}
+        integration_time_us: {type: integer, unit: us}
+        averages: {type: integer}
+        saturated: {type: boolean, notes: A saturated dark means stray light reaches the detector.}
+        dark_subtracted: {type: boolean, notes: Always false for a dark.}
+        label: {type: string, nullable: true}
+        file: {type: string, nullable: true, notes: Path of the CSV under data_dir; null when no data_dir is configured.}
+    notes: >
+      Takes a spectrum with the light blocked (a person or a shutter does that; this package cannot) and stores it as
+      the dark for the current integration time. Take a new one after every change of integration_time_us.
+    examples:
+      - {label: "dark, shutter closed"}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 300
+  watchdog_action: release
+  notes: >
+    E-stop turns the thermo-electric cooler off (the only energy this package controls) and cancels the running
+    acquisition; the lamp is not under software control and must be switched off by a person. Five minutes of silence
+    from the controller releases the lease and reports it rather than stopping: an acquisition left running is
+    harmless and a TEC left on keeps the detector stable for the next user.
