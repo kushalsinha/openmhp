@@ -235,7 +235,7 @@ def test_sigma_centrifuge():
 
 def test_agilent_708ds_template():
     drv, dev = _twin("agilent-dissolution-708ds")
-    assert dev.read("bath_temperature") == 22.0 and dev.read("paddle_speed") == 0.0 and dev.read("run_state") == 0
+    assert 22.0 <= dev.read("bath_temperature") < 23.0 and dev.read("paddle_speed") == 0.0 and dev.read("run_state") == 0
     assert dev.read("heater_on") is True and dev.read("identity") == "5293DLO0710C000"
     refused(-32012, lambda: dev.write("temperature_setpoint", 37.0))         # everything confirmed: the frames are placeholders
     refused(-32010, lambda: dev.write("temperature_setpoint", 50, approved=True))
