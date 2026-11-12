@@ -1,0 +1,25 @@
+{
+  "request_dir": {
+    "ask": "Folder on the MITS Pro PC where test requests are dropped",
+    "kind": "path",
+    "example": "C:\\OpenMHP\\arbin\\requests",
+    "help": "The package writes mhp_<job>.json here (channel, test name, schedule, steps). The person at the console starts that test in MITS Pro (Start Channel(s): the named schedule, the test name) and deletes the request."
+  },
+  "results_dir": {
+    "ask": "Folder where the channel's results are exported as CSV when the test ends",
+    "kind": "path",
+    "example": "C:\\OpenMHP\\arbin\\results",
+    "help": "Export from MITS Pro (or its export tool) as CSV with the standard columns, named after the test name (<barcode>_mhp_<job>.csv)."
+  },
+  "software": {
+    "ask": "MITS Pro version on the PC (for the record)",
+    "example": "MITS Pro 8",
+    "required": false
+  },
+  "default_channel": {"ask": "MITS Pro channel name channel_state reports until one is written", "advanced": true, "required": false},
+  "allowed_schedules": {"ask": "Schedule file names an agent may queue (JSON list; empty allows any)", "advanced": true, "required": false},
+  "voltage_max_v": {"ask": "Highest voltage limit any requested step may ask for (chemistry cap)", "advanced": true},
+  "current_max_a": {"ask": "Highest step current, in A", "advanced": true},
+  "result_wait_s": {"ask": "Seconds to wait for the results export before the job fails", "kind": "int", "advanced": true},
+  "poll_s": {"ask": "Seconds between looks at the results folder", "kind": "int", "advanced": true}
+}

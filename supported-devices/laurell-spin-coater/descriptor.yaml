@@ -1,0 +1,121 @@
+device:
+  notes: >
+    Laurell WS-650 or WS-400 series spin processor with the 650 controller (20 programs of 51 steps,
+    vacuum chuck with a 15 inHg interlock, lid interlock, 0-12,000 rpm, up to 30,000 rpm/s), driven
+    over the controller's RS-232 or USB port. TEMPLATE: the serial command set is not published;
+    every command here is a placeholder (references/serial.md). Confirm with Laurell before use.
+
+physical:
+  automated_load: false
+  notes: >
+    A bench unit with a hinged lid over the bowl; the substrate is placed on the vacuum chuck by
+    hand and the lid closed by hand (the lid is not motorised). A handling robot could reach the
+    chuck with the lid open and the chuck still, which robot_access_ready reports, but nothing
+    opens the lid for it, so automated_load is false. Solvent vapour in the bowl, a chuck at up to
+    12,000 rpm and dispense valves on nitrogen or compressed dry air are the hazards.
+
+signals:
+  - {name: speed_rpm, type: number, unit: "{rev}/min", notes: "Actual chuck speed (placeholder command ?RPM, unverified); 0 when stopped."}
+  - {name: speed_setpoint, type: number, unit: "{rev}/min", notes: "Set point of the current step (placeholder ?SP, unverified)."}
+  - {name: lid_closed, type: boolean, notes: "Lid closed (placeholder ?LID, unverified; the controller shows LID OPEN on its display when open). The controller stops the motor and valves itself when the lid opens."}
+  - {name: vacuum_ok, type: boolean, notes: "Chuck vacuum at or above the controller's preset (15 inHg from the factory, set in Spin 3000); placeholder ?VOK, unverified. The controller refuses to start below it and halts a run that loses it."}
+  - {name: vacuum_inhg, type: number, unit: "[in_i'Hg]", notes: "Chuck vacuum in inches of mercury as the controller displays it (placeholder ?VAC, unverified)."}
+  - {name: running, type: boolean, notes: "A program is running (placeholder ?RUN, unverified)."}
+  - {name: program, type: integer, notes: "Selected program slot 1-20 (placeholder ?PRG, unverified)."}
+  - {name: step, type: integer, notes: "Current step of the running program (placeholder ?STEP, unverified); 0 when idle."}
+  - {name: chuck_still, type: boolean, notes: "True when the chuck reads 0 rpm (derived by the driver from ?RPM); the interlock for releasing the vacuum, which the controller itself also refuses while the chuck turns."}
+  - {name: robot_access_ready, type: boolean, notes: True only when the lid is open and the chuck reads 0 rpm (derived by the driver from lid_closed and speed_rpm), so a handler may reach the chuck.}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a recipe job runs; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record, notes: valid, due, overdue or unknown, from calibration_due in the lab's config.json self_state record. The controller reports no speed calibration over the interface.}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next speed check (tachometer) is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: run_recipe jobs completed here (spins), from this device's job records unless the lab records its own count.}
+
+settings:
+  - name: program
+    type: integer
+    limits: {min: 1, max: 20}
+    approval: auto
+    notes: Program slot to select on the controller (placeholder PRG {value}, unverified). run_recipe selects its own slot; this setting exists to run a program stored from the keypad with start_program.
+
+actions:
+  - name: run_recipe
+    duration: long
+    approval: auto
+    interlocks: [lid_closed, vacuum_ok, connected]
+    cancellable: true
+    params:
+      slot: {type: integer, default: 20, limits: {min: 1, max: 20}, notes: Program slot the steps are written into before the run; 20 by default so keypad-stored programs in low slots survive.}
+      steps:
+        type: array
+        items:
+          type: object
+          required: [speed_rpm, acceleration_rpm_s, duration_s]
+          properties:
+            speed_rpm: {type: number, unit: "{rev}/min", limits: {min: 0, max: 12000}, resolution: 1, notes: Step speed. 12,000 is the HPD-2 drive's maximum (10,000 on the standard drive); set the limit to what the substrate survives.}
+            acceleration_rpm_s: {type: number, unit: "{rev}/min/s", limits: {min: 1, max: 30000}, resolution: 1, notes: Acceleration (and deceleration) to the step speed. 30,000 rpm/s is the drive's maximum; a few hundred for glass slides.}
+            duration_s: {type: number, unit: s, limits: {min: 1, max: 9999}, resolution: 1, notes: Time at the step speed, seconds.}
+        notes: Up to 51 steps, the controller's program length; the last step is usually 0 rpm for a few seconds to stop the chuck.
+    required: [steps, slot]
+    examples:
+      - {steps: [{speed_rpm: 500, acceleration_rpm_s: 500, duration_s: 5}, {speed_rpm: 3000, acceleration_rpm_s: 1500, duration_s: 30}, {speed_rpm: 0, acceleration_rpm_s: 1500, duration_s: 5}], slot: 20}
+    returns:
+      type: object
+      properties:
+        replies: {type: array, items: {type: string}, notes: The controller's reply to each command in order (one per step written, then the select and the start).}
+    notes: >
+      Writes each step into the slot (placeholder STEP <slot> <n> <rpm> <acc> <s>, unverified), selects
+      the slot (PRG) and starts it (RUN). The job returns once the run is started; poll running and
+      speed_rpm. Refused unless the lid is closed and the chuck vacuum is at the controller's preset,
+      which the controller also enforces itself. Cancelling before RUN starts nothing.
+  - {name: start_program, duration: short, approval: auto, interlocks: [lid_closed, vacuum_ok, connected], notes: Starts the selected program as stored (placeholder RUN, unverified), for programs edited at the keypad.}
+  - {name: stop, duration: short, approval: auto, interlocks: [connected], notes: Stops the run; the chuck decelerates under control (placeholder STOP, unverified). The same command e-stop sends.}
+  - {name: vacuum_on, duration: short, approval: auto, interlocks: [connected], notes: Opens the chuck vacuum valve to hold a substrate (placeholder VAC 1, unverified). The controller drops it after 10 minutes unused or when the lid opens.}
+  - {name: vacuum_off, duration: short, approval: auto, interlocks: [chuck_still, connected], notes: Releases the chuck vacuum (placeholder VAC 0, unverified); refused while the chuck turns, as the controller itself refuses.}
+  - {name: chuck_still_check, duration: short, approval: auto, interlocks: [connected], notes: "Reads the speed once (placeholder ?RPM) so a caller can log that the chuck was still before a handler reaches in; the same reading feeds chuck_still and robot_access_ready."}
+
+safety:
+  estop: true
+  interlocks: [lid_closed, vacuum_ok, chuck_still, connected]
+  watchdog_s: 30
+  notes: >
+    E-stop sends STOP: the motor decelerates under control and the dispense valves close, the same
+    as the controller's own lid interlock does. A controller silent for 30 s while holding the lease
+    gets the same stop, because a chuck left spinning with solvent in the bowl is the hazard. The
+    unit's own interlocks (lid, chuck vacuum at 15 inHg, the circuit breaker on the housing) act
+    regardless of this package; the breaker is the physical stop.
+  hardware_stop: >
+    The over-current circuit breaker on the housing (on the remote controller's rear panel for
+    Indeck units) is also the ON/OFF switch; a tripped breaker shows a white band and is reset by
+    hand after inspection. It is not reported over the interface.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600
+  eol: "\r"
+  read:
+    speed_rpm: "?RPM"
+    speed_setpoint: "?SP"
+    lid_closed: "?LID"
+    vacuum_ok: "?VOK"
+    vacuum_inhg: "?VAC"
+    running: "?RUN"
+    program: "?PRG"
+    step: "?STEP"
+    chuck_still: "?RPM"
+  write:
+    program: "PRG {value}"
+  actions:
+    run_recipe: ["RUN"]
+    start_program: ["RUN"]
+    stop: ["STOP"]
+    vacuum_on: ["VAC 1"]
+    vacuum_off: ["VAC 0"]
+    chuck_still_check: ["?RPM"]
+  estop: ["STOP"]
+  booleans:
+    lid_closed: {true: ["LID 1", "CLOSED"], false: ["LID 0", "OPEN"]}
+    vacuum_ok: {true: ["VOK 1"], false: ["VOK 0"]}
+    running: {true: ["RUN 1"], false: ["RUN 0"]}

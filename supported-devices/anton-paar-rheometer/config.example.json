@@ -1,0 +1,10 @@
+{
+  "job_dir": "C:\\ProgramData\\Anton Paar\\RheoCompass\\Jobs\\openmhp",
+  "results_dir": "C:\\ProgramData\\Anton Paar\\RheoCompass\\Export\\openmhp",
+  "live_export_file": "",
+  "hood_state_file": "C:\\ProgramData\\Anton Paar\\RheoCompass\\Jobs\\openmhp\\hood.txt",
+  "equilibration_s": 300,
+  "max_test_hours": 6,
+  "poll_s": 10,
+  "result_wait_s": 7200
+}

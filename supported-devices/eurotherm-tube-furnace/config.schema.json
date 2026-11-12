@@ -1,0 +1,23 @@
+{
+  "serial_port": {
+    "ask": "Serial port of the EIA-485/232 adapter wired to the controller (COM4, /dev/ttyUSB0, /dev/tty.usbserial-*)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "The controller's comms terminals (HD/HE/HF on a 2416) go to a USB-to-EIA-485 adapter; the adapter appears as a COM port. For a Modbus TCP gateway leave this out and put `host` in config.json instead."
+  },
+  "baud": {
+    "ask": "Baud rate set in the controller's comms list (9600 from the factory, 19200 on many furnaces)",
+    "kind": "int",
+    "example": 9600,
+    "required": false,
+    "advanced": true
+  },
+  "unit": {
+    "ask": "Modbus address (Addr in the controller's comms list)",
+    "kind": "int",
+    "example": 1,
+    "required": false,
+    "advanced": true,
+    "help": "1 unless several controllers share one EIA-485 bus."
+  }
+}

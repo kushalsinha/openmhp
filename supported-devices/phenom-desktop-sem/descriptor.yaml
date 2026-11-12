@@ -1,0 +1,140 @@
+device:
+  notes: >
+    Desktop SEM with a CeB6 source, a four-segment backscattered electron detector (secondary electron
+    detector optional), a colour navigation camera and a motorised X/Y stage; 2-20 kV (4.8-20.5 kV in
+    advanced mode), 160x to 200,000x, low/medium/high vacuum levels, <9 nm resolution (Phenom XL G3
+    datasheet DS0328). PPI (PyPhenom) commands it over the network from a Windows PC on the instrument's
+    network. Stage positions in PPI are metres; this package speaks millimetres.
+
+physical:
+  automated_load: false
+  notes: >
+    The holder (up to 100 x 100 mm, 36 pin stubs on the XL; smaller on a Pharos or ProX) is placed by hand
+    in the loading port; load_sample then pumps it in (electron-optical loading time <60 s) and
+    unload_sample vents and presents it. No vendor-documented robot loader or automated port door was
+    found for any Phenom, so automated_load is false; a robot that can reach the presented holder reads
+    robot_access_ready first. Nothing else moves outside the chamber.
+
+signals:
+  - {name: connected, type: boolean, notes: True when PyPhenom opened a session to the instrument (address, instrument ID, licence password from config.json) and the instrument mode reads.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a load, unload, stage move or acquisition from here runs.}
+  - {name: instrument_mode, type: string, notes: "PPI instrument mode (GetInstrumentMode, unverified name): Operational, Standby or Hibernate. Only Operational images; Standby after an e-stop."}
+  - {name: operational_mode, type: string, notes: "PPI operational mode (GetOperationalMode, unverified name): Loading, Unloading, Unloaded, LiveNavCam, LiveSem, AcquireSemImage and the like. Loading/Unloading mean the port is moving."}
+  - {name: vacuum_ready, type: boolean, notes: True when the holder is loaded and the SEM side is live (operational mode LiveSem or AcquireSemImage); false while loading, unloading or unloaded. Derived from operational_mode, so it is as trustworthy as that word.}
+  - {name: beam_on, type: boolean, notes: "True when the instrument mode is Operational and the holder is loaded under the SEM (vacuum_ready): PPI exposes no separate beam query in the material read, so this is derived, not measured."}
+  - {name: high_voltage, type: number, unit: kV, notes: Acceleration voltage reported by the instrument (GetSemHighTension, unverified; PPI returns negative volts, reported here positive in kV).}
+  - {name: stage_position, type: object, notes: "{x_mm, y_mm}: the motorised stage position from the stage centre (GetStagePosition, unverified; PPI metres converted to mm). The XL's stage covers 100 x 100 mm."}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: True exactly when the operational mode is Unloaded (the holder is vented and presented at the loading port) and nothing from here runs; a robot reads this before taking or placing the holder.}
+  - {name: last_image, type: object, nullable: true, notes: Result of the most recent acquire_image from here; same shape as its returns; null before the first.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the instrument's own magnification calibration is not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next magnification or EDS calibration check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Images acquired from here (the lab's recorded count, or finished acquire_image jobs when none is recorded).}
+
+settings:
+  - {name: high_voltage, type: number, unit: kV, limits: {min: 4.8, max: 20.5}, resolution: 0.1, approval: auto, during_job: false,
+     notes: "Acceleration voltage (SetSemHighTension, unverified; sent as negative volts). 4.8-20.5 kV is the XL G3's advanced-mode range; the standard presets are 5, 10, 15 and 20 kV. A Pharos goes to 25 kV and a ProX to 15: set the limits to your model. Changing it refocuses; run auto_focus or acquire with auto_focus true afterwards."}
+
+actions:
+  - name: load_sample
+    duration: long
+    approval: auto
+    interlocks: [connected, robot_access_ready]
+    cancellable: false
+    notes: >
+      Pumps the holder in the loading port into the chamber (Load, unverified name) and waits until the
+      operational mode is live (about 60 s electron-optical). Needs the holder unloaded and presented
+      (robot_access_ready) so nothing is pinched. Not cancellable: the port cycle runs to completion.
+    returns:
+      type: object
+      required: [loaded, operational_mode, duration_s]
+      properties:
+        loaded: {type: boolean}
+        operational_mode: {type: string}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {}
+  - name: unload_sample
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: false
+    notes: Vents and presents the holder (Unload, named in Thermo's PPI material) and waits for the Unloaded mode; robot_access_ready then reads true. Refused while an image is being acquired.
+    returns:
+      type: object
+      required: [loaded, operational_mode, duration_s]
+      properties:
+        loaded: {type: boolean}
+        operational_mode: {type: string}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {}
+  - name: move_stage
+    duration: short
+    approval: auto
+    interlocks: [connected, vacuum_ready]
+    params:
+      x_mm: {type: number, unit: mm, limits: {min: -50, max: 50}, resolution: 0.001, notes: Target X from the stage centre; +/-50 mm covers the XL's 100 x 100 mm stage. Set the limits to your holder.}
+      y_mm: {type: number, unit: mm, limits: {min: -50, max: 50}, resolution: 0.001, notes: Target Y from the stage centre.}
+    required: [x_mm, y_mm]
+    notes: Absolute stage move (MoveTo with a Position in metres; Position is in Thermo's PPI material, MoveTo unverified). Blocks until the move returns; the holder must be loaded.
+    examples:
+      - {x_mm: 12.5, y_mm: -8.0}
+  - name: auto_focus
+    duration: short
+    approval: auto
+    interlocks: [connected, vacuum_ready]
+    notes: Runs the instrument's auto focus (SemAutoFocus, named in Thermo's PPI material) at the current position and magnification.
+  - name: acquire_image
+    duration: long
+    approval: auto
+    interlocks: [connected, vacuum_ready]
+    cancellable: true
+    params:
+      magnification: {type: number, unit: "1", limits: {min: 160, max: 200000}, notes: Requested magnification; set through the horizontal field width (SetSemHfw, unverified). 160-200,000x is the XL G3's electron-optical range.}
+      width_px: {type: integer, unit: "1", limits: {min: 256, max: 7680}, default: 1920, notes: Image width in pixels; the instrument's own sizes are 960x600, 1920x1200, 3840x2400 and 7680x4800.}
+      height_px: {type: integer, unit: "1", limits: {min: 160, max: 4800}, default: 1200, notes: Image height in pixels.}
+      dwell_us: {type: number, unit: us, limits: {min: 0.1, max: 1000}, default: 1.0, notes: Pixel dwell time in microseconds (ScanParams dwell, unverified mapping); longer dwell means less noise and more drift.}
+      frames: {type: integer, unit: "1", limits: {min: 1, max: 64}, default: 1, notes: Frames averaged (ScanParams nFrames, unverified).}
+      detector: {type: string, limits: {enum: [bsd_all, bsd_topo_a, bsd_topo_b, sed]}, default: bsd_all, notes: "Detector mode (ScanParams detector, unverified): the four-segment BSD summed (compositional), its topographic halves, or the optional SED."}
+      auto_focus: {type: boolean, default: false, notes: Run SemAutoFocus before acquiring.}
+      label: {type: string, default: "image", notes: Plain name used in the TIFF file name (letters, digits, dash, underscore).}
+    required: [magnification]
+    notes: >
+      Sets the horizontal field width for the magnification, optionally focuses, acquires the frame(s) with
+      SemAcquireImage (named in Thermo's PPI material) and saves a TIFF into image_dir. Cancelling between
+      focus and acquisition abandons the acquisition. The file name carries the label and a timestamp.
+    returns:
+      type: object
+      required: [file, magnification, hfw_um, width_px, height_px, high_voltage_kv, dwell_us, frames, detector, stage, duration_s]
+      properties:
+        file: {type: string, notes: Path of the TIFF written.}
+        magnification: {type: number, unit: "1", notes: Magnification the instrument reports after the field width was set.}
+        hfw_um: {type: number, unit: um, notes: Horizontal field width.}
+        width_px: {type: integer}
+        height_px: {type: integer}
+        high_voltage_kv: {type: number, unit: kV}
+        dwell_us: {type: number, unit: us}
+        frames: {type: integer}
+        detector: {type: string}
+        stage:
+          type: object
+          required: [x_mm, y_mm]
+          properties:
+            x_mm: {type: number, unit: mm}
+            y_mm: {type: number, unit: mm}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {magnification: 5000, width_px: 1920, height_px: 1200, dwell_us: 1.0, frames: 1, detector: bsd_all, auto_focus: true, label: "loc04"}
+      - {magnification: 50000, width_px: 960, height_px: 600, dwell_us: 2.0, frames: 4, detector: sed, auto_focus: false, label: "loc04_hi"}
+
+safety:
+  estop: true
+  interlocks: [connected, vacuum_ready, robot_access_ready]
+  watchdog_s: 60
+  notes: >
+    E-stop puts the instrument into Standby (Standby, unverified name), which switches the source off the
+    sample; the vacuum is kept and nothing vents. A controller silent for 60 s is stopped the same way:
+    an image interrupted is nothing lost. There is no physical stop; the instrument's own interlocks
+    guard the port and the source.

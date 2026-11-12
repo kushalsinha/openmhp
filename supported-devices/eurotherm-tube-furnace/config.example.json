@@ -1,0 +1,5 @@
+{
+  "serial_port": "/dev/ttyUSB0",
+  "baud": 9600,
+  "unit": 1
+}

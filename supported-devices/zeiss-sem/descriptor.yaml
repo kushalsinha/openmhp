@@ -1,0 +1,173 @@
+device:
+  notes: >
+    ZEISS SEM (EVO tungsten or LaB6, Sigma and GeminiSEM field emission) with a five-axis motorised stage,
+    SE2/InLens and BSD detectors, high vacuum and (EVO, Sigma VP) variable pressure, controlled by SmartSEM on
+    the microscope PC. The SmartSEM Remote API is a COM automation object on that PC; this package is a
+    template written against its shape (Get/Set of named parameters, Execute of named commands, an image
+    grab) with every name configurable. Stage in mm and degrees, EHT in kV.
+
+physical:
+  automated_load: false
+  notes: >
+    The stub sits on the stage behind a hinged chamber door that a person opens by hand once the chamber is
+    vented; an airlock is an option on some models but no loader or door actuator reachable through the API
+    is documented, so automated_load is false. A robot that can reach the open door reads robot_access_ready
+    (vented, stage idle, nothing running) first. The stage moves inside the chamber only.
+
+signals:
+  - {name: connected, type: boolean, notes: "True when the SmartSEM Remote API COM object was created and InitialiseRemoting succeeded on the microscope PC (Windows)."}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: "True while a pump, vent, EHT run-up, stage move or grab from here runs."}
+  - {name: vacuum_status, type: string, notes: "SmartSEM vacuum status text passed through (Get DP_VAC_STATUS, unverified): the twin uses Ready, Pumping, Venting, At atmosphere, Error; the real instrument's words are the API reference's."}
+  - {name: vacuum_ready, type: boolean, notes: "True when vacuum_status is the ready word (chamber at operating pressure); false while pumping, venting or at atmosphere."}
+  - {name: beam_on, type: boolean, notes: "True when the EHT is on and run up (Get DP_RUNUPSTATE, unverified); the beam may still be blanked between grabs."}
+  - {name: high_voltage, type: number, unit: kV, notes: "EHT reported by the instrument (Get AP_ACTUALKV, unverified; kV)."}
+  - {name: stage_position, type: object, notes: "{x_mm, y_mm, z_mm, rotation_deg, tilt_deg} from Get AP_STAGE_AT_X/Y/Z/R/T (unverified; SmartSEM stage units assumed mm and degrees)."}
+  - {name: stage_busy, type: boolean, notes: "True while the stage moves (Get DP_STAGE_IS, unverified)."}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: "True exactly when vacuum_status is the at-atmosphere word, the stage is idle and nothing from here runs: the door may be opened and the stub exchanged. No door switch is read, so this does not know whether the door is actually open."}
+  - {name: last_image, type: object, nullable: true, notes: "Result of the most recent acquire_image from here; same shape as its returns; null before the first."}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state); the instrument's own magnification calibration is not read."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: "ISO-8601 date of the next magnification calibration check due, from the lab's record; null when none is recorded."}
+  - {name: qualification_status, type: string, source: record, notes: "IQ/OQ/PQ as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: "Images grabbed from here (the lab's recorded count, or finished acquire_image jobs when none is recorded)."}
+
+settings:
+  - {name: high_voltage, type: number, unit: kV, limits: {min: 0.02, max: 30}, resolution: 0.01, approval: auto, during_job: false,
+     notes: "EHT target for the next set_beam (Set AP_MANUALKV, unverified; kV). 0.02-30 kV is a placeholder spanning EVO and Gemini columns; set the limits to yours. Stored here and sent when the EHT is switched on, or immediately if it is already on."}
+
+actions:
+  - name: load_sample
+    duration: long
+    approval: auto
+    interlocks: [connected, robot_access_ready]
+    cancellable: false
+    notes: >
+      Pumps the chamber (Execute CMD_PUMP, unverified) after a person or robot has closed the door, and waits
+      until the vacuum status is ready (typically 2-5 minutes). Needs robot_access_ready so the door was
+      openable, which is the best this protocol shape can say about it being closed again. Not cancellable.
+    returns:
+      type: object
+      required: [vacuum_status, vacuum_ready, duration_s]
+      properties:
+        vacuum_status: {type: string}
+        vacuum_ready: {type: boolean}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {}
+  - name: unload_sample
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: false
+    notes: "Switches the EHT off (Execute CMD_EHT_OFF, unverified), waits for the stage to be idle, vents the chamber (Execute CMD_VENT, unverified) and waits for the at-atmosphere word; robot_access_ready then reads true."
+    returns:
+      type: object
+      required: [vacuum_status, vacuum_ready, beam_on, duration_s]
+      properties:
+        vacuum_status: {type: string}
+        vacuum_ready: {type: boolean}
+        beam_on: {type: boolean}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {}
+  - name: set_beam
+    duration: long
+    approval: auto
+    interlocks: [connected, vacuum_ready]
+    cancellable: false
+    params:
+      enable: {type: boolean, notes: "True sets the EHT (Set AP_MANUALKV) and switches it on (Execute CMD_EHT_ON, unverified), waiting for the run-up; false switches it off (CMD_EHT_OFF)."}
+    required: [enable]
+    notes: "EHT on needs the chamber pumped (vacuum_ready interlock). Run-up takes 10-60 s; the job returns when the run-up state reports on."
+    returns:
+      type: object
+      required: [beam_on, high_voltage_kv, duration_s]
+      properties:
+        beam_on: {type: boolean}
+        high_voltage_kv: {type: number, unit: kV}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {enable: true}
+  - name: move_stage
+    duration: long
+    approval: auto
+    interlocks: [connected, vacuum_ready]
+    cancellable: true
+    params:
+      x_mm: {type: number, unit: mm, limits: {min: -62.5, max: 62.5}, resolution: 0.001, notes: "Stage X from centre; +/-62.5 mm is a placeholder for a 125 mm stage, set to your chamber."}
+      y_mm: {type: number, unit: mm, limits: {min: -62.5, max: 62.5}, resolution: 0.001, notes: "Stage Y from centre."}
+      z_mm: {type: number, unit: mm, limits: {min: 0, max: 50}, resolution: 0.001, nullable: true, default: null, notes: "Stage Z; null keeps the current Z. Set the maximum below the pole-piece clearance for your tallest holder."}
+      rotation_deg: {type: number, unit: deg, limits: {min: 0, max: 360}, resolution: 0.01, nullable: true, default: null, notes: "Stage rotation; null keeps it."}
+      tilt_deg: {type: number, unit: deg, limits: {min: -10, max: 90}, resolution: 0.01, nullable: true, default: null, notes: "Stage tilt; null keeps it. Tilt with a tall holder can hit the pole piece: the lab sets the limit."}
+    required: [x_mm, y_mm]
+    notes: "Absolute move (MoveStage, unverified) followed by polling DP_STAGE_IS; cancelling sends CMD_STAGE_STOP. The chamber must be pumped so a move is never made with the door open."
+    returns:
+      type: object
+      required: [x_mm, y_mm, z_mm, rotation_deg, tilt_deg]
+      properties:
+        x_mm: {type: number, unit: mm}
+        y_mm: {type: number, unit: mm}
+        z_mm: {type: number, unit: mm}
+        rotation_deg: {type: number, unit: deg}
+        tilt_deg: {type: number, unit: deg}
+    examples:
+      - {x_mm: 5.0, y_mm: -3.5, z_mm: null, rotation_deg: null, tilt_deg: null}
+  - name: auto_focus
+    duration: short
+    approval: auto
+    interlocks: [connected, beam_on]
+    notes: "Runs SmartSEM's auto focus (Execute CMD_AUTO_FOCUS, unverified) at the current magnification; a few seconds."
+  - name: acquire_image
+    duration: long
+    approval: auto
+    interlocks: [connected, vacuum_ready, beam_on]
+    cancellable: true
+    params:
+      magnification: {type: number, unit: "1", limits: {min: 5, max: 1000000}, notes: "Magnification set directly (Set AP_MAG, unverified) and read back. Placeholder range."}
+      width_px: {type: integer, unit: "1", limits: {min: 256, max: 8192}, default: 1024, notes: "Image width in pixels (Grab, unverified)."}
+      height_px: {type: integer, unit: "1", limits: {min: 192, max: 6144}, default: 768, notes: "Image height in pixels."}
+      scan_speed: {type: integer, unit: "1", limits: {min: 1, max: 15}, default: 5, notes: "SmartSEM scan speed index (Set DP_SCAN_RATE, unverified); higher is slower and less noisy."}
+      frames: {type: integer, unit: "1", limits: {min: 1, max: 64}, default: 1, notes: "Frames to grab and average in software."}
+      detector: {type: string, limits: {enum: [se2, inlens, bsd]}, default: se2, notes: "Detector selected for the grab (Set DP_DETECTOR_CHANNEL, unverified): SE2 (Everhart-Thornley), InLens (Gemini), or the BSD."}
+      auto_focus: {type: boolean, default: false, notes: "Run CMD_AUTO_FOCUS before grabbing."}
+      label: {type: string, default: "image", notes: "Plain name used in the TIFF file name (letters, digits, dash, underscore)."}
+    required: [magnification]
+    notes: >
+      Sets the magnification, detector and scan rate, optionally focuses, grabs the frame(s) (Grab writes a TIFF
+      itself in the shape assumed; unverified), averages in software when frames > 1 and writes the TIFF into
+      image_dir. Cancelling between frames sends CMD_FREEZE_ALL.
+    returns:
+      type: object
+      required: [file, magnification, width_px, height_px, high_voltage_kv, scan_speed, frames, detector, stage, duration_s]
+      properties:
+        file: {type: string, notes: "Path of the TIFF written."}
+        magnification: {type: number, unit: "1", notes: "Magnification read back from the instrument."}
+        width_px: {type: integer}
+        height_px: {type: integer}
+        high_voltage_kv: {type: number, unit: kV}
+        scan_speed: {type: integer}
+        frames: {type: integer}
+        detector: {type: string}
+        stage:
+          type: object
+          required: [x_mm, y_mm, z_mm, rotation_deg, tilt_deg]
+          properties:
+            x_mm: {type: number, unit: mm}
+            y_mm: {type: number, unit: mm}
+            z_mm: {type: number, unit: mm}
+            rotation_deg: {type: number, unit: deg}
+            tilt_deg: {type: number, unit: deg}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {magnification: 2000, width_px: 1024, height_px: 768, scan_speed: 5, frames: 1, detector: se2, auto_focus: true, label: "grain01"}
+      - {magnification: 20000, width_px: 2048, height_px: 1536, scan_speed: 8, frames: 4, detector: bsd, auto_focus: false, label: "grain01_bsd"}
+
+safety:
+  estop: true
+  interlocks: [connected, vacuum_ready, beam_on, robot_access_ready]
+  watchdog_s: 60
+  notes: >
+    E-stop switches the EHT off (Execute CMD_EHT_OFF, unverified), stops the stage (CMD_STAGE_STOP) and freezes
+    the scan (CMD_FREEZE_ALL); the chamber stays pumped and nothing vents. A controller silent for 60 s is
+    stopped the same way. SmartSEM's own interlocks guard the door, the vacuum and the EHT; there is no
+    physical stop button on the column.

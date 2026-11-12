@@ -1,0 +1,56 @@
+{
+  "job_dir": {
+    "ask": "Folder the Data Collector job import takes job files from",
+    "kind": "path",
+    "example": "C:\\ProgramData\\PANalytical\\DataCollector\\Jobs\\openmhp",
+    "help": "The folder the lab's Operator Interface job list, batch script or Universal Automation Interface client watches (see references/xrdml_files.md). Must exist and be writable by the account running mhp on the Data Collector PC."
+  },
+  "results_dir": {
+    "ask": "Folder where the .xrdml files of the queued scans are written",
+    "kind": "path",
+    "example": "C:\\ProgramData\\PANalytical\\DataCollector\\Results\\openmhp",
+    "help": "The result folder of the measurement program; the package waits for <sample_id>_<token>.xrdml there."
+  },
+  "programs_dir": {
+    "ask": "Data Collector folder holding the .xrdmp measurement programs",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  },
+  "changer_positions": {
+    "ask": "Number of positions on the sample changer (6 or 67 on an Aeris)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "changer_s": {
+    "ask": "Seconds a changer cycle takes (for progress and the wait)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "max_points": {
+    "ask": "Most data points a queued scan may have",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "max_scan_hours": {
+    "ask": "Longest scan an agent may queue (hours)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between checks of the results folder",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "result_wait_s": {
+    "ask": "Longest wait for a result before the job fails (seconds)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}

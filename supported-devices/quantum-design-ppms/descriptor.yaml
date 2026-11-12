@@ -1,0 +1,164 @@
+device:
+  notes: >
+    Quantum Design cryostat (PPMS, DynaCool, MPMS3; VersaLab and OptiCool answer the same calls) with
+    a superconducting magnet, a sample chamber and MultiVu as its control software. MultiPyVu is
+    Quantum Design's socket server beside MultiVu plus a Python client; this package is that client.
+    Temperature in kelvin, field in oersted, rates in K/min and Oe/s, exactly as MultiVu takes them.
+    The measurement options (resistivity bridge, VSM, ACMS, rotator) are not reachable here.
+
+physical:
+  automated_load: false
+  notes: >
+    The sample is on a puck or rod lowered into the sample chamber by a person after the chamber is
+    vented; there is no loader, no sample-in-place switch and MultiVu reports nothing about whether a
+    puck is present, so robot_access_ready is not declared. Stored energy: a 7-16 T superconducting magnet and liquid
+    helium or a cryocooler; the magnet is never left charged unattended without the lab's say-so.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the MultiVu socket server (MultiPyVu Server on the instrument PC) accepts a client connection and answers a temperature read.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a ramp-and-wait or chamber job from here is in progress. MultiVu itself keeps ramping after a job ends or is cancelled.}
+  - {name: temperature, type: number, unit: K, notes: System (sample chamber) temperature as MultiVu reports it (get_temperature). Below about 1.8 K only with the He3 or dilution options.}
+  - {name: temperature_status, type: string, notes: "MultiVu's temperature status word passed through unchanged: Stable, Tracking, Near, Chasing, Pot Operation, Standby, Diagnostic, Impedance Control Error, Failure (the set this package knows; see references/multipyvu.md). Only Stable means the setpoint is held."}
+  - {name: field, type: number, unit: Oe, notes: Magnetic field at the sample as MultiVu reports it (get_field), in oersted; 10000 Oe = 1 T. On a PPMS in persistent mode this is the last value driven.}
+  - {name: field_status, type: string, notes: "MultiVu's magnet status word passed through unchanged: Stable Persistent, Warming Switch, Cooling Switch, Stable Driven, Iterating, Charging, Discharging, Current Error, Unknown (the set this package knows). Charging and Discharging mean the magnet is moving."}
+  - {name: chamber_state, type: string, notes: "MultiVu's chamber status word (get_chamber) passed through unchanged. Known values: Sealed, Purged and Sealed, Vented and Sealed, Pumping Continuously, Venting Continuously, High Vacuum, Pumping, Flooding, Unknown. Load a sample only at Vented and Sealed or Venting Continuously."}
+  - {name: temperature_setpoint_actual, type: number, unit: K, notes: The setpoint MultiVu is holding or driving toward (get_temperature_setpoints); differs from temperature_setpoint written here if a person changed it in MultiVu.}
+  - {name: field_setpoint_actual, type: number, unit: Oe, notes: The field setpoint MultiVu is driving toward (get_field_setpoints).}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the thermometer and magnet calibrations live in MultiVu and are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next thermometry or magnet calibration check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Ramp-and-wait and chamber jobs finished from here (the lab's recorded count, or finished jobs when none is recorded).}
+
+settings:
+  - {name: temperature_setpoint, type: number, unit: K, limits: {min: 1.8, max: 400}, approval: auto, during_job: false,
+     notes: "Sends set_temperature with the current temperature_rate and temperature_approach. 1.8-400 K is the base PPMS/DynaCool/MPMS3 range (He3 and oven options go beyond it; VersaLab stops at 50-400 K): the lab sets its own limits here before use. Refused while a job runs; use set_temperature_and_wait to ramp and wait."}
+  - {name: temperature_rate, type: number, unit: K/min, limits: {min: 0.01, max: 20}, approval: auto, during_job: true,
+     notes: "Ramp rate MultiVu uses for the next temperature setpoint (rate_K_per_min). 20 K/min is a conservative ceiling; sweeps above a few K/min overshoot on a loaded puck. Stored here, sent with the next setpoint."}
+  - {name: temperature_approach, type: string, limits: {enum: [fast_settle, no_overshoot]}, approval: auto, during_job: true,
+     notes: "MultiVu's temperature approach mode (client.temperature.approach_mode): fast_settle lets the controller overshoot a little, no_overshoot creeps up to the setpoint. Stored, sent with the next setpoint."}
+  - {name: field_setpoint, type: number, unit: Oe, limits: {min: -90000, max: 90000}, approval: confirm, during_job: false,
+     notes: "Sends set_field with field_rate, field_approach and (PPMS only) field_driven_mode. A person confirms because this energises a superconducting magnet. +/-90000 Oe is a 9 T magnet; set min/max to your magnet (7 T MPMS3 = 70000, 14 or 16 T PPMS higher) before use."}
+  - {name: field_rate, type: number, unit: Oe/s, limits: {min: 0.1, max: 200}, approval: auto, during_job: true,
+     notes: "Ramp rate for the next field setpoint (rate_oe_per_sec). MultiVu refuses rates above the magnet's own ceiling; 200 Oe/s is a conservative cap, 100 Oe/s a usual sweep."}
+  - {name: field_approach, type: string, limits: {enum: [linear, no_overshoot, oscillate]}, approval: auto, during_job: true,
+     notes: "MultiVu's field approach mode (client.field.approach_mode): linear ramps straight, no_overshoot slows near the target (not on VersaLab), oscillate demagnetises by decaying oscillation around the target. Stored, sent with the next setpoint."}
+  - {name: field_driven_mode, type: string, limits: {enum: [persistent, driven]}, approval: auto, during_job: true,
+     notes: "PPMS only (client.field.driven_mode): leave the magnet persistent (switch cooled, no supply current) or driven after the ramp. MultiPyVu raises an error on other platforms, so this package refuses the write unless config.json platform is ppms."}
+
+actions:
+  - name: set_temperature_and_wait
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      temperature: {type: number, unit: K, limits: {min: 1.8, max: 400}, notes: Target in kelvin; same range note as temperature_setpoint.}
+      rate: {type: number, unit: K/min, limits: {min: 0.01, max: 20}, default: 5, notes: Ramp rate in K/min.}
+      approach: {type: string, limits: {enum: [fast_settle, no_overshoot]}, default: fast_settle, notes: MultiVu temperature approach mode.}
+      settle_s: {type: number, unit: s, limits: {min: 0, max: 7200}, default: 60, notes: Seconds MultiVu must report Stable before the job returns (wait_for delay).}
+      timeout_s: {type: number, unit: s, limits: {min: 60, max: 86400}, default: 7200, notes: Give up and fail the job after this long without stability; the instrument keeps driving to the setpoint.}
+    required: [temperature]
+    notes: >
+      Sends set_temperature(temperature, rate, approach), then polls get_temperature until MultiVu reports
+      Stable and holds it for settle_s. Progress follows the fraction of the ramp covered. Cancelling stops
+      the wait only; MultiVu continues to the setpoint.
+    returns:
+      type: object
+      required: [setpoint_K, temperature_K, status, reached, duration_s]
+      properties:
+        setpoint_K: {type: number, unit: K}
+        temperature_K: {type: number, unit: K, notes: Temperature read when the job returned.}
+        status: {type: string, notes: MultiVu's temperature status word at the end.}
+        reached: {type: boolean, notes: True when stability was reported within timeout_s.}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {temperature: 300, rate: 5, approach: fast_settle, settle_s: 60, timeout_s: 7200}
+      - {temperature: 2, rate: 10, approach: no_overshoot, settle_s: 120, timeout_s: 14400}
+  - name: set_field_and_wait
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    cancellable: true
+    params:
+      field: {type: number, unit: Oe, limits: {min: -90000, max: 90000}, notes: Target field in oersted; set the limits to your magnet.}
+      rate: {type: number, unit: Oe/s, limits: {min: 0.1, max: 200}, default: 100, notes: Ramp rate in Oe/s.}
+      approach: {type: string, limits: {enum: [linear, no_overshoot, oscillate]}, default: linear, notes: MultiVu field approach mode.}
+      driven_mode: {type: string, limits: {enum: [persistent, driven]}, nullable: true, default: null, notes: PPMS only; null sends no driven mode (other platforms must leave it null).}
+      settle_s: {type: number, unit: s, limits: {min: 0, max: 7200}, default: 10, notes: Seconds the field must be reported stable before the job returns.}
+      timeout_s: {type: number, unit: s, limits: {min: 60, max: 86400}, default: 3600, notes: Give up after this long; the magnet keeps ramping to the setpoint.}
+    required: [field]
+    notes: >
+      A person confirms each call: it energises the superconducting magnet. Sends set_field(field, rate,
+      approach[, driven_mode]) and polls get_field until the status is Stable Driven or Stable Persistent for
+      settle_s. Cancelling stops the wait only; the magnet continues to the setpoint.
+    returns:
+      type: object
+      required: [setpoint_Oe, field_Oe, status, reached, duration_s]
+      properties:
+        setpoint_Oe: {type: number, unit: Oe}
+        field_Oe: {type: number, unit: Oe, notes: Field read when the job returned.}
+        status: {type: string, notes: MultiVu's field status word at the end.}
+        reached: {type: boolean}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {field: 10000, rate: 100, approach: linear, driven_mode: null, settle_s: 10, timeout_s: 3600}
+      - {field: 0, rate: 100, approach: oscillate, driven_mode: null, settle_s: 30, timeout_s: 3600}
+  - name: discharge_magnet
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    cancellable: true
+    params:
+      rate: {type: number, unit: Oe/s, limits: {min: 0.1, max: 200}, default: 100, notes: Ramp rate to zero.}
+    notes: >
+      set_field(0, rate, linear) and wait for a stable field: the explicit way to leave the magnet at zero
+      before a sample change. Confirmed by a person like any field ramp. Not an e-stop: MultiPyVu documents
+      no abort, so this is an ordinary ramp.
+    returns:
+      type: object
+      required: [field_Oe, status, reached, duration_s]
+      properties:
+        field_Oe: {type: number, unit: Oe}
+        status: {type: string}
+        reached: {type: boolean}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {rate: 100}
+  - name: set_chamber
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    cancellable: true
+    params:
+      mode: {type: string, limits: {enum: [seal, purge_seal, vent_seal, pump_continuous, vent_continuous, high_vacuum]}, notes: "MultiVu chamber command (client.chamber.mode): seal; purge_seal (purge with helium then seal, the normal state before cooling); vent_seal (vent to atmosphere and seal, for a sample change); pump_continuous; vent_continuous; high_vacuum (needs the high-vacuum option)."}
+      timeout_s: {type: number, unit: s, limits: {min: 30, max: 7200}, default: 900, notes: Give up after this long without the chamber reporting the settled state.}
+    required: [mode]
+    notes: >
+      A person confirms because venting a cold chamber ices the sample space and pumping on an open chamber
+      pulls air through the sample. Sends set_chamber(mode) and waits for the chamber status to settle.
+      Not used on an OptiCool.
+    returns:
+      type: object
+      required: [mode, chamber_state, reached, duration_s]
+      properties:
+        mode: {type: string}
+        chamber_state: {type: string, notes: MultiVu's chamber status word when the job returned.}
+        reached: {type: boolean}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {mode: purge_seal, timeout_s: 900}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 600
+  watchdog_action: release
+  notes: >
+    No software stop: MultiPyVu documents set_temperature, set_field and set_chamber but no abort, and
+    nothing in its reference says that overwriting a field setpoint mid-ramp is a safe stop for a
+    superconducting magnet, so an e-stop here would only pretend. MultiVu on the instrument PC and the
+    magnet controller's own protection (quench detection, persistent switch) stop the instrument; a
+    person uses MultiVu to halt a ramp. discharge_magnet is the deliberate, confirmed way to zero the
+    field. A controller silent for 10 minutes loses its lease and the cryostat keeps holding or ramping:
+    an interrupted cooldown or field sweep is the damage, not the continuation.

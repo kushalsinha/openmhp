@@ -1,0 +1,118 @@
+device:
+  notes: >
+    Multi-channel battery cycler (Neware CT-4008 family and other BTS 8.0 units) driven through the BTS
+    server's TCP interface on the Windows PC that runs the BTS client. A channel is addressed as a pipeline
+    id devid-subdevid-chlid (for example 1-1-3). Currents are cell currents in amperes (the API reports mA,
+    scaled in config.json), capacities in Ah, potentials are cell voltage. The protocol step file this package
+    writes is in an unverified XML layout (references/bts_api.md).
+
+physical:
+  automated_load: false
+  notes: >
+    Cells sit in coin-cell holders, pouch clamps or cylindrical fixtures on the channel leads and are
+    connected by hand; no loader exists, so automated_load is false and there is no handling boundary to
+    report. The hazards are the cells: a lithium-ion cell charged above its rated voltage or discharged
+    below its cut-off can vent or catch fire, so the voltage_max_v, voltage_min_v and current_max_a caps in
+    config.json must match the chemistry on the bench, and the lab's own limits in the BTS client stay armed.
+
+signals:
+  - {name: connected, type: boolean, notes: "True when the BTS server accepts the connect command on its TCP socket and lists at least one channel (getdevinfo)."}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: "True while a start_protocol job from here is following a channel; other channels may be working on their own (see channel_states)."}
+  - {name: channel, type: string, notes: "The pipeline id the per-channel signals below read (the channel setting); the first listed channel until one is written."}
+  - {name: channels, type: array, notes: "Every pipeline id the BTS server lists (getdevinfo), sorted."}
+  - {name: channel_state, type: string, notes: "workstatus of the selected channel from inquire: working, finish, stop, protect, pause or unknown (unverified words beyond finish/stop/protect)."}
+  - {name: channel_states, type: object, notes: "workstatus of every listed channel, keyed by pipeline id; one inquire for all of them."}
+  - {name: voltage, type: number, unit: V, nullable: true, notes: "Cell voltage of the selected channel from the latest inquire; null if the server reports none."}
+  - {name: current, type: number, unit: A, nullable: true, notes: "Cell current of the selected channel, positive charging, negative discharging; the API's mA scaled by current_scale."}
+  - {name: capacity, type: number, unit: Ah, nullable: true, notes: "Capacity accumulated in the current step of the selected channel (the API's mAh scaled by capacity_scale)."}
+  - {name: cycle, type: integer, unit: "1", notes: "Cycle counter of the selected channel's running or last protocol."}
+  - {name: step, type: integer, unit: "1", notes: "Step number the selected channel is executing (1-based)."}
+  - {name: last_result, type: object, nullable: true, notes: "Result of the most recent start_protocol from here (same shape as its returns); null until one has run."}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); the cycler's own calibration certificate is not read."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: "ISO-8601 date the next channel calibration is due, from the lab's record; null when none is recorded."}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: "Protocols started from here (the lab's recorded count, or finished start_protocol jobs when none is recorded); the server's own test counters are not read."}
+
+settings:
+  - {name: channel, type: string, approval: auto, during_job: true,
+     notes: "Pipeline id devid-subdevid-chlid whose state the per-channel signals report; must be one the server lists. May change while a job follows another channel."}
+
+actions:
+  - name: start_protocol
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      channel: {type: string, notes: "Pipeline id devid-subdevid-chlid of the channel to start; it must be finish, stop or protect."}
+      barcode: {type: string, notes: "Cell or sample barcode written into the BTS record (letters, digits, space, '_', '.', '-'; at most 64 characters)."}
+      steps:
+        type: array
+        notes: "Protocol steps run in order, repeated `cycles` times. Each needs an end condition; the mode gives the current's sign."
+        items:
+          type: object
+          required: [mode]
+          properties:
+            mode: {type: string, limits: {enum: [cc_charge, cc_discharge, cv_charge, rest]}, notes: "Constant-current charge or discharge, constant-voltage charge (voltage_v held, current_a is the cut-off), or rest."}
+            current_a: {type: number, unit: A, limits: {min: 0, max: 1}, nullable: true, default: null, notes: "Step current, always positive; the mode gives the sign. For cv_charge it is the cut-off current. 1 A is a placeholder cap for a CT-4008-5V6A: the lab sets current_max_a in config.json to its cells' rating."}
+            voltage_v: {type: number, unit: V, limits: {min: 0, max: 5}, nullable: true, default: null, notes: "Voltage limit: the upper cut-off for cc_charge, the hold for cv_charge, the lower cut-off for cc_discharge. voltage_max_v and voltage_min_v in config.json tighten this to the chemistry."}
+            time_limit_s: {type: number, unit: s, limits: {min: 1, max: 360000}, nullable: true, default: null, notes: "End the step after this time whatever the voltage or capacity; required for rest."}
+            capacity_limit_ah: {type: number, unit: Ah, limits: {min: 0, max: 10}, nullable: true, default: null, notes: "End the step once this capacity has passed (per step)."}
+      cycles: {type: integer, limits: {min: 1, max: 1000}, default: 1, notes: "How many times the step list is repeated."}
+    required: [channel, barcode, steps]
+    notes: >
+      Writes the step file (mhp_<job>.xml) into step_dir, sends start with the barcode and the server-side path of
+      that file, then follows inquire until workstatus leaves working. Confirmed by a person each time because it
+      energises a cell: a wrong voltage limit is a fire. Cancelling sends stop to the channel; the data so far stays
+      in the BTS backup folder. A channel that trips protect fails the job with the partial result attached.
+    returns:
+      type: object
+      required: [channel, barcode, step_file, cycles_completed, last_capacity_ah, final_voltage_v, final_state, duration_s]
+      properties:
+        channel: {type: string}
+        barcode: {type: string}
+        step_file: {type: string, notes: "Path of the step file written for this run."}
+        cycles_completed: {type: integer, notes: "Cycle counter when the channel stopped."}
+        last_capacity_ah: {type: number, unit: Ah, nullable: true, notes: "Capacity of the last step reported by inquire (the last discharge capacity when the protocol ends on a discharge); null if the server reported none."}
+        final_voltage_v: {type: number, unit: V, nullable: true}
+        final_state: {type: string, notes: "finish, stop (cancelled or stopped at the client) or protect."}
+        duration_s: {type: number, unit: s}
+    examples:
+      - channel: "1-1-1"
+        barcode: "CC-2026-0007"
+        cycles: 2
+        steps:
+          - {mode: cc_charge, current_a: 0.0225, voltage_v: 4.2, time_limit_s: 14400}
+          - {mode: cv_charge, voltage_v: 4.2, current_a: 0.002, time_limit_s: 3600}
+          - {mode: rest, time_limit_s: 600}
+          - {mode: cc_discharge, current_a: 0.0225, voltage_v: 3.0, time_limit_s: 14400}
+          - {mode: rest, time_limit_s: 600}
+  - name: stop_channel
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    params:
+      channel: {type: string, notes: "Pipeline id of the channel to stop."}
+    required: [channel]
+    examples: [{channel: "1-1-1"}]
+    returns:
+      type: object
+      required: [channel, channel_state]
+      properties:
+        channel: {type: string}
+        channel_state: {type: string, notes: "workstatus right after the stop (stop, or finish if it had already ended)."}
+    notes: "Sends stop to one channel, which opens it (no current flows). Safe at any time; the test's data stays on the server."
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 600
+  watchdog_action: release
+  notes: >
+    E-stop sends stop to every channel the server lists, which opens all of them (cycling stops, cells sit at
+    open circuit). A controller silent for 10 minutes loses its lease and the protocols keep running
+    (watchdog release): a formation cycle interrupted midway is the damage, and the cycler's own protection
+    limits in the BTS client keep the cells safe unattended. There is no software access to the hardware
+    mains switch; the BTS client's own stop also works at any time.

@@ -1,0 +1,8 @@
+{
+  "port": {
+    "ask": "Serial port the mill's serial socket is cabled to",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "The newer PM units carry a 9-pin serial socket on the back (RS-232 'Sc 2' or RS-485 'Sc 1' on the PM 400). Use the cable Retsch names in its interface description, at most 2.5 m; on the PC it appears as /dev/ttyUSB0, /dev/tty.usbserial-* or COM3. Baud and framing are placeholders in descriptor.yaml until confirmed."
+  }
+}

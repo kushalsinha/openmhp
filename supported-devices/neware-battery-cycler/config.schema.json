@@ -1,0 +1,36 @@
+{
+  "host": {
+    "ask": "PC running the Neware BTS server (the API listens there)",
+    "example": "bts-pc.lab.local",
+    "help": "The Windows PC with BTS Server and BTS Client 8.0. Enable the API in the client under Help > Mode settings (Neware may have to supply an activation key)."
+  },
+  "user": {
+    "ask": "BTS user name the API logs in with",
+    "example": "admin",
+    "help": "The BTS client login; the default installation uses admin."
+  },
+  "password": {
+    "ask": "Password of that BTS user",
+    "kind": "secret",
+    "keyring": ["Neware BTS", "{username}"]
+  },
+  "step_dir": {
+    "ask": "Folder, reachable from this machine, where step files are written (a share of a folder on the BTS PC)",
+    "kind": "path",
+    "example": "\\\\BTS-PC\\OpenMHP\\steps",
+    "help": "The BTS server opens the step file by its own path: put that in step_dir_on_server if it differs from this one."
+  },
+  "port": {"ask": "TCP port of the BTS API", "kind": "int", "example": 502, "advanced": true},
+  "step_dir_on_server": {"ask": "The step folder as the BTS server sees it (Windows path)", "kind": "path", "example": "D:\\OpenMHP\\steps", "advanced": true},
+  "backup_dir": {"ask": "Folder on the BTS PC where the server backs up test data (the start command names it)", "kind": "path", "example": "D:\\Neware data", "advanced": true},
+  "default_channel": {"ask": "Pipeline id the per-channel signals read until one is written", "example": "1-1-1", "advanced": true, "required": false, "choices_from": "default_channel"},
+  "voltage_max_v": {"ask": "Highest voltage limit any step may ask for (chemistry cap)", "advanced": true},
+  "voltage_min_v": {"ask": "Lowest discharge cut-off any step may ask for", "advanced": true},
+  "current_max_a": {"ask": "Highest step current, in A", "advanced": true},
+  "max_steps": {"ask": "Most steps in one protocol", "kind": "int", "advanced": true},
+  "poll_s": {"ask": "Seconds between inquire polls while following a channel", "kind": "int", "advanced": true},
+  "max_run_hours": {"ask": "Longest protocol before the job is failed", "kind": "int", "advanced": true},
+  "voltage_scale": {"ask": "Multiplier from the API's voltage field to volts", "advanced": true},
+  "current_scale": {"ask": "Multiplier from the API's current field to amperes (0.001 for mA)", "advanced": true},
+  "capacity_scale": {"ask": "Multiplier from the API's capacity field to Ah (0.001 for mAh)", "advanced": true}
+}

@@ -1,0 +1,96 @@
+device:
+  notes: >
+    Planetary ball mill with one (PM 100), two (PM 200) or four (PM 400) jar stations on a sun
+    wheel. Grinds and alloys powders in sealed jars; the mill's own lid lock holds the lid while the
+    sun wheel turns. The serial command set below is a TEMPLATE: every command is an unverified
+    placeholder (references/protocol.md) until confirmed against Retsch's interface description.
+
+physical:
+  mass_kg: 86
+  footprint_mm: [640, 670, 480]
+  power_w: 1250
+  automated_load: false
+  notes: >
+    Jars are clamped by hand under a safety clamp and the lid is opened and closed by hand; no
+    loader is documented, so automated_load is false. robot_access_ready is derived from the lid
+    query (lid open, which the lid lock only allows at standstill) so a handling system can read one
+    name before reaching for a jar. Jars get hot during long grinds; wait before opening. PM 100/PM
+    200 speed 100-650 rpm, PM 400 30-400 rpm; the footprint and mass are the PM 100's.
+
+signals:
+  - {name: speed, type: number, unit: "{rev}/min", notes: "Sun-wheel speed read back from the drive (placeholder command SPEED?). 0 at standstill."}
+  - {name: speed_setpoint_actual, type: number, unit: "{rev}/min", notes: "Speed setpoint the mill currently holds (placeholder command SPEEDSP?)."}
+  - {name: time_remaining, type: number, unit: s, notes: "Seconds left on the grinding timer (placeholder command REMAIN?); 0 when no grind is running."}
+  - {name: running, type: boolean, notes: "True while the drive turns (placeholder command STATUS? answering RUN or STOP)."}
+  - {name: lid_closed, type: boolean, notes: "True when the lid switch reports closed (placeholder command LID? answering CLOSED or OPEN). Interlock on run."}
+  - {name: robot_access_ready, type: boolean, notes: "True exactly when the lid query answers OPEN; the lid lock only releases at standstill, so an open lid means the sun wheel is at rest and a handling system may reach the jars."}
+  - {name: state, type: string, source: runtime, notes: "Driver state machine (idle, busy, fault, estop); answered by the base."}
+  - {name: busy, type: boolean, source: runtime, notes: "True while a run job is sending its commands; answered by the base. The grind itself shows in running."}
+  - {name: connected, type: boolean, source: runtime, notes: "True while the serial port is open; answered by the base."}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record (speed and timer verification); the mill does not report its own."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: "ISO-8601 date the next speed/timer verification is due, from the lab's record; null when none is recorded."}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab recorded it in config.json self_state."}
+  - {name: usage_count, type: integer, source: record, notes: "Grinds started from here (the lab's recorded count, or the number of finished run jobs when none is recorded); the mill's own hour counter is not read."}
+
+settings:
+  - {name: speed_setpoint, type: integer, unit: "{rev}/min", limits: {min: 100, max: 650}, resolution: 1, approval: auto,
+     notes: "Sun-wheel speed setpoint (placeholder command SPEED n). 100-650 is the PM 100/PM 200 range; a PM 400 is 30-400 and the lab lowers max for small or unbalanced jars. Writing it does not start the drive."}
+  - {name: run_time, type: integer, unit: s, limits: {min: 1, max: 36000}, resolution: 1, approval: auto,
+     notes: "Grinding timer setpoint in seconds (placeholder command TIME n). The mill's timer reaches 99:59:59; 10 h is a conservative placeholder the lab may raise."}
+
+actions:
+  - name: run
+    duration: long
+    approval: confirm
+    interlocks: [lid_closed, connected]
+    params:
+      speed: {type: integer, unit: "{rev}/min", limits: {min: 100, max: 650}, resolution: 1, notes: Sun-wheel speed for this grind; same placeholder range as speed_setpoint.}
+      duration_s: {type: integer, unit: s, limits: {min: 1, max: 36000}, resolution: 1, notes: Grinding time; the mill stops itself when the timer runs out.}
+    required: [speed, duration_s]
+    limits: {speed: [100, 650], duration_s: [1, 36000]}
+    examples: [{speed: 400, duration_s: 600}, {speed: 250, duration_s: 1800}]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    cancellable: true
+    notes: "Sends SPEED, TIME and START (placeholders). Confirmed by a person each time because the sun wheel reaches 650 rpm with kilograms of jars and media: clamping and balance are checked by a person before the start. The job completes once the three commands are answered; the grind runs on the mill and ends by itself after duration_s. Cancelling before START is sent prevents the start; after it, use stop."
+  - name: stop
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: "STOP (placeholder): the drive brakes to standstill in a few seconds; the lid lock releases at standstill. What the e-stop sends."
+
+safety:
+  estop: true
+  interlocks: [lid_closed]
+  watchdog_s: 30
+  hardware_stop: "STOP key on the front panel and the lid lock; the mains switch cuts the drive. Clear by pressing START again at the panel after the cause is fixed."
+  notes: >
+    E-stop sends the stop command (placeholder STOP), which brakes the drive; the mill's own lid
+    lock keeps the lid shut until standstill. A controller silent for 30 s while holding the lease
+    gets the same stop: a grind stopped early loses some grinding time and nothing else, while a
+    mill running unattended with nobody watching imbalance is the greater risk. The mill also
+    stops itself on imbalance and lid faults and shows the error at the panel.
+
+serial:
+  port: /dev/ttyUSB0          # placeholder: config.json `port` overrides it
+  baud: 9600                  # unverified: set from Retsch's interface description
+  eol: "\r\n"
+  timeout: 1
+  read:                       # every command below is an UNVERIFIED placeholder (references/protocol.md)
+    speed: "SPEED?"
+    speed_setpoint_actual: "SPEEDSP?"
+    time_remaining: "REMAIN?"
+    running: "STATUS?"
+    lid_closed: "LID?"
+    robot_access_ready: "LID?"
+  write:
+    speed_setpoint: "SPEED {value}"
+    run_time: "TIME {value}"
+  actions:
+    run: ["SPEED {speed}", "TIME {duration_s}", "START"]
+    stop: ["STOP"]
+  estop: ["STOP"]
+  booleans:
+    running: {true: ["RUN"], false: ["STOP", "STANDSTILL"]}
+    lid_closed: {true: ["CLOSED"], false: ["OPEN"]}
+    robot_access_ready: {true: ["OPEN"], false: ["CLOSED"]}

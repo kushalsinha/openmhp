@@ -1,0 +1,35 @@
+{
+  "endpoint": "net.tcp://localhost:8733/BluehillUniversalAPI",
+  "outputs_dir": "C:\\Users\\Public\\Documents\\Instron\\Bluehill Universal\\Outputs",
+  "methods_dir": "C:\\Users\\Public\\Documents\\Instron\\Bluehill Universal\\Methods",
+  "api": {
+    "assembly": "BluehillWCF",
+    "client": "Instron.Bluehill.Api.BluehillApiClient",
+    "connect": "Connect",
+    "heartbeat": "APIHeartbeat",
+    "open_method": "OpenMethod",
+    "set_input": "SetSpecimenInput",
+    "set_rate": "SetTestRate",
+    "set_limit": "SetTestLimit",
+    "start": "StartTest",
+    "stop": "StopTest",
+    "disable_frame": "DisableFrame",
+    "frame_mode": "FrameMode",
+    "crosshead": "CrossheadStatus",
+    "load": "Load",
+    "extension": "Extension",
+    "test_running": "IsTestRunning",
+    "end_reason": "TestEndReason"
+  },
+  "columns": {
+    "peak_load": "Maximum Force",
+    "modulus": "Modulus (Automatic Young's)",
+    "stress_at_peak": "Tensile stress at Maximum Force",
+    "strain_at_break": "Tensile strain at Break",
+    "extension_at_break": "Extension at Break"
+  },
+  "results_suffix": "_Results.csv",
+  "raw_suffix": "_RawData.csv",
+  "max_test_minutes": 60,
+  "poll_s": 1
+}

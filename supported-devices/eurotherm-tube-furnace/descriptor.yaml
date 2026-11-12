@@ -1,0 +1,140 @@
+device:
+  notes: >
+    Tube or box furnace with a Eurotherm 2416/2404/2408 programmer-controller on Modbus RTU
+    (EIA-485 or EIA-232 through a USB adapter) or through a Modbus TCP gateway. Holding registers
+    from the Series 2000 Communications Handbook HA026230: 1 PV, 2 target SP, 3 output power, 5
+    working SP, 22 program number, 23 program status, 56 segment, 58 program time remaining,
+    8328 onwards the stored programs. Integers in display units. Not yet run on hardware.
+
+physical:
+  automated_load: false
+  notes: >
+    A horizontal or vertical tube in a heated shell, closed by end caps or flanges a person fits
+    by hand, or a box furnace loaded by hand; no handling system loads it in this package, and
+    the controller has no input that reports whether the tube is closed, so robot_access_ready
+    is not declared. The shell and end caps stay hot for hours; gas lines on CVD tubes are the
+    furnace's own, not controlled here.
+
+signals:
+  - {name: temperature, type: number, unit: Cel, notes: Process variable, the control thermocouple (address 1). Integer in display units; set scale 0.1 in the modbus block if the controller shows one decimal place.}
+  - {name: temperature_setpoint, type: number, unit: Cel, notes: Working setpoint the loop is driving to now (address 5), the programmer's output while a program runs or the target setpoint otherwise. Separate from temperature so the lag of a ramp is visible.}
+  - {name: target_setpoint_actual, type: number, unit: Cel, notes: The stored target setpoint SP1 (address 2) read back; what target_setpoint writes.}
+  - {name: output_power, type: number, unit: "%", notes: Output level (address 3), -100..100 on heat/cool controllers. 100 % through a dwell means the furnace cannot reach the setpoint.}
+  - {name: program_number, type: integer, notes: Current or selected program (address 22, 1-20 on a 2404/2408, 1-4 on a 2416 with the 4-program option).}
+  - {name: program_status_code, type: integer, notes: "Program status (address 23): 1 reset, 2 run, 4 hold, 8 holdback, 16 complete."}
+  - {name: program_running, type: boolean, notes: True while program_status_code is 2 (run) or 8 (holdback); derived by the driver from address 23.}
+  - {name: programmer_setpoint, type: number, unit: Cel, notes: The programmer's own setpoint output (address 163); equals temperature_setpoint while a program runs.}
+  - {name: segment, type: integer, notes: Current segment number (address 56).}
+  - {name: segment_type_code, type: integer, notes: "Current segment type (address 29): 0 end, 1 ramp rate, 2 ramp time to target, 3 dwell, 4 step, 5 call."}
+  - {name: segment_time_remaining, type: number, unit: min, notes: Time left in the current segment (address 36), in the program's dwell units; this package writes minutes into the programs it transfers, stored programs may use seconds or hours.}
+  - {name: program_time_remaining, type: number, unit: min, notes: Time left in the whole program (address 58), in the program's units (minutes for programs this package wrote).}
+  - {name: cycles_remaining, type: integer, notes: Program cycles still to run (address 59).}
+  - {name: segment_target, type: number, unit: Cel, notes: Target setpoint of the current segment (address 160).}
+  - {name: ramp_rate, type: number, unit: Cel/min, notes: Ramp rate of the current segment (address 161), in the program's ramp units per minute for programs this package wrote.}
+  - {name: alarm_active, type: boolean, notes: Summary output (address 75), 1 when any configured alarm is active. Which alarm is set at the controller.}
+  - {name: manual_mode, type: boolean, notes: "Auto/manual select (address 273): 0 auto (PID drives the heater), 1 manual (output_power is held at the written value). E-stop switches to manual with 0 % power."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the Modbus link is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record, notes: valid, due, overdue or unknown, derived from calibration_due in the lab's config.json self_state record. The controller reports no thermocouple calibration over Modbus.}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next thermocouple or uniformity check is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: run_program jobs completed here (firings), from this device's job records unless the lab records its own count.}
+
+settings:
+  - name: target_setpoint
+    type: number
+    unit: Cel
+    limits: {min: 0, max: 1200}
+    resolution: 1
+    approval: confirm
+    notes: >
+      Target setpoint SP1 (address 2), whole degrees in display units. Followed only while the
+      programmer is in Reset; a running program overrides it. A person confirms each value because
+      it heats the tube without a program's ramp. 1200 degC is a placeholder: set it to the tube's
+      rating (quartz 1100, alumina 1500-1700) and the element limit.
+
+actions:
+  - name: run_program
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    cancellable: true
+    params:
+      program:
+        type: integer
+        default: 1
+        limits: {min: 1, max: 20}
+        notes: Program slot to select (address 22) and run; also the slot the typed segments are written into (base 8328 + 136 x (program - 1)). A 2416 holds 1 or 4 programs, a 2404/2408 up to 20.
+      segments:
+        type: array
+        default: []
+        items:
+          type: object
+          required: [target_c, ramp_c_per_min, dwell_min]
+          properties:
+            target_c: {type: number, unit: Cel, limits: {min: 0, max: 1200}, resolution: 1, notes: Segment target in whole degrees (segment offset 1). 1200 is a placeholder for the tube rating.}
+            ramp_c_per_min: {type: number, unit: Cel/min, limits: {min: 1, max: 30}, resolution: 1, notes: Rate of the ramp segment (type 1, offset 2) in whole display units per minute, with ramp units set to minutes.}
+            dwell_min: {type: number, unit: min, limits: {min: 0, max: 9999}, resolution: 1, notes: Dwell (type 3, offset 2) at the target, minutes. 0 skips the dwell segment.}
+        notes: Typed ramp/dwell program written into the slot's segment blocks before Run; at most 7 typed segments (15 controller segments plus an End). Empty means run the slot as stored.
+    required: [segments]
+    examples:
+      - {program: 1}
+      - {program: 1, segments: [{target_c: 600, ramp_c_per_min: 5, dwell_min: 120}, {target_c: 30, ramp_c_per_min: 5, dwell_min: 0}]}
+    returns:
+      type: object
+      properties:
+        steps: {type: integer, notes: Register writes performed (select and run, or the whole segment transfer, select and run).}
+        segments_written: {type: integer, notes: Controller segments written, including the End segment; 0 when the slot ran as stored.}
+    notes: >
+      Writes the typed segments into program slot `program` if any were given (ramp and dwell units
+      minutes, cycles 1, no holdback), selects the slot (address 22) and sets program status to Run
+      (address 23 = 2). The job ends when Run is written; the firing runs for hours under the
+      controller. Also resumes a held program. Confirmed by a person because it heats the tube.
+  - {name: hold_program, duration: short, approval: auto, interlocks: [program_running, connected], notes: Program status Hold (address 23 = 4); the programmer setpoint freezes and the loop holds it. Resume with run_program.}
+  - {name: reset_program, duration: short, approval: confirm, interlocks: [connected], notes: Program status Reset (address 23 = 1); the programmer stops and the loop follows target_setpoint. Confirmed by a person because an interrupted firing is usually a lost sample.}
+
+safety:
+  estop: true
+  interlocks: [program_running, connected]
+  watchdog_s: 600
+  watchdog_action: release
+  notes: >
+    E-stop resets the program (23 = 1), switches the loop to manual (273 = 1) and writes 0 % output
+    (3 = 0): the heater is off and the furnace cools on its own. Watchdog action is release with a
+    600 s window: a controller that goes silent loses the lease and the program runs to its end,
+    because a sinter or anneal aborted halfway is the damage. The furnace's own over-temperature
+    limiter (a separate 2132 or 3216i unit on most furnaces) is independent of this package. No
+    physical stop is declared: the furnace's mains switch is not reported over Modbus.
+
+modbus:
+  serial_port: /dev/ttyUSB0
+  baud: 9600
+  unit: 1
+  read:
+    temperature:             {reg: 1,   kind: holding, type: int16}
+    target_setpoint_actual:  {reg: 2,   kind: holding, type: int16}
+    output_power:            {reg: 3,   kind: holding, type: int16}
+    temperature_setpoint:    {reg: 5,   kind: holding, type: int16}
+    program_number:          {reg: 22,  kind: holding, type: uint16}
+    program_status_code:     {reg: 23,  kind: holding, type: uint16}
+    segment_type_code:       {reg: 29,  kind: holding, type: uint16}
+    segment_time_remaining:  {reg: 36,  kind: holding, type: uint16}
+    segment:                 {reg: 56,  kind: holding, type: uint16}
+    program_time_remaining:  {reg: 58,  kind: holding, type: uint16}
+    cycles_remaining:        {reg: 59,  kind: holding, type: uint16}
+    alarm_active:            {reg: 75,  kind: holding, type: uint16}
+    segment_target:          {reg: 160, kind: holding, type: int16}
+    ramp_rate:               {reg: 161, kind: holding, type: int16}
+    programmer_setpoint:     {reg: 163, kind: holding, type: int16}
+    manual_mode:             {reg: 273, kind: holding, type: uint16}
+  write:
+    target_setpoint:         {reg: 2,   kind: holding, type: int16}
+  actions:
+    run_program:   [{reg: 22, kind: holding, type: uint16, value: "{program}"}, {reg: 23, kind: holding, type: uint16, value: 2}]
+    hold_program:  [{reg: 23, kind: holding, type: uint16, value: 4}]
+    reset_program: [{reg: 23, kind: holding, type: uint16, value: 1}]
+  estop:
+    - {reg: 23,  kind: holding, type: uint16, value: 1}
+    - {reg: 273, kind: holding, type: uint16, value: 1}
+    - {reg: 3,   kind: holding, type: int16,  value: 0}
