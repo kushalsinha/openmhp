@@ -8,3 +8,4 @@ dist/
 supported-devices/*/config.json
 supported-devices/*/data/
 supported-devices/*/methods/**/*.runs.jsonl
+paper/
