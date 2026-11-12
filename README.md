@@ -362,7 +362,7 @@ from the instrument) and `probe` (the one-line proof); without them the example'
 asked, with `references/setup.md` as the help.
 
 A node listens on `127.0.0.1` only, so by default no other machine can reach its ports; agents
-beyond the lab reach it through the relay (`--join`, see `docs/relay.md`), which opens nothing
+beyond the lab reach it through the relay (`--join`), which opens nothing
 inbound. To serve agents on the same network directly, pass `--host <this PC's LAN address>`: the
 node then generates a token the first time it starts (`~/.openmhp/device_token`) and requires
 `Authorization: Bearer <token>` on `/rpc` and `/events`. Copy it to the machine running the bridge
@@ -396,9 +396,8 @@ mhp node --join https://gw.office ab12-cd34
 Every connection is outbound. A request is handed to the lab PC once or not at all: if the PC
 is offline the agent gets a one-line error, never a silent retry. Agents hold agent tokens, the
 lab PC's token never leaves it, and the gateway is the approval boundary. `mhp gateway check`
-prints `OK` or `FIX` for the gateway, each lab PC and each instrument. The guide is
-[docs/relay.md](docs/relay.md); the other deployment patterns and why the relay is the default
-are in [docs/firewalled-labs.md](docs/firewalled-labs.md).
+prints `OK` or `FIX` for the gateway, each lab PC and each instrument. The wire-level rules
+are in `SPEC.md` (transports).
 
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of
@@ -487,7 +486,6 @@ questions, roadmap work, interoperability gaps, bugs, and design proposals belon
 | `openmhp/relay.py` | Node side of the relay: `mhp node --join` dials out and serves through the gateway |
 | `openmhp/node_add.py` | `mhp node add <package>`: puts a ready-made device package on the instrument PC |
 | `openmhp/node_setup.py` | `mhp node setup`: the questions (from `config.schema.json`), `config.json`, the driver's probe, gateway pairing, the service |
-| `docs/` | Deployment guides: [the relay](docs/relay.md), [firewalled labs](docs/firewalled-labs.md) |
 | `tests/` | Simulator and fake-client coverage, plus a relay end-to-end test |
 
 ## Project status
