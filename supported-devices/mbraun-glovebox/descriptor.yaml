@@ -1,0 +1,130 @@
+device:
+  notes: >
+    MBRAUN glovebox workstation (LABstar, UNIlab, LABmaster or MB200) with a gas purifier, blower,
+    O2/H2O analyzers, pressure control and one or two antechambers, reached over the PLC's Ethernet
+    option on Modbus TCP. TEMPLATE: the register map is a placeholder (references/registers.md),
+    every address unverified; confirm against MBRAUN's interface document before first use.
+
+physical:
+  automated_load: false
+  notes: >
+    Material enters through an antechamber with an outer door to the room and an inner door to
+    the box; both are opened by hand (or by an in-box robot on the inner side) after the PLC
+    releases the interlock. The antechamber is not an automatic loader, so automated_load is
+    false; robot_access_ready reports when a robot inside the box may reach into the antechamber
+    (inner door open, no cycle running). Gloves, the box pump and the regeneration heater are the
+    moving or energised parts.
+
+signals:
+  - {name: o2_ppm, type: number, unit: "[ppm]", notes: Oxygen in the box gas from the O2 analyzer (placeholder holding 0, float32). Below 1 ppm on a healthy box; rises during regeneration or after an antechamber cycle with too few purges.}
+  - {name: h2o_ppm, type: number, unit: "[ppm]", notes: Moisture in the box gas from the H2O analyzer (placeholder holding 2, float32). Below 1 ppm on a healthy box; climbs slowly when the molecular sieve is spent.}
+  - {name: box_pressure, type: number, unit: mbar, notes: Box working pressure relative to the room (placeholder holding 4, float32), typically regulated between -15 and +15 mbar.}
+  - {name: antechamber_pressure, type: number, unit: mbar, notes: Absolute pressure in the large antechamber (placeholder holding 6, float32); about 1 mbar at the end of an evacuation, about 1000 mbar when refilled.}
+  - {name: blower_on, type: boolean, notes: Circulation blower running (placeholder discrete 0). Off means no purification and a rising O2.}
+  - {name: inner_door_closed, type: boolean, notes: Inner antechamber door closed and latched (placeholder discrete 1).}
+  - {name: outer_door_closed, type: boolean, notes: Outer antechamber door closed and latched (placeholder discrete 2).}
+  - {name: antechamber_cycle_active, type: boolean, notes: An evacuate/refill cycle is in progress (placeholder discrete 3).}
+  - {name: antechamber_idle, type: boolean, notes: True when antechamber_state is idle (derived by the driver from the state code); the interlock for releasing either door.}
+  - {name: regenerating, type: boolean, notes: Purifier regeneration in progress (placeholder discrete 4); O2 and H2O drift up for its duration (about 24 h).}
+  - {name: antechamber_state, type: string, notes: "idle, evacuating, refilling or at_box_pressure, mapped by the driver from the state code (placeholder holding 10: 0 idle, 1 evacuating, 2 refilling, 3 at box pressure, 4 fault)."}
+  - {name: purge_state, type: string, notes: "off, purging or regenerating, mapped by the driver from the purge code (placeholder holding 11: 0 off, 1 purge valve open, 2 regeneration)."}
+  - {name: robot_access_ready, type: boolean, notes: True only when the inner antechamber door is open and no antechamber cycle runs (derived from inner_door_closed, antechamber_cycle_active and the state code), so an in-box robot may reach into the antechamber.}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the Modbus TCP connection is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record, notes: valid, due, overdue or unknown, derived from calibration_due in the lab's config.json self_state record. The PLC reports no analyzer calibration over the placeholder map.}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next O2/H2O analyzer calibration is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: antechamber_cycle jobs completed here (transfers), from this device's job records unless the lab records its own count.}
+
+settings:
+  - name: box_pressure_setpoint
+    type: number
+    unit: mbar
+    limits: {min: -12, max: 12}
+    resolution: 0.5
+    approval: auto
+    during_job: true
+    notes: >
+      Working pressure the PLC regulates to, relative to the room (placeholder holding 20, float32).
+      The +-12 mbar band is a conservative placeholder inside MBRAUN's usual +-15 mbar; the lab sets
+      its own. Positive keeps air out through a glove pinhole; slightly negative makes gloves easier.
+  - name: purges
+    type: integer
+    limits: {min: 1, max: 10}
+    approval: auto
+    notes: Number of evacuate/refill purges the next antechamber cycle performs (placeholder holding 22). antechamber_cycle writes it from its own parameter; this setting exists for the PLC's own start button.
+
+actions:
+  - name: antechamber_cycle
+    duration: long
+    approval: auto
+    interlocks: [inner_door_closed, outer_door_closed, antechamber_idle, connected]
+    cancellable: true
+    params:
+      purges: {type: integer, default: 3, limits: {min: 1, max: 10}, notes: Evacuate/refill purges; 3 is MBRAUN's usual for solids, more for porous material or after the antechamber stood open.}
+    required: [purges]
+    examples: [{purges: 3}]
+    returns:
+      type: object
+      properties:
+        steps: {type: integer, notes: Register writes performed (purge count, then the start coil).}
+    notes: >
+      Writes the purge count (placeholder holding 22) and sets the cycle start coil (placeholder coil
+      0). The job ends once the cycle is started; it runs about 3 minutes per purge on a large
+      antechamber. Both doors must be closed and the antechamber idle. Cancelling between the two
+      writes starts nothing.
+  - {name: stop_antechamber_cycle, duration: short, approval: auto, interlocks: [connected], notes: Aborts the running cycle (placeholder coil 1); the PLC refills the antechamber to box pressure before the doors can be released.}
+  - {name: release_inner_door, duration: short, approval: auto, interlocks: [outer_door_closed, antechamber_idle, connected], notes: Releases the inner door interlock (placeholder coil 4) so a person or the in-box robot can open it; refused unless the outer door is closed and no cycle runs. The PLC's mechanical interlock is the second line of defence.}
+  - {name: release_outer_door, duration: short, approval: auto, interlocks: [inner_door_closed, antechamber_idle, connected], notes: Releases the outer door interlock (placeholder coil 5); refused unless the inner door is closed and no cycle runs. Open the outer door only after a refill, never with the antechamber under vacuum.}
+  - {name: start_purge, duration: short, approval: confirm, interlocks: [connected], notes: Opens the box purge valve (placeholder coil 2 = 1) to flush a contaminated atmosphere with fresh gas; uses gas fast and is confirmed by a person.}
+  - {name: stop_purge, duration: short, approval: auto, interlocks: [connected], notes: Closes the purge valve (placeholder coil 2 = 0).}
+  - {name: start_regeneration, duration: short, approval: confirm, interlocks: [antechamber_idle, connected], notes: Starts purifier regeneration (placeholder coil 3 = 1), heating the catalyst under forming gas for about a day; the box runs without purification meanwhile. Confirmed by a person.}
+  - {name: stop_regeneration, duration: short, approval: confirm, interlocks: [connected], notes: Aborts regeneration (placeholder coil 3 = 0); the catalyst is then neither regenerated nor fully active. Confirmed by a person.}
+
+safety:
+  estop: true
+  interlocks: [inner_door_closed, outer_door_closed, antechamber_idle, connected]
+  watchdog_s: 120
+  watchdog_action: release
+  notes: >
+    E-stop aborts the antechamber cycle (coil 1 = 1), closes the purge valve (coil 2 = 0) and stops
+    regeneration (coil 3 = 0): the pump, purge gas and regeneration heater are off. The blower is
+    left running on purpose, because stopping circulation lets O2 rise and harms the samples. The
+    two door releases are interlocked on each other in the descriptor and mechanically in the box.
+    Watchdog action is release with a 120 s window: a silent controller loses the lease and the box
+    carries on regulating itself, because nothing here moves fast enough to need an automatic stop.
+    No physical stop is declared: the box's own panel stop is not reported over the placeholder map.
+
+modbus:
+  host: 192.168.1.80
+  port: 502
+  unit: 1
+  read:
+    o2_ppm:                  {reg: 0,  kind: holding,  type: float32}
+    h2o_ppm:                 {reg: 2,  kind: holding,  type: float32}
+    box_pressure:            {reg: 4,  kind: holding,  type: float32}
+    antechamber_pressure:    {reg: 6,  kind: holding,  type: float32}
+    blower_on:               {reg: 0,  kind: discrete}
+    inner_door_closed:       {reg: 1,  kind: discrete}
+    outer_door_closed:       {reg: 2,  kind: discrete}
+    antechamber_cycle_active: {reg: 3, kind: discrete}
+    regenerating:            {reg: 4,  kind: discrete}
+    antechamber_state:       {reg: 10, kind: holding,  type: uint16}
+    purge_state:             {reg: 11, kind: holding,  type: uint16}
+  write:
+    box_pressure_setpoint:   {reg: 20, kind: holding,  type: float32}
+    purges:                  {reg: 22, kind: holding,  type: uint16}
+  actions:
+    antechamber_cycle:      [{reg: 22, kind: holding, type: uint16, value: "{purges}"}, {reg: 0, kind: coil, value: 1}]
+    stop_antechamber_cycle: [{reg: 1, kind: coil, value: 1}]
+    release_inner_door:     [{reg: 4, kind: coil, value: 1}]
+    release_outer_door:     [{reg: 5, kind: coil, value: 1}]
+    start_purge:            [{reg: 2, kind: coil, value: 1}]
+    stop_purge:             [{reg: 2, kind: coil, value: 0}]
+    start_regeneration:     [{reg: 3, kind: coil, value: 1}]
+    stop_regeneration:      [{reg: 3, kind: coil, value: 0}]
+  estop:
+    - {reg: 1, kind: coil, value: 1}
+    - {reg: 2, kind: coil, value: 0}
+    - {reg: 3, kind: coil, value: 0}

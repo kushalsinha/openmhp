@@ -1,0 +1,50 @@
+{
+  "job_dir": {
+    "ask": "Folder the SmartLab Studio II import flow takes job files from",
+    "kind": "path",
+    "example": "C:\\ProgramData\\Rigaku\\SmartLabStudioII\\Jobs\\openmhp",
+    "help": "The folder the lab's Studio II flow template or Rigaku Automation Interface client watches (see references/rigaku_files.md). Must exist and be writable by the account running mhp on the Studio II PC."
+  },
+  "results_dir": {
+    "ask": "Folder where the .rasx / .ras files of the queued scans are written",
+    "kind": "path",
+    "example": "C:\\ProgramData\\Rigaku\\SmartLabStudioII\\Results\\openmhp",
+    "help": "The save location of the flow's General Measurement part; the package waits for <sample_id>_<token>.rasx (or .ras) there."
+  },
+  "changer_positions": {
+    "ask": "Number of positions on the ASC sample changer (6, 8, 10 or 48)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "changer_s": {
+    "ask": "Seconds a changer cycle plus alignment takes (for progress and the wait)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "max_points": {
+    "ask": "Most data points a queued scan may have",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "max_scan_hours": {
+    "ask": "Longest scan an agent may queue (hours)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between checks of the results folder",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "result_wait_s": {
+    "ask": "Longest wait for a result before the job fails (seconds)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}

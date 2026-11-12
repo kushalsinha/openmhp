@@ -1,0 +1,36 @@
+{
+  "endpoint": {
+    "ask": "WCF endpoint of the Bluehill Universal API on this PC",
+    "kind": "url",
+    "example": "net.tcp://localhost:8733/BluehillUniversalAPI",
+    "help": "From the API help installed with Bluehill (Start > Instron > Help > Bluehill Help > API). The shipped value is a placeholder."
+  },
+  "outputs_dir": {
+    "ask": "Folder the Bluehill method exports results to",
+    "kind": "path",
+    "example": "C:\\Users\\Public\\Documents\\Instron\\Bluehill Universal\\Outputs",
+    "help": "The method's Export tab: results table (file 1) and raw data (file 2), CSV, file name from the sample name, written at finish."
+  },
+  "methods_dir": {
+    "ask": "Folder holding the Bluehill methods an agent may run",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  },
+  "results_suffix": {
+    "ask": "Suffix the results export adds to the sample name",
+    "required": false,
+    "advanced": true
+  },
+  "raw_suffix": {
+    "ask": "Suffix the raw-data export adds to the sample name (blank if none)",
+    "required": false,
+    "advanced": true
+  },
+  "max_test_minutes": {
+    "ask": "Longest test an agent may run (minutes)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}

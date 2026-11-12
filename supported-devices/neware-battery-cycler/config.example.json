@@ -1,0 +1,18 @@
+{
+  "host": "bts-pc.lab.local",
+  "port": 502,
+  "user": "admin",
+  "step_dir": "\\\\BTS-PC\\OpenMHP\\steps",
+  "step_dir_on_server": "D:\\OpenMHP\\steps",
+  "backup_dir": "D:\\Neware data",
+  "default_channel": "1-1-1",
+  "voltage_max_v": 4.25,
+  "voltage_min_v": 2.5,
+  "current_max_a": 0.5,
+  "max_steps": 64,
+  "poll_s": 10,
+  "max_run_hours": 240,
+  "voltage_scale": 1.0,
+  "current_scale": 0.001,
+  "capacity_scale": 0.001
+}

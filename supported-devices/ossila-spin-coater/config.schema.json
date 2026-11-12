@@ -1,0 +1,8 @@
+{
+  "port": {
+    "ask": "Serial port the spin coater's USB connection appears on (COM4, /dev/ttyACM0, /dev/tty.usbmodem*)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "The unit's USB port enumerates as a virtual COM port when its firmware offers serial control; ask Ossila which firmware does. Baud and framing are placeholders until Ossila's command document is in hand."
+  }
+}

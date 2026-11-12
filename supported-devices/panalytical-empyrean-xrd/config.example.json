@@ -1,0 +1,11 @@
+{
+  "job_dir": "C:\\ProgramData\\PANalytical\\DataCollector\\Jobs\\openmhp",
+  "results_dir": "C:\\ProgramData\\PANalytical\\DataCollector\\Results\\openmhp",
+  "programs_dir": "C:\\ProgramData\\PANalytical\\DataCollector\\Programs",
+  "changer_positions": 6,
+  "changer_s": 60,
+  "max_points": 50000,
+  "max_scan_hours": 12,
+  "poll_s": 10,
+  "result_wait_s": 7200
+}

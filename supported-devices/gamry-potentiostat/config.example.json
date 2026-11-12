@@ -1,0 +1,7 @@
+{
+  "device": "IFC1010-12345",
+  "data_dir": "C:\\lab\\data\\gamry",
+  "max_run_s": 3600,
+  "max_eis_points": 200,
+  "cook_columns": {"chrono": {"t": 0, "v": 1, "i": 3}, "rcv": {"t": 0, "v": 1, "i": 3}, "ocv": {"t": 0, "v": 1, "i": null}}
+}

@@ -1,0 +1,30 @@
+{
+  "address": {
+    "ask": "Network address of the Phenom",
+    "example": "192.168.1.1",
+    "help": "The instrument's IP on the network the PPI PC is connected to (shown in the Phenom's settings screen and in the PPI licence e-mail)."
+  },
+  "instrument_id": {
+    "ask": "Instrument ID (the MVE... serial the PPI licence is bound to)",
+    "example": "MVE0123456789",
+    "help": "Printed on the instrument's label and in the PPI licence; PPI refuses a session without it."
+  },
+  "ppi_password": {
+    "ask": "PPI licence password",
+    "kind": "secret",
+    "keyring": ["PhenomPPI", "{instrument_id}"],
+    "help": "The licence password Thermo issued with PPI; stored in the OS keyring, never in config.json."
+  },
+  "image_dir": {
+    "ask": "Folder the acquired TIFFs are written to",
+    "kind": "path",
+    "example": "C:/lab/data/phenom"
+  },
+  "screen_width_m": {"ask": "Reference width in metres PPI's magnification is defined against (0.1 unless the PPI reference says otherwise)", "advanced": true},
+  "load_timeout_s": {"ask": "Seconds to wait for a load or unload before the job is failed", "kind": "int", "advanced": true},
+  "ppi": {
+    "ask": "PyPhenom member names (JSON object), from the PPI reference",
+    "advanced": true,
+    "help": "Unload, SemAcquireImage, SemAutoFocus and Position are from Thermo's own material; the other names are placeholders to correct from the PPI reference before the first hardware test."
+  }
+}

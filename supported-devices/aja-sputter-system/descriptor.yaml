@@ -1,0 +1,167 @@
+device:
+  notes: >
+    Magnetron sputter deposition tool (AJA ATC Orion under Phase II control, Kurt J. Lesker PVD 75,
+    Moorfield nanoPVD) reached over Modbus TCP from its control PLC or a gateway. The register map is a
+    TEMPLATE: every address is an unverified placeholder (references/registers.md). Pressures are in mbar
+    (1 mTorr = 1.33e-3 mbar), gas flow in mL/min at standard conditions (sccm), power in watts.
+
+physical:
+  mass_kg: 450
+  footprint_mm: [1200, 900, 1900]
+  power_w: 6000
+  automated_load: false
+  notes: >
+    Substrates are loaded by hand onto the holder through the chamber door (or, on load-lock
+    configurations, placed in the load lock and moved by a transfer arm driven from the vendor
+    software), so automated_load is false. robot_access_ready is a placeholder discrete register for
+    load-lock tools (lock vented, lock door open, arm parked); remove it on a tool without one. Hazards:
+    high voltage at the target and supply, hot substrate heater (up to 850 degC on AJA heaters), a
+    chamber that must never be vented with the plasma on, and the cooling-water interlock.
+
+signals:
+  - {name: base_pressure, type: number, unit: mbar, notes: "Chamber pressure from the wide-range (ion/Pirani) gauge, read when the gas is off. Below base_pressure threshold (placeholder 5e-6 mbar) base_pressure_ok reads true; AJA Orion base pressures are in the 1e-7 to 1e-8 mbar range."}
+  - {name: process_pressure, type: number, unit: mbar, notes: "Working pressure from the capacitance manometer while gas flows; typical sputtering window 1.3e-3 to 1.3e-2 mbar (1-10 mTorr). Ignition may need more gas, deposition less."}
+  - {name: power, type: number, unit: W, notes: "Forward power the supply reports (DC or RF); 0 until the plasma has struck."}
+  - {name: power_setpoint, type: number, unit: W, notes: "Power setpoint the PLC currently holds, read back."}
+  - {name: substrate_temperature, type: number, unit: Cel, notes: "Substrate heater thermocouple. The holder lags the heater; soak before depositing on a hot substrate."}
+  - {name: substrate_temperature_setpoint, type: number, unit: Cel, notes: "Heater setpoint read back."}
+  - {name: gas_flow, type: number, unit: mL/min, notes: "Argon mass-flow controller read-back in sccm (mL/min at standard conditions)."}
+  - {name: gas_flow_setpoint, type: number, unit: mL/min, notes: "Argon MFC setpoint read back."}
+  - {name: shutter_open, type: boolean, notes: "True while the shutter over the active target is open (coil read back). Material reaches the substrate only then."}
+  - {name: plasma_on, type: boolean, notes: "True while the supply output is enabled and a plasma has struck; the PLC clears it when ignition fails."}
+  - {name: rotation_on, type: boolean, notes: "True while the substrate holder rotates."}
+  - {name: heater_on, type: boolean, notes: "True while the substrate heater is enabled."}
+  - {name: pumping, type: boolean, notes: "True while the PLC's pump-down sequence runs (roughing, gate valve, turbo or cryo at speed)."}
+  - {name: door_closed, type: boolean, notes: "True when the chamber door switch is closed. Interlock on deposit; the PLC will not pump or strike a plasma with it open either."}
+  - {name: base_pressure_ok, type: boolean, notes: "True when the PLC's base-pressure permissive is met (chamber below its configured base, placeholder 5e-6 mbar). Interlock on deposit."}
+  - {name: water_flow_ok, type: boolean, notes: "True while the cooling-water flow switches for the target and supply are made. Interlock on deposit."}
+  - {name: robot_access_ready, type: boolean, notes: "Placeholder for load-lock tools; true when the load lock is vented, its door open and the transfer arm parked, so a handling system may place a substrate carrier. Reads a discrete register that must be confirmed or removed."}
+  - {name: state, type: string, source: runtime, notes: "Driver state machine (idle, busy, fault, estop); answered by the base."}
+  - {name: busy, type: boolean, source: runtime, notes: "True while a deposit job is running from here; answered by the base."}
+  - {name: connected, type: boolean, source: runtime, notes: "True while the Modbus TCP connection is open; answered by the base."}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record (deposition-rate calibration and gauge check); the tool does not report its own."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: "ISO-8601 date the next rate calibration or gauge check is due, from the lab's record; null when none is recorded."}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab recorded it in config.json self_state."}
+  - {name: usage_count, type: integer, source: record, notes: "Depositions run from here (the lab's recorded count, or the number of finished deposit jobs when none is recorded); target life is tracked in the vendor software."}
+
+settings:
+  - {name: power_setpoint, type: number, unit: W, limits: {min: 0, max: 300}, resolution: 1, approval: confirm, during_job: false,
+     notes: "Supply power setpoint; 0-300 W is a placeholder for a 2-inch target on a 300 W supply, the lab sets its supply and target rating. Confirmed by a person because power on a target is the energised hazard; the deposit action sets it itself."}
+  - {name: substrate_temperature_setpoint, type: number, unit: Cel, limits: {min: 0, max: 400}, resolution: 1, approval: confirm,
+     notes: "Substrate heater setpoint; 0-400 degC is a conservative placeholder (AJA heaters reach 850), the lab sets what its holder and substrates take. Confirmed because it heats hard."}
+  - {name: gas_flow_setpoint, type: number, unit: mL/min, limits: {min: 0, max: 100}, resolution: 0.1, approval: auto, during_job: true,
+     notes: Argon MFC setpoint in sccm; 0-100 is a placeholder for a 100 sccm MFC. May be trimmed during a deposition to hold the process pressure.}
+  - {name: rotation_on, type: boolean, approval: auto, during_job: true, notes: "Substrate rotation on or off (coil write)."}
+  - {name: heater_on, type: boolean, approval: confirm, notes: "Enables the substrate heater at its setpoint (coil write). Confirmed because it heats hard."}
+
+actions:
+  - name: pump_down
+    duration: short
+    approval: auto
+    interlocks: [connected, door_closed]
+    returns: {type: object, properties: {steps: {type: integer}}}
+    notes: Sets the pump-down request coil; the PLC runs its own sequence and base_pressure falls over hours. The action returns at once; watch pumping and base_pressure_ok.
+  - name: vent
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    returns: {type: object, properties: {steps: {type: integer}}}
+    notes: Sets the vent request coil (the PLC closes the gate valve and admits nitrogen). Confirmed by a person because venting a chamber with the plasma on or the heater hot is the hazard; the PLC's own permissive still applies.
+  - name: deposit
+    duration: long
+    approval: confirm
+    interlocks: [connected, door_closed, base_pressure_ok, water_flow_ok]
+    cancellable: true
+    params:
+      gas_flow_ml_min: {type: number, unit: mL/min, limits: {min: 1, max: 100}, resolution: 0.1, default: 20, notes: Argon flow in sccm for ignition and deposition.}
+      power_w: {type: number, unit: W, limits: {min: 1, max: 300}, resolution: 1, notes: Supply power for this deposition; placeholder range as power_setpoint.}
+      presputter_s: {type: number, unit: s, limits: {min: 0, max: 1800}, default: 120, notes: Shutter-closed time after ignition to clean the target surface.}
+      duration_s: {type: number, unit: s, limits: {min: 1, max: 7200}, notes: Shutter-open time. Thickness estimate is rate_nm_per_min times this time in minutes.}
+      rate_nm_per_min: {type: number, unit: nm/min, limits: {min: 0.01, max: 1000}, notes: Calibrated deposition rate for this target, power and pressure, from the lab's step-height or XRR calibration; it is only used for the estimate in the result.}
+      ignition_timeout_s: {type: number, unit: s, limits: {min: 5, max: 300}, default: 30, notes: How long to wait for plasma_on before failing without opening the shutter.}
+    required: [power_w, duration_s, rate_nm_per_min]
+    limits: {gas_flow_ml_min: [1, 100], power_w: [1, 300], presputter_s: [0, 1800], duration_s: [1, 7200], rate_nm_per_min: [0.01, 1000], ignition_timeout_s: [5, 300]}
+    examples:
+      - {gas_flow_ml_min: 20, power_w: 100, presputter_s: 120, duration_s: 600, rate_nm_per_min: 8.5}
+    returns:
+      type: object
+      required: [steps, power_w, duration_s, shutter_open_s, thickness_estimate_nm, rate_nm_per_min, process_pressure_mbar]
+      properties:
+        steps: {type: integer, notes: Register writes made.}
+        power_w: {type: number, unit: W, notes: Forward power read during the deposition.}
+        duration_s: {type: number, unit: s, notes: Wall time of the job in instrument seconds.}
+        shutter_open_s: {type: number, unit: s, notes: Time the shutter was actually open (shorter than duration_s if cancelled).}
+        thickness_estimate_nm: {type: number, unit: nm, notes: rate_nm_per_min times shutter_open_s / 60; an estimate, not a measurement.}
+        rate_nm_per_min: {type: number, unit: nm/min}
+        process_pressure_mbar: {type: number, unit: mbar, notes: Process pressure read while the shutter was open.}
+    notes: >
+      Writes the gas flow and power setpoints, enables the supply (plasma coil), waits for plasma_on, presputters
+      with the shutter closed, opens the shutter for duration_s, then closes it and turns the supply off (also on
+      cancel, fault or e-stop). Confirmed by a person each time because it energises the target supply. Watchdog
+      action is release: a controller that goes silent mid-film should not abort the layer.
+  - name: stop_process
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {steps: {type: integer}}}
+    notes: Closes the shutter, disables the supply and zeroes the power setpoint; what the e-stop sends, without latching the device.
+
+safety:
+  estop: true
+  interlocks: [door_closed, base_pressure_ok, water_flow_ok]
+  watchdog_s: 600
+  watchdog_action: release
+  hardware_stop: "EMO button on the control rack cuts the supplies and heater through the PLC's safety relay; the PLC must be reset at the panel before a plasma can be struck again."
+  notes: >
+    E-stop closes the shutter, disables the supply, zeroes the power setpoint and turns the substrate
+    heater off; pumps and gate valve are left to the PLC so the chamber stays under vacuum. A controller
+    silent for 10 minutes releases its lease and a running deposition finishes (watchdog release): an
+    aborted layer is the damage, while the tool's own interlocks (door, water, pressure permissive) keep it
+    safe unattended.
+
+modbus:
+  host: 192.168.1.80          # placeholder; config.json overrides host, port and unit
+  port: 502
+  unit: 1
+  word_order: big
+  read:
+    # UNVERIFIED placeholder addresses: see references/registers.md
+    base_pressure:                  {reg: 100, kind: input,   type: float32}
+    process_pressure:               {reg: 102, kind: input,   type: float32}
+    power:                          {reg: 104, kind: input,   type: float32}
+    substrate_temperature:          {reg: 106, kind: input,   type: float32}
+    gas_flow:                       {reg: 108, kind: input,   type: float32}
+    power_setpoint:                 {reg: 200, kind: holding, type: float32}
+    substrate_temperature_setpoint: {reg: 202, kind: holding, type: float32}
+    gas_flow_setpoint:              {reg: 204, kind: holding, type: float32}
+    shutter_open:                   {reg: 10,  kind: coil}
+    plasma_on:                      {reg: 11,  kind: coil}
+    rotation_on:                    {reg: 12,  kind: coil}
+    heater_on:                      {reg: 13,  kind: coil}
+    pumping:                        {reg: 20,  kind: coil}
+    door_closed:                    {reg: 0,   kind: discrete}
+    base_pressure_ok:               {reg: 1,   kind: discrete}
+    water_flow_ok:                  {reg: 2,   kind: discrete}
+    robot_access_ready:             {reg: 3,   kind: discrete}
+  write:
+    power_setpoint:                 {reg: 200, kind: holding, type: float32}
+    substrate_temperature_setpoint: {reg: 202, kind: holding, type: float32}
+    gas_flow_setpoint:              {reg: 204, kind: holding, type: float32}
+    rotation_on:                    {reg: 12,  kind: coil}
+    heater_on:                      {reg: 13,  kind: coil}
+  actions:
+    pump_down:    [{reg: 20, kind: coil, value: 1}]
+    vent:         [{reg: 21, kind: coil, value: 1}]
+    deposit:      # the driver writes these in order, waits for plasma_on, presputters, opens the shutter, waits duration_s
+      - {reg: 204, kind: holding, type: float32, value: "{gas_flow_ml_min}"}
+      - {reg: 200, kind: holding, type: float32, value: "{power_w}"}
+      - {reg: 11,  kind: coil, value: 1}
+    stop_process: [{reg: 10, kind: coil, value: 0}, {reg: 11, kind: coil, value: 0}, {reg: 200, kind: holding, type: float32, value: 0}]
+  sequences:
+    shutter_open:   [{reg: 10, kind: coil, value: 1}]
+    deposit_finish: [{reg: 10, kind: coil, value: 0}, {reg: 11, kind: coil, value: 0}, {reg: 200, kind: holding, type: float32, value: 0}]
+  estop:
+    - {reg: 10,  kind: coil, value: 0}
+    - {reg: 11,  kind: coil, value: 0}
+    - {reg: 200, kind: holding, type: float32, value: 0}
+    - {reg: 13,  kind: coil, value: 0}

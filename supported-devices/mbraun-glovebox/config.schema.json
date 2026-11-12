@@ -1,0 +1,16 @@
+{
+  "host": {
+    "ask": "IP address or host name of the glovebox PLC's Ethernet port",
+    "kind": "text",
+    "example": "192.168.1.80",
+    "help": "Set by MBRAUN service when the Ethernet option was fitted; shown on the touch panel under system / network. Port 502 is assumed; put `port` in config.json if MBRAUN's document says otherwise."
+  },
+  "unit": {
+    "ask": "Modbus unit (slave) id",
+    "kind": "int",
+    "example": 1,
+    "required": false,
+    "advanced": true,
+    "help": "1 unless MBRAUN's interface document for your box says otherwise."
+  }
+}
