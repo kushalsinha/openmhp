@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: ni-daqmx-01
-class: daq
+class: data_acquisition_device
 make: National Instruments
 model: USB-6001/6008/6009, USB-621x, 63xx (NI-DAQmx)
 location: ""

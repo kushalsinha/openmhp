@@ -352,6 +352,44 @@ def test_validate_and_rubric_see_the_new_conventions():
         assert any("chromatograph" in w for w in v3["warnings"]), v3["warnings"]
 
 
+
+def test_serial_checksum_hook_and_modbus_string_registers():
+    """Materials wave: Laurell/Retsch-style frame checksums and Nabertherm/Eurotherm ASCII register blocks."""
+    drv = SerialAsciiDriver.__new__(SerialAsciiDriver)
+    drv.cfg, drv.eol = {}, "\r"
+    assert drv._encode("SPIN") == b"SPIN\r"                                   # no checksum block: unchanged
+    drv.cfg = {"checksum": {"kind": "xor", "prefix": "*"}}
+    assert drv._encode("SPIN") == b"SPIN*" + f"{ord('S') ^ ord('P') ^ ord('I') ^ ord('N'):02X}".encode() + b"\r"
+    drv.cfg = {"checksum": {"kind": "sum8", "format": "{:03d}"}}
+    assert drv._encode("AB") == b"AB" + f"{(65 + 66) & 0xFF:03d}".encode() + b"\r"
+    drv.cfg = {"checksum": {"kind": "crc99"}}
+    try:
+        drv._encode("AB"); raise AssertionError("expected InvalidValue")
+    except Exception as e:                                                   # noqa: BLE001
+        assert type(e).__name__ == "InvalidValue"
+    words = [0x5369, 0x6E74, 0x6572, 0x2000, 0x0000]                         # "Sinter " then NUL padding
+    assert decode(words, "string") == "Sinter"
+    plc = _PlcString()
+    class D(ModbusDriver):
+        link = plc
+    d = D.__new__(D); d.link = plc; d.word_order = "big"
+    import threading; d._io = threading.Lock()
+    assert d._read_reg({"reg": 300, "kind": "holding", "type": "string", "length": 5}) == "Sinter"
+    try:
+        d._write_reg({"reg": 300, "kind": "holding", "type": "string"}, "x"); raise AssertionError("expected InvalidValue")
+    except Exception as e:                                                   # noqa: BLE001
+        assert type(e).__name__ == "InvalidValue"
+
+
+class _PlcString:
+    is_open = True
+    def read(self, kind, addr, count):
+        assert kind == "holding" and addr == 300 and count == 5
+        return [0x5369, 0x6E74, 0x6572, 0x2000, 0x0000]
+    def write(self, kind, addr, values):
+        raise AssertionError("must not write")
+
+
 if __name__ == "__main__":
     import traceback
     failed = 0

@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: buchi-rotavapor-r300-01
-class: evaporator
+class: rotary_evaporator
 make: Büchi
 model: Rotavapor R-300 with Interface I-300 Pro, VacuBox and V-300 pump
 location: ""

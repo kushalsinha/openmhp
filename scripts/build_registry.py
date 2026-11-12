@@ -88,6 +88,8 @@ def main(argv: list[str]) -> int:
 
 CATEGORIES = [("pharma-small-molecule", "Pharma, small molecule"), ("pharma-biologics", "Pharma, biologics"),
               ("chemistry", "Chemistry"), ("biology", "Biology"), ("physics", "Physics and optics"),
+              ("materials-synthesis", "Materials, synthesis and processing"),
+              ("materials-characterization", "Materials, characterization"), ("energy-storage", "Energy storage"),
               ("engineering", "Engineering and data acquisition")]
 
 

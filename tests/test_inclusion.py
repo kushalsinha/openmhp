@@ -6,6 +6,7 @@ the repo itself meets rather than one written for other people. Second, the gate
 check that should fail is named. A gate nobody has seen fail is a gate nobody should trust.
 """
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -192,6 +193,33 @@ def test_registry_readme_and_rubric_scores_are_in_sync():
     r = subprocess.run([sys.executable, str(REPO / "scripts" / "build_registry.py"), "--check"],
                        capture_output=True, text=True, cwd=REPO)
     assert r.returncode == 0, "registry out of date; run scripts/build_registry.py\n" + r.stdout + r.stderr
+
+
+
+def test_class_vocabulary_is_published_and_shipped_packages_use_canonical_names():
+    """SPEC 13: classes.json is the vocabulary; every reference has a label and IRI; shipped packages
+    use the canonical (published) name, never an alias; the spec table lists every class."""
+    import json
+    from openmhp.validate import CLASS_INFO, CLASS_ALIASES, canonical_class
+    assert len(CLASS_INFO) >= 60 and "generic" in CLASS_INFO
+    for slug, e in CLASS_INFO.items():
+        assert slug == slug.lower() and " " not in slug, slug
+        if e["ref"]:
+            assert e["label"] and e["iri"] and e["match"] in ("exact", "broader", "narrower"), slug
+        else:
+            assert e["match"] is None and e.get("propose_to"), slug
+        assert e["conventions"], slug
+    assert canonical_class("thermocycler") == "thermal_cycler" and canonical_class("daq") == "data_acquisition_device"
+    assert not set(CLASS_ALIASES) & set(CLASS_INFO), "an alias must not also be a class"
+    spec = (REPO / "SPEC.md").read_text(encoding="utf-8")
+    for slug in CLASS_INFO:
+        assert f"| `{slug}`" in spec, f"{slug} missing from the SPEC 13 table"
+    for folder in sorted((REPO / "supported-devices").iterdir()) + sorted((REPO / "openmhp" / "devices").iterdir()):
+        card = folder / "DEVICE.md"
+        if not card.exists():
+            continue
+        m = re.search(r"^class:\s*(\S+)", card.read_text(encoding="utf-8"), re.M)
+        assert m and m.group(1) in CLASS_INFO, f"{folder.name}: class {m and m.group(1)!r} is not canonical"
 
 
 if __name__ == "__main__":
