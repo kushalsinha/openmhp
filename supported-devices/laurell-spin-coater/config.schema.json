@@ -1,0 +1,8 @@
+{
+  "port": {
+    "ask": "Serial port the 650 controller appears on (COM3, /dev/ttyUSB0, /dev/tty.usbserial-*)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "The controller's RS-232 socket (the one Spin 3000 uses) through a straight cable to a USB-serial adapter, or its USB port with Laurell's driver. Baud and framing are placeholders until Laurell's command document is in hand."
+  }
+}

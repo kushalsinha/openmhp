@@ -79,6 +79,8 @@ def encode(value, typ: str, word_order: str = "big") -> list[int]:
 
 
 def decode(words: list[int], typ: str, word_order: str = "big"):
+    if typ == "string":                                     # ASCII packed two characters per register
+        return b"".join(struct.pack(">H", w & 0xFFFF) for w in words).split(b"\x00", 1)[0].decode("ascii", errors="replace").strip()
     if typ in ("int16", "uint16"):
         v = words[0] & 0xFFFF
         return v - (1 << 16) if typ == "int16" and v >= 0x8000 else v
@@ -139,11 +141,18 @@ class ModbusDriver(Driver):
 
     def _read_reg(self, spec: dict):
         kind, typ = spec.get("kind", "holding"), spec.get("type", "uint16")
-        count = 1 if kind in ("coil", "discrete") else WORDS[typ]
+        if kind in ("coil", "discrete"):
+            count = 1
+        elif typ == "string":                                # `length` registers of packed ASCII (program names)
+            count = int(spec.get("length", 8))
+        else:
+            count = WORDS[typ]
         with self._io:
             words = self.link.read(kind, int(spec["reg"]), count)
         if kind in ("coil", "discrete"):
             return bool(words[0])
+        if typ == "string":
+            return decode(words, typ)
         return decode(words, typ, self.word_order) * float(spec.get("scale", 1)) + float(spec.get("offset", 0))
 
     def _write_reg(self, spec: dict, value) -> None:
@@ -152,6 +161,8 @@ class ModbusDriver(Driver):
             words = [1 if value else 0]
         elif kind in ("discrete", "input"):
             raise InvalidValue(f"register {spec['reg']} is read-only ({kind})")
+        elif typ == "string":
+            raise InvalidValue(f"register {spec['reg']} is a string block; writing names is not supported")
         else:
             raw = (float(value) - float(spec.get("offset", 0))) / float(spec.get("scale", 1))
             words = encode(raw, typ, self.word_order)

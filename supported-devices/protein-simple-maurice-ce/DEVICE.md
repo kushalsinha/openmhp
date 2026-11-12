@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: protein-simple-maurice-ce-01
-class: electrophoresis
+class: capillary_electrophoresis_instrument
 make: ProteinSimple (Bio-Techne)
 model: Maurice (cIEF and CE-SDS) under Compass for iCE
 location: ""

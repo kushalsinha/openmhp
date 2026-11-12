@@ -1,0 +1,158 @@
+device:
+  notes: >
+    Nabertherm furnace with a series 400 (B400/B410, C440/C450, P470/P480) or series 500 controller
+    and the Modbus TCP communication module. Holding registers only: 100-151 are the state, 148-150
+    the program commands, 200-404 the transferred program (P-controllers), 405-409 the external
+    setpoint mode. Temperatures are tenths of a degree in the controller's unit; this package
+    assumes Celsius. Register map from Nabertherm M03.0021 (2024-11); not yet run on hardware.
+
+physical:
+  automated_load: false
+  notes: >
+    A bench or floor furnace with a hinged front or a lift that a person opens and closes to load
+    crucibles and boats; no handling system loads it in this package, and the controller has no
+    input that reports whether the chamber is closed, so robot_access_ready is not declared. Outer
+    surfaces and the opening are hot for hours after a firing. The controller's extra functions
+    (exhaust flap, gas valves, fan) are set in the program on the controller, not here.
+
+signals:
+  - {name: temperature, type: number, unit: Cel, notes: Active actual value of the control zone (register 100, tenths of a degree). With charge control active it switches to the charge thermocouple; read charge_temperature to tell them apart.}
+  - {name: charge_temperature, type: number, unit: Cel, notes: Charge thermocouple (register 101), only fitted on furnaces with the charge-control option; reads 0 or a sensor-break value otherwise.}
+  - {name: temperature_setpoint, type: number, unit: Cel, notes: Program setpoint the controller is driving to now (register 111). Separate from temperature so a ramp's lag is visible.}
+  - {name: output_power, type: number, unit: "%", notes: Control-zone heater output (register 119, tenths of a percent). 100 % through a dwell means the furnace cannot reach the setpoint (door seal, element wear).}
+  - {name: status_code, type: integer, notes: "Controller status (register 125): 0 off, 1 wait, 2 run, 3 pause, 4 end, 5 autotune, 6 error, 7 external setpoint operation. After a program ends a controller above firmware 2.0 shows 0 or 4."}
+  - {name: program_running, type: boolean, notes: True while status_code is 2 (run); derived by the driver from register 125, not a register of its own.}
+  - {name: program_number, type: integer, notes: Program loaded or running (register 126). 51 means the program transferred over Modbus.}
+  - {name: segment, type: integer, notes: Active segment number (register 127), 1-39. A typed segment from run_program occupies two controller segments (ramp, then dwell).}
+  - {name: program_time_remaining, type: integer, unit: min, notes: Remaining time of the program (registers 128 low word, 129 high word). The manual gives no unit; minutes is assumed and unverified.}
+  - {name: alarm1_active, type: boolean, notes: Alarm 1 status register 131 is non-zero. The meaning of the value is configured per furnace at the controller.}
+  - {name: alarm2_active, type: boolean, notes: Alarm 2 status register 132 is non-zero.}
+  - {name: warnings_code, type: integer, notes: 32-bit warning bit array (registers 133 low, 134 high); 0 means none. Bit meanings are in the controller manual.}
+  - {name: malfunction_code, type: integer, notes: Current malfunction (register 135); 0 means none. A non-zero value stops the program and must be acknowledged at the controller.}
+  - {name: controller_type_code, type: integer, notes: "Register 136: 0 B400, 1 B410, 2 C440, 3 C450, 4 P470, 5 P480, 6 B500, 7 B510, 8 C540, 9 C550, 10 P570, 11 P580. Only the P types (4, 5, 10, 11) accept a transferred program."}
+  - {name: max_temperature, type: number, unit: Cel, notes: Maximum furnace temperature as configured in the controller (register 137, tenths). Set the segment and setpoint limits in this file to it.}
+  - {name: temperature_unit_code, type: integer, notes: "Register 151: 0 Celsius, 1 Fahrenheit. This package scales as Celsius; switch the controller to Celsius."}
+  - {name: serial_number, type: string, notes: Controller serial number, ASCII in registers 138-147.}
+  - {name: program_transferred, type: boolean, notes: Register 404 reads 1 once a transferred program was accepted; run_program waits for it before starting.}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the Modbus TCP connection is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record, notes: valid, due, overdue or unknown, derived from calibration_due in the lab's config.json self_state record. The controller reports no thermocouple calibration of its own over Modbus.}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next thermocouple or temperature-uniformity check is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: run_program jobs completed here (firings), from this device's job records unless the lab records its own count.}
+
+settings:
+  - name: external_setpoint
+    type: number
+    unit: Cel
+    limits: {min: 0, max: 1300}
+    resolution: 1
+    approval: confirm
+    during_job: true
+    notes: >
+      External program setpoint in whole degrees (register 406), followed by the controller only
+      while external setpoint control is started (status 7). A person confirms each value because
+      it commands heating directly, without a program's ramp. The 1300 degC maximum is a placeholder:
+      set it to max_temperature for your furnace. The controller checks only against its own maximum.
+
+actions:
+  - name: run_program
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    cancellable: true
+    params:
+      program:
+        type: integer
+        nullable: true
+        default: null
+        limits: {min: 1, max: 50}
+        notes: Number of a program stored on the controller (register 149, 1-50). Give either this or segments, never both.
+      segments:
+        type: array
+        default: []
+        items:
+          type: object
+          required: [target_c, ramp_c_per_min, dwell_min]
+          properties:
+            target_c: {type: number, unit: Cel, limits: {min: 0, max: 1300}, resolution: 1, notes: Segment target in whole degrees (registers 200-238). 1300 is a placeholder for the furnace maximum.}
+            ramp_c_per_min: {type: number, unit: Cel/min, limits: {min: 0, max: 50}, resolution: 0.1, notes: Heating or cooling rate to the target. 0 means as fast as the furnace can; otherwise written as degC/h with the rate flag (registers 240-278, 360-398).}
+            dwell_min: {type: number, unit: min, limits: {min: 0, max: 29999}, resolution: 1, notes: Hold time at the target after the ramp, in minutes. 0 skips the dwell segment.}
+        notes: Typed ramp/dwell program, transferred to registers 200-404 and started as program 51. P-controllers only; up to 19 typed segments (39 controller segments). Transferred again on every call, as the controller requires.
+    required: [segments]
+    examples:
+      - {program: 2}
+      - {segments: [{target_c: 650, ramp_c_per_min: 5, dwell_min: 60}, {target_c: 300, ramp_c_per_min: 0, dwell_min: 0}]}
+    returns:
+      type: object
+      properties:
+        steps: {type: integer, notes: Register writes performed (program load and start, or the whole transfer and start).}
+        segments_written: {type: integer, notes: Controller segments written for a typed program; 0 when a stored program was started.}
+    notes: >
+      Loads and starts a stored program (149 then 148 = 1), or transfers the typed segments (402,
+      200.., 240.., 360.., 403 = 1, wait for 404 = 1) and starts program 51. The job ends when the
+      start command is written and reset; the firing runs for hours under the controller. Confirmed
+      by a person because it heats the chamber. Cancelling between writes leaves nothing started.
+  - {name: pause_program, duration: short, approval: auto, interlocks: [program_running, connected], notes: Pauses the running program (register 148 = 3); the controller holds the current setpoint. Resume with run_program is not possible over Modbus; press START at the controller or stop and restart.}
+  - {name: stop_program, duration: short, approval: confirm, interlocks: [connected], notes: Stops the program (register 148 = 2) and the furnace cools under its own control. Confirmed by a person because an interrupted firing is usually a lost charge.}
+  - name: segment_jump
+    duration: short
+    approval: confirm
+    interlocks: [program_running, connected]
+    params:
+      offset: {type: integer, limits: {min: -40, max: 40}, notes: Segments to jump, negative to go back (register 150). -1 repeats the current dwell; +1 skips the rest of this segment.}
+    required: [offset]
+    examples: [{offset: -1}]
+    notes: Jumps forward or back in the active program and then resets the command register to 0. A person confirms because a jump changes the firing profile.
+  - {name: start_external_setpoint, duration: short, approval: confirm, interlocks: [connected], notes: Starts external setpoint control (register 405 = 1) at the current external_setpoint; status becomes 7. Write external_setpoint first. Confirmed because the furnace then heats to whatever is written.}
+  - {name: stop_external_setpoint, duration: short, approval: auto, interlocks: [connected], notes: Ends external setpoint control (register 405 = 0); the controller returns to off.}
+
+safety:
+  estop: true
+  interlocks: [program_running, connected]
+  watchdog_s: 600
+  watchdog_action: release
+  notes: >
+    E-stop writes the stop command (148 = 2) and ends external setpoint control (405 = 0): the
+    heaters are driven to zero by the controller and the furnace cools on its own. Watchdog action
+    is release with a 600 s window: a controller that goes silent loses the lease and the program
+    runs to its end, because a sinter or calcination aborted halfway is the damage, not the
+    continuation. The furnace's own over-temperature limiter and the controller's error handling
+    are independent of this package. No physical stop is declared: a Nabertherm mains switch exists
+    but is not reported over Modbus.
+
+modbus:
+  host: 192.168.1.70
+  port: 502
+  unit: 1
+  read:
+    temperature:            {reg: 100, kind: holding, type: int16,  scale: 0.1}
+    charge_temperature:     {reg: 101, kind: holding, type: int16,  scale: 0.1}
+    temperature_setpoint:   {reg: 111, kind: holding, type: int16,  scale: 0.1}
+    output_power:           {reg: 119, kind: holding, type: uint16, scale: 0.1}
+    status_code:            {reg: 125, kind: holding, type: uint16}
+    program_number:         {reg: 126, kind: holding, type: uint16}
+    segment:                {reg: 127, kind: holding, type: uint16}
+    program_time_remaining: {reg: 128, kind: holding, type: uint32, word_order: little}
+    alarm1_active:          {reg: 131, kind: holding, type: uint16}
+    alarm2_active:          {reg: 132, kind: holding, type: uint16}
+    warnings_code:          {reg: 133, kind: holding, type: uint32, word_order: little}
+    malfunction_code:       {reg: 135, kind: holding, type: uint16}
+    controller_type_code:   {reg: 136, kind: holding, type: uint16}
+    max_temperature:        {reg: 137, kind: holding, type: int16,  scale: 0.1}
+    serial_number:          {reg: 138, kind: holding, type: string, length: 10}
+    temperature_unit_code:  {reg: 151, kind: holding, type: uint16}
+    program_transferred:    {reg: 404, kind: holding, type: uint16}
+  write:
+    external_setpoint:      {reg: 406, kind: holding, type: uint16}
+  actions:
+    run_program:             [{reg: 149, kind: holding, type: uint16, value: "{program}"}, {reg: 148, kind: holding, type: uint16, value: 1}, {reg: 148, kind: holding, type: uint16, value: 0}]
+    pause_program:           [{reg: 148, kind: holding, type: uint16, value: 3}]
+    stop_program:            [{reg: 148, kind: holding, type: uint16, value: 2}]
+    segment_jump:            [{reg: 150, kind: holding, type: int16, value: "{offset}"}, {reg: 150, kind: holding, type: int16, value: 0}]
+    start_external_setpoint: [{reg: 405, kind: holding, type: uint16, value: 1}]
+    stop_external_setpoint:  [{reg: 405, kind: holding, type: uint16, value: 0}]
+  estop:
+    - {reg: 148, kind: holding, type: uint16, value: 2}
+    - {reg: 405, kind: holding, type: uint16, value: 0}

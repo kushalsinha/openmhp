@@ -180,7 +180,7 @@ Authoring, for any device:
 - [ ] frontmatter complete; description says what it is and when to pick it
 - [ ] DEVICE.md body has procedure, what to watch, resources
 - [ ] every numeric setting has limits; every energetic action gated; examples present
-- [ ] `class` is one of SPEC §13 (`mhp validate` names the nearest); every parameter is a typed shape with a UCUM `unit`, `limits`, and a `default` or `nullable: true` when optional; `resolution` where the instrument has a settable step
+- [ ] `class` is a canonical name from SPEC §13 / `openmhp/classes.json` (the published Allotrope, CHMO, OBI or NCIT label in snake_case; `mhp validate` names the nearest and warns on an old alias); `class_ref` for a narrower published term; every parameter is a typed shape with a UCUM `unit`, `limits`, and a `default` or `nullable: true` when optional; `resolution` where the instrument has a settable step
 - [ ] every `long` action declares `returns` (the result contract) matching what `on_invoke` returns
 - [ ] `state` and `busy` declared with `source: runtime`; `connected` read by the driver or `source: runtime`
 - [ ] instrument self-state (SPEC §4.6): `calibration_status`, `qualification_status`, `usage_count` with `source: record` (the base answers from config.json), or `source: instrument` where the device reports them

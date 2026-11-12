@@ -1,0 +1,18 @@
+{
+  "device": {
+    "ask": "Instrument section name as the Gamry Framework lists it (e.g. IFC1010-12345); empty takes the first one found",
+    "kind": "text",
+    "example": "IFC1010-12345",
+    "choices_from": "device",
+    "required": false,
+    "help": "Framework > Options > Instrument Manager shows the name (model and serial number). The Toolkit's device list is asked for the choices when pywin32 and the Framework are installed."
+  },
+  "data_dir": {
+    "ask": "Folder where traces and spectra are written",
+    "kind": "path",
+    "example": "C:\\lab\\data\\gamry"
+  },
+  "max_run_s": {"ask": "Longest ocp or ca duration allowed, in seconds", "kind": "int", "advanced": true},
+  "max_eis_points": {"ask": "Most frequency points in one EIS sweep", "kind": "int", "advanced": true},
+  "cook_columns": {"ask": "Column indices of time, potential and current in each Dtaq's Cook output (JSON), if the Toolkit manual says they differ", "advanced": true, "required": false}
+}

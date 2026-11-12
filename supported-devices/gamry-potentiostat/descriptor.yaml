@@ -1,0 +1,150 @@
+device:
+  notes: >
+    Single-channel potentiostat/galvanostat (Gamry Interface 1010 or Reference 620) on the Windows PC that
+    runs the Gamry Framework, driven through the Electrochemistry Toolkit COM interface (GamryCOM). Potentials
+    are working versus reference electrode without iR compensation, currents are working-electrode current
+    in amperes (anodic positive). Each technique is one Dtaq run; the cell is switched on for it and off when
+    it ends, is cancelled or faults.
+
+physical:
+  automated_load: false
+  notes: >
+    A three-electrode cell on the lab's own leads; nothing is loaded by a handling system and there is no
+    boundary to report. Compliance is the instrument's (12 V on the Interface 1010, 22 V on the Reference
+    620); the chemistry in the cell is the hazard, and the cell is off whenever no technique is running.
+
+signals:
+  - {name: connected, type: boolean, notes: "True when GamryCOM lists the configured instrument and the potentiostat object opened it (pywin32 installed, Framework running, instrument on)."}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: "True while a technique job started here is active."}
+  - {name: device, type: string, notes: "The Framework's section name of the instrument in use, e.g. IFC1010-12345 or REF620-00123 (what EnumSections lists)."}
+  - {name: cell_on, type: boolean, notes: "True while the cell switch is closed (SetCell CellOn) by a technique or by output_enabled; tracked by the driver, not read back from the instrument."}
+  - {name: output_enabled, type: boolean, notes: "The output_enabled setting read back: the same flag as cell_on."}
+  - {name: running, type: boolean, notes: "True while a Dtaq from here is acquiring."}
+  - {name: last_result, type: object, nullable: true, notes: "Result of the most recent technique (same shape as its returns); null until one has run."}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); the Framework's own calibration log is not read."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: "ISO-8601 date the next calibration (Framework calibration with the dummy cell) is due; null when the lab has not recorded one."}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: "Techniques (ocp, ca, cv, eis jobs) completed here, unless the lab's record carries its own count."}
+
+settings:
+  - {name: output_enabled, type: boolean, approval: confirm,
+     notes: "Closes (true) or opens (false) the cell switch with nothing applied beyond the last setpoint: SetCell CellOn / CellOff. Confirmed by a person because it energises the cell outside a technique; techniques switch the cell themselves and leave it off."}
+
+actions:
+  - name: ocp
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      duration_s: {type: number, unit: s, limits: {min: 0.1, max: 3600}, notes: "How long to record the open-circuit potential; also bounded by max_run_s in config.json."}
+      sample_s: {type: number, unit: s, limits: {min: 0.01, max: 10}, default: 0.1, notes: "Time between samples."}
+    required: [duration_s]
+    limits: {duration_s: [0.1, 3600], sample_s: [0.01, 10]}
+    returns:
+      type: object
+      required: [technique, device, points, file, duration_s]
+      properties:
+        technique: {type: string}
+        device: {type: string}
+        points: {type: integer, notes: "Rows recorded."}
+        file: {type: string, notes: "Path of the trace (t_s, e_V, i_A; i_A empty for OCP)."}
+        duration_s: {type: number, unit: s, notes: "Time of the last recorded row."}
+        e_final_V: {type: number, unit: V, nullable: true, notes: "The open-circuit potential at the end; null if nothing was recorded."}
+        i_final_A: {type: number, unit: A, nullable: true, notes: "Always null for ocp."}
+    notes: "Open-circuit potential with the cell off (GamryDtaqOcv). Use it to check the cell before applying a potential."
+    examples:
+      - {duration_s: 10, sample_s: 0.5}
+  - name: ca
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      e_V: {type: number, unit: V, limits: {min: -1.5, max: 1.5}, notes: "Applied potential vs the reference. PLACEHOLDER bound of +/-1.5 V; the instrument allows more and the lab sets what its cell tolerates."}
+      duration_s: {type: number, unit: s, limits: {min: 0.1, max: 3600}, notes: "Time at e_V; also bounded by max_run_s."}
+      sample_s: {type: number, unit: s, limits: {min: 0.001, max: 10}, default: 0.1, notes: "Time between samples."}
+    required: [e_V, duration_s]
+    limits: {e_V: [-1.5, 1.5], duration_s: [0.1, 3600], sample_s: [0.001, 10]}
+    returns:
+      type: object
+      required: [technique, device, points, file, duration_s]
+      properties:
+        technique: {type: string}
+        device: {type: string}
+        points: {type: integer}
+        file: {type: string, notes: "Path of the trace (t_s, e_V, i_A)."}
+        duration_s: {type: number, unit: s}
+        e_final_V: {type: number, unit: V, nullable: true}
+        i_final_A: {type: number, unit: A, nullable: true, notes: "Current of the last row."}
+    notes: "Chronoamperometry at one potential (GamryDtaqChrono with a constant signal). The cell is switched on for the step and off when it ends."
+    examples:
+      - {e_V: 0.5, duration_s: 10, sample_s: 0.1}
+  - name: cv
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      e_init_V: {type: number, unit: V, limits: {min: -1.5, max: 1.5}, notes: "Start potential. PLACEHOLDER bound as for ca."}
+      e_vertex1_V: {type: number, unit: V, limits: {min: -1.5, max: 1.5}, notes: "First vertex."}
+      e_vertex2_V: {type: number, unit: V, limits: {min: -1.5, max: 1.5}, notes: "Second vertex; must differ from the first."}
+      e_final_V: {type: number, unit: V, limits: {min: -1.5, max: 1.5}, nullable: true, default: null, notes: "Final potential, between the vertices; null ends at e_init_V."}
+      scan_rate_mV_s: {type: number, unit: mV/s, limits: {min: 1, max: 1000}, default: 100, notes: "Scan rate. PLACEHOLDER upper bound; the lab sets what its cell needs."}
+      step_V: {type: number, unit: V, limits: {min: 0.0005, max: 0.1}, default: 0.002, notes: "Potential step between samples."}
+      cycles: {type: integer, limits: {min: 1, max: 50}, default: 1, notes: "Full cycles between the vertices."}
+    required: [e_init_V, e_vertex1_V, e_vertex2_V]
+    limits: {e_init_V: [-1.5, 1.5], e_vertex1_V: [-1.5, 1.5], e_vertex2_V: [-1.5, 1.5], scan_rate_mV_s: [1, 1000], step_V: [0.0005, 0.1], cycles: [1, 50]}
+    returns:
+      type: object
+      required: [technique, device, points, file, duration_s]
+      properties:
+        technique: {type: string}
+        device: {type: string}
+        points: {type: integer}
+        file: {type: string, notes: "Path of the trace (t_s, e_V, i_A), cycles in time order."}
+        duration_s: {type: number, unit: s}
+        e_final_V: {type: number, unit: V, nullable: true}
+        i_final_A: {type: number, unit: A, nullable: true}
+    notes: "Cyclic voltammetry (GamryDtaqRcv with a ramp-up/ramp-down signal). Run time is the sweep length over the scan rate times the cycles."
+    examples:
+      - {e_init_V: 0.0, e_vertex1_V: 0.6, e_vertex2_V: -0.2, scan_rate_mV_s: 100, step_V: 0.002, cycles: 2}
+  - name: eis
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      e_dc_V: {type: number, unit: V, limits: {min: -1.5, max: 1.5}, default: 0.0, notes: "DC potential vs the reference during the sweep. PLACEHOLDER bound as for ca."}
+      amplitude_mV: {type: number, unit: mV, limits: {min: 1, max: 100}, default: 10, notes: "AC amplitude (rms as the Framework takes it)."}
+      f_start_Hz: {type: number, unit: Hz, limits: {min: 0.01, max: 1000000}, default: 100000, notes: "Highest frequency; the sweep runs downward."}
+      f_end_Hz: {type: number, unit: Hz, limits: {min: 0.01, max: 1000000}, default: 0.1, notes: "Lowest frequency. Below 1 Hz each point takes several periods; 0.1 Hz adds about a minute."}
+      points_per_decade: {type: integer, limits: {min: 1, max: 20}, default: 10, notes: "Logarithmic spacing; max_eis_points in config.json caps the total."}
+    required: []
+    limits: {e_dc_V: [-1.5, 1.5], amplitude_mV: [1, 100], f_start_Hz: [0.01, 1000000], f_end_Hz: [0.01, 1000000], points_per_decade: [1, 20]}
+    returns:
+      type: object
+      required: [technique, device, points, file, f_start_Hz, f_end_Hz]
+      properties:
+        technique: {type: string}
+        device: {type: string}
+        points: {type: integer, notes: "Frequencies measured."}
+        file: {type: string, notes: "Path of the spectrum (f_Hz, z_real_ohm, z_imag_ohm, z_mod_ohm, z_phase_deg)."}
+        f_start_Hz: {type: number, unit: Hz}
+        f_end_Hz: {type: number, unit: Hz}
+        r_hf_ohm: {type: number, unit: ohm, nullable: true, notes: "Real part at the highest frequency: an estimate of the solution resistance."}
+        z_mod_lf_ohm: {type: number, unit: ohm, nullable: true, notes: "Impedance modulus at the lowest frequency."}
+    notes: "Potentiostatic impedance, one GamryReadZ measurement per frequency from f_start_Hz down to f_end_Hz. Cancelling between points turns the cell off."
+    examples:
+      - {e_dc_V: 0.0, amplitude_mV: 10, f_start_Hz: 100000, f_end_Hz: 1, points_per_decade: 5}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 60
+  notes: >
+    E-stop sends SetCell CellOff and closes the potentiostat object, so no potential stays applied; a technique
+    that ends, fails or is cancelled also turns the cell off. A controller silent for 60 s while holding the lease
+    gets the same stop: a cell left polarised is worse than an interrupted scan, and the longest EIS point is
+    shorter than the window. The instrument has no physical stop button; its power switch removes everything.

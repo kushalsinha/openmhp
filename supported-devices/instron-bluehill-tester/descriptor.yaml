@@ -1,0 +1,108 @@
+device:
+  notes: >
+    An Instron 3400, 5900 or 6800 series electromechanical universal testing machine (single or
+    dual column, 0.5 kN to 300 kN) run by Bluehill Universal on its Windows PC. The package opens
+    a saved Bluehill method, sets the specimen inputs, crosshead rate and limits through the
+    Bluehill Universal API (WCF; member names unverified, configurable), starts the test, follows
+    load and extension while it runs, and reads peak load and modulus from the results export
+    Bluehill writes at the end. The method's own limits and calculations stay in Bluehill.
+
+physical:
+  automated_load: false
+  notes: >
+    A person fits each specimen in the grips (manual, pneumatic or hydraulic), zeroes load and
+    extension and steps clear; Instron's robotic systems (AT6/AT3, run by Bluehill Automation)
+    are not addressed. Dual-column frames carry an optional debris shield whose interlock
+    disables the frame or limits motion when open; the API is not known to report it, so no
+    guard signal is declared. The crosshead can crush: keep hands out of the test space whenever
+    frame_ready is true.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Bluehill WCF endpoint answers the heartbeat.}
+  - {name: load, type: number, unit: N, notes: Live load on the load cell as the API reports it (Bluehill calls it Force); positive in tension.}
+  - {name: extension, type: number, unit: mm, notes: Live crosshead extension since the last zero (Bluehill calls it Displacement).}
+  - {name: crosshead_state, type: string, notes: "disabled, ready, moving, testing, stopped or at_limit, mapped from the frame mode and crosshead status the API reports (mapping unverified). Only 'ready' lets a test start."}
+  - {name: frame_ready, type: boolean, notes: True when the frame is enabled (SET UP or CAUTION mode) and no test runs; false when DISABLED, after an E-stop, with the interlock open or while testing.}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent run_test from here (same shape as its returns); null before the first.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a test started here runs.}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state): the load-cell and extensometer verifications (ISO 7500-1 / ASTM E4) live with the service record and are not read through the API."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next load-cell verification due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Tests run from here (the lab's recorded count, or the number of finished run_test jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: run_test
+    duration: long
+    approval: confirm
+    interlocks: [connected, frame_ready]
+    methods: true
+    cancellable: true
+    notes: >
+      Opens the Bluehill method, sets the specimen inputs, the crosshead rate and the load and
+      extension limits, starts the test and waits until Bluehill reports it finished (break, a
+      limit or the method's end), then reads the results export. Confirm-gated because the
+      crosshead moves and the specimen breaks. A saved method is the Bluehill method name with its
+      rate and limits per material; the caller passes the specimen. Cancelling stops the crosshead.
+    params:
+      bluehill_method: {type: string, notes: "Bluehill Universal method file name in methods_dir (e.g. Tensile_ASTM_D638.im_tens; the extension is Bluehill 3's and unverified for Universal). Name only, no path."}
+      specimen:
+        type: object
+        required: [label]
+        notes: Specimen inputs written to the test; the geometry feeds Bluehill's stress and strain calculations.
+        properties:
+          label: {type: string, notes: Specimen label; also names the export files with the job token.}
+          width_mm: {type: number, unit: mm, limits: {min: 0.01, max: 500}, nullable: true, notes: null leaves the method's default.}
+          thickness_mm: {type: number, unit: mm, limits: {min: 0.001, max: 500}, nullable: true, notes: null leaves the method's default.}
+          gauge_length_mm: {type: number, unit: mm, limits: {min: 1, max: 2000}, nullable: true, notes: Extensometer or grip separation; null leaves the method's default.}
+      rate_mm_min: {type: number, unit: mm/min, limits: {min: 0.001, max: 500}, notes: Crosshead speed; the frames reach 0.00005 to 3048 mm/min depending on model, bounded here to what a tensile test needs. The lab sets its own.}
+      limits:
+        type: object
+        required: [max_load_N, max_extension_mm]
+        notes: Stop limits written to the test; Bluehill stops the crosshead when either is reached, before the frame's own limits.
+        properties:
+          max_load_N: {type: number, unit: N, limits: {min: 1, max: 50000}, notes: Bounded to 50 kN here; set it to the fitted load cell's capacity.}
+          max_extension_mm: {type: number, unit: mm, limits: {min: 0.01, max: 500}, notes: Bounded to 500 mm here; set it to the frame's travel minus the fixture.}
+    required: [bluehill_method, specimen, rate_mm_min, limits]
+    returns:
+      type: object
+      required: [specimen_id, file, peak_load_N, duration_s]
+      properties:
+        specimen_id: {type: string}
+        file: {type: string, notes: Full path of the results-table export Bluehill wrote.}
+        raw_file: {type: string, nullable: true, notes: Full path of the raw-data export (time, extension, load rows) when the method writes one; null otherwise.}
+        peak_load_N: {type: number, unit: N, notes: Bluehill's Maximum Force result.}
+        modulus_MPa: {type: number, unit: MPa, nullable: true, notes: Bluehill's modulus result (Automatic Young's or the method's choice); null when the results table has none.}
+        stress_at_peak_MPa: {type: number, unit: MPa, nullable: true, notes: Tensile stress at maximum force; null when absent.}
+        strain_at_break: {type: number, unit: 1, nullable: true, notes: Tensile strain at break as a ratio (mm/mm); null when absent.}
+        extension_at_break_mm: {type: number, unit: mm, nullable: true, notes: Extension at break; null when absent.}
+        end_reason: {type: string, notes: break, limit, finished or stopped as the API reported it (mapping unverified).}
+        duration_s: {type: number, unit: s, notes: From starting the test to Bluehill reporting it finished.}
+    examples:
+      - bluehill_method: "Tensile_ASTM_D638.im_tens"
+        specimen: {label: "batch12_bar3", width_mm: 10, thickness_mm: 2, gauge_length_mm: 50}
+        rate_mm_min: 5
+        limits: {max_load_N: 2000, max_extension_mm: 100}
+  - name: stop_crosshead
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Halts the crosshead at once and ends a running test (the API's stop member, unverified). Safe at any time; the frame stays enabled.
+
+safety:
+  estop: true
+  interlocks: [connected, frame_ready]
+  watchdog_s: 30
+  hardware_stop: >
+    The red E-stop button on the frame (and on the handset of a 6800) removes drive power, opens
+    pneumatic grips with an air kit and puts the frame in DISABLED; a person resets it by turning
+    the button until it pops up and pressing UNLOCK (6800) or re-enabling the frame in Bluehill
+    (5900). The package sees it only as frame_ready false.
+  notes: >
+    E-stop stops the crosshead through the API and disables the frame; the frame's own travel
+    limits and the method's limits protect the load cell regardless. A controller silent for
+    30 s while a test runs stops the crosshead. The grips and the crosshead are a crush hazard;
+    the operator protection sequence on a 3400/6800 (UNLOCK, then Start on the panel) is
+    Instron's and is not bypassed here.

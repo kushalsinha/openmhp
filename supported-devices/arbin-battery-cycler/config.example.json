@@ -1,0 +1,11 @@
+{
+  "request_dir": "C:\\OpenMHP\\arbin\\requests",
+  "results_dir": "C:\\OpenMHP\\arbin\\results",
+  "software": "MITS Pro 8",
+  "default_channel": "1",
+  "allowed_schedules": [],
+  "voltage_max_v": 4.25,
+  "current_max_a": 0.5,
+  "result_wait_s": 1209600,
+  "poll_s": 60
+}

@@ -1,0 +1,29 @@
+{
+  "address": "192.168.1.1",
+  "instrument_id": "MVE0123456789",
+  "image_dir": "C:/lab/data/phenom",
+  "screen_width_m": 0.1,
+  "load_timeout_s": 300,
+  "ppi": {
+    "module": "PyPhenom",
+    "phenom": "Phenom",
+    "position": "Position",
+    "load": "Load",
+    "unload": "Unload",
+    "move_to": "MoveTo",
+    "stage_position": "GetStagePosition",
+    "instrument_mode": "GetInstrumentMode",
+    "operational_mode": "GetOperationalMode",
+    "activate": "Activate",
+    "standby": "Standby",
+    "get_hfw": "GetSemHfw",
+    "set_hfw": "SetSemHfw",
+    "get_mag": "GetSemMagnification",
+    "get_ht": "GetSemHighTension",
+    "set_ht": "SetSemHighTension",
+    "auto_focus": "SemAutoFocus",
+    "acquire": "SemAcquireImage",
+    "scan_params": "ScanParams",
+    "save": "Save"
+  }
+}

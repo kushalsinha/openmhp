@@ -1,0 +1,31 @@
+name: flow_curve_0p1_1000
+project: demo-assay
+action: queue_test
+params:
+  sample_name: sample
+  test_type: flow_curve
+  measuring_system: CP50-1
+  temperature_c: 25
+  flow_curve:
+    shear_rate_start: 0.1
+    shear_rate_end: 1000
+    points: 21
+    point_duration_s: 10
+    log: true
+  frequency_sweep: null
+compounds:
+- demo compound
+version: 1
+hash: dd54bf97e359
+created: 1794447252.321253
+updated: 1794447252.321253
+validated:
+  at: 1794447252.321253
+  hash: dd54bf97e359
+status: active
+author: package author
+notes: 'Example only: a 0.1 to 1000 1/s logarithmic flow curve, 21 points of 10 s,
+  CP50-1 cone-plate at 25 degC. sample_name is passed per run.'
+source:
+  kind: person
+  ref: shipped example

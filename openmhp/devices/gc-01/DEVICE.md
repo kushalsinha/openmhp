@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: gc-01
-class: gc
+class: chromatograph
 make: SimChrom
 model: GC-7 FID
 location: bay 2, fume hood 1

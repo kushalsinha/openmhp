@@ -284,6 +284,9 @@ device-level criteria of Gottstein et al.'s autonomous-ready procurement profile
 |---|---|---|
 | Pharma, small molecule | 16 | HPLC/UPLC under Empower, OpenLab CDS and Chromeleon; EasyMax/OptiMax reactor; Karl Fischer titrator; 708-DS dissolution; Rotavapor R-300; Crystal16; Vapourtec R-Series; DSC/TGA under TRIOS; Bruker NMR (ICON-NMR); D8 PXRD; Cary UV-Vis/FTIR; LyoStar freeze dryer; Mettler Toledo and Sartorius balances |
 | Pharma, biologics | 14 | Biostat bioreactor; ÄKTA avant; CLARIOstar/PHERAstar, SpectraMax and Spark plate readers; Hamilton STAR; Vi-CELL BLU; Octet BLI; Zetasizer DLS; Maurice CE; QuantStudio qPCR; Cytek Aurora cytometer; Innova shaker; Heracell CO2 incubator; Sigma centrifuge; BINDER stability chamber |
+| Materials, synthesis and processing | 8 | Eurotherm and Nabertherm furnaces; MBRAUN glovebox; Quantos powder dosing; Laurell and Ossila spin coaters; Retsch planetary mill; AJA/Lesker sputter tools |
+| Materials, characterization | 9 | Rigaku SmartLab and Panalytical Empyrean XRD; Phenom, TESCAN and ZEISS SEM; Instron under Bluehill; Anton Paar rheometer; Quantum Design PPMS; Dektak profilometer |
+| Energy storage | 3 | Neware and Arbin battery cyclers; Gamry potentiostat (EIS) |
 | Chemistry | 13 | IKA C-MAG and EUROSTAR; JULABO circulators; BioLogic SP-300 and PalmSens potentiostats; Ocean Insight and Wasatch/Blaze spectrometers; SRI 8610C GC; Orbitrap (IAPI); LC-MS worklists for MassLynx, SCIEX OS, MassHunter, Xcalibur; Elveflow OB1 and MUX; FloPro sampler |
 | Biology | 7 | Opentrons Flex and OT-2; Micro-Manager microscopes; New Era and Tecan Cavro syringe pumps; Atlas Scientific EZO sensors; benchtop centrifuge (operator-run) |
 | Physics | 6 | Keithley 2400 SMU; Lake Shore 33x/350; Pfeiffer TPG gauges; SRS SR830 lock-in; SRS RGA; Thorlabs PM100D |

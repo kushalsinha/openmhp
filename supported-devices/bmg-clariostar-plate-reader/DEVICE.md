@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: bmg-clariostar-plate-reader-01
-class: plate_reader
+class: microplate_reader
 make: BMG LABTECH (also Molecular Devices, Tecan)
 model: CLARIOstar / PHERAstar (SpectraMax via SoftMax Pro, Spark via SiLA 2)
 location: ""

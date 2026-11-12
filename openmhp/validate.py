@@ -1,24 +1,26 @@
 """Validate a device package. Used by `mhp validate <folder>` and the onboarding skill."""
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 from .package import DevicePackage, load_package
 
 TYPES = {"number", "integer", "boolean", "string", "object", "array"}
 APPROVAL = {"auto", "confirm", "forbid"}
 
-# SPEC 13: the class vocabulary. An unknown class still loads; agents and directories filter on these.
-CLASSES = (
-    "thermocycler", "liquid_handler", "robot_arm", "microscope", "plate_reader", "centrifuge", "incubator",
-    "hotplate", "balance", "pump", "valve", "spectrometer", "laser", "stage", "cnc", "3d_printer", "oven",
-    "power_supply", "camera", "generic",
-    "chromatograph", "mass_spectrometer", "titrator", "reactor", "bioreactor", "circulator", "shaker",
-    "cell_counter", "dissolution_tester", "evaporator", "freeze_dryer", "flow_controller", "source_meter",
-    "vacuum_gauge", "lock_in_amplifier", "daq", "oscilloscope", "sensor", "environmental_chamber",
-    "potentiostat", "nmr", "diffractometer", "particle_analyzer", "biosensor", "electrophoresis",
-    "cytometer", "qpcr", "thermal_analyzer", "stirrer", "temperature_controller", "sampler",
-)
+# SPEC 13: the class vocabulary, openmhp/classes.json (built by scripts/build_classes.py). Each class is
+# the snake_case form of a published ontology label (Allotrope, CHMO, OBI, NCIT) where one exists and
+# carries that term's reference. An unknown class still loads; agents and directories filter on these.
+CLASS_INFO: dict[str, dict] = json.loads((Path(__file__).parent / "classes.json").read_text(encoding="utf-8"))
+CLASSES = tuple(CLASS_INFO)
+CLASS_ALIASES = {alias: slug for slug, e in CLASS_INFO.items() for alias in e.get("aliases", [])}
+
+
+def canonical_class(name: str) -> str:
+    """The SPEC 13 class for a name: itself, or the class an old name is an alias of."""
+    return name if name in CLASS_INFO else CLASS_ALIASES.get(name, name)
 
 # SPEC 4.6: instrument self-state, the reserved names every instrument SHOULD answer (C12)
 SELF_STATE = {"calibration_status": "string", "calibration_last": "string", "calibration_due": "string",
@@ -26,7 +28,7 @@ SELF_STATE = {"calibration_status": "string", "calibration_last": "string", "cal
 SOURCES = {"record", "runtime", "instrument"}
 RUNTIME = {"state", "busy", "active_jobs", "connected"}
 # SPEC 4.4 / C20: words that mean a handling system meets this instrument at a boundary
-ACCESS_WORDS = re.compile(r"\b(lid|door|drawer|tray|hatch|sash|carousel|autosampler|deck)\b", re.I)
+ACCESS_WORDS = re.compile(r"\b(lid|door|drawer|tray|hatch|sash|carousel|autosampler|deck|antechamber|airlock|load[- ]?lock)\b", re.I)
 
 
 def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str], list[str]]:
@@ -42,11 +44,17 @@ def validate(pkg: DevicePackage, location: str | None = None) -> tuple[list[str]
         err.append("frontmatter id missing or not lowercase-hyphenated")
     if not m.get("class"):
         err.append("frontmatter class missing")
+    elif m["class"] in CLASS_ALIASES:
+        warn.append(f"class {m['class']!r} is an older name for {CLASS_ALIASES[m['class']]!r} (SPEC 13); "
+                    "it still loads, but use the published name so directories group it with its kind")
     elif m["class"] not in CLASSES:
         import difflib
         near = difflib.get_close_matches(str(m["class"]), CLASSES, n=1, cutoff=0.5)
         warn.append(f"class {m['class']!r} is not in the SPEC 13 vocabulary"
                     + (f"; nearest is {near[0]!r}" if near else "") + ". It still loads, but agents and directories filter on known classes")
+    ref = m.get("class_ref")
+    if ref is not None and not re.fullmatch(r"(AFE_\d{7}|[A-Z]+:[A-Za-z0-9_]+)", str(ref)):
+        err.append(f"class_ref {ref!r} is not a CURIE (CHMO:0002427) or Allotrope short form (AFE_0000693)")
     desc = str(m.get("description", ""))
     if not desc:
         err.append("frontmatter description missing")

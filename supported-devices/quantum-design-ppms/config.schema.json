@@ -1,0 +1,20 @@
+{
+  "host": {
+    "ask": "Address of the MultiVu PC running the MultiPyVu server",
+    "example": "ppms-pc.lab.local",
+    "help": "On the MultiVu PC run `python -m MultiPyVu -get_ip` (MultiPyVu prints the address) or read it from the server window. Use 127.0.0.1 if this package runs on the MultiVu PC itself."
+  },
+  "port": {
+    "ask": "TCP port the MultiPyVu server listens on",
+    "kind": "int",
+    "example": "27183",
+    "help": "27183 unless the server was started with another port; both ends must agree."
+  },
+  "platform": {
+    "ask": "Which cryostat this is: ppms, dynacool, mpms3, versalab or opticool",
+    "kind": "choice",
+    "choices": ["ppms", "dynacool", "mpms3", "versalab", "opticool"],
+    "example": "ppms",
+    "help": "Decides which MultiPyVu options are offered: the persistent/driven magnet mode exists on a PPMS only; the chamber commands are not used on an OptiCool."
+  }
+}

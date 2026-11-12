@@ -1,0 +1,101 @@
+device:
+  notes: >
+    Arbin LBT / BT-2000 multi-channel battery cycler under MITS Pro on its Windows PC. The MITS Pro console and
+    SDK are under NDA, so this is a file route and a TEMPLATE: the package queues a request naming a MITS Pro
+    schedule (.sdu) and a test name carrying the job token, a person starts that test in MITS Pro, and the
+    package reads the CSV export back. Nothing here reaches the hardware; the request file layout is this
+    package's own (references/file_formats.md). Currents in A, capacities in Ah, as MITS Pro exports them.
+
+physical:
+  automated_load: false
+  notes: >
+    Cells sit in holders on the channel leads and are connected by hand; there is no loader and no handling
+    boundary to report, so automated_load is false. The hazards are the cells: the schedule's own safety limits
+    in MITS Pro stay armed and the voltage_max_v and current_max_a caps in config.json must match the chemistry.
+
+signals:
+  - {name: connected, type: boolean, notes: "True when the request folder and the results folder in config.json exist and are writable from this host."}
+  - {name: queue_depth, type: integer, unit: "1", notes: "Requests written by this package that nobody has started and exported yet."}
+  - {name: channel, type: string, notes: "The MITS Pro channel name the channel_state signal reports (the channel setting)."}
+  - {name: channel_state, type: string, notes: "What the folders say about the selected channel: queued while a request for it waits, else unknown (the cycler's own state is not exported; the twin also reports running)."}
+  - {name: last_result, type: object, nullable: true, notes: "Result of the most recent start_protocol from here (same shape as its returns); null until one has run."}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: "True while a request queued from here waits for its results export."}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state); the cycler's channel calibration certificate is not exported."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: "ISO-8601 date of the next channel calibration due, from the lab's record; null when none is recorded."}
+  - {name: qualification_status, type: string, source: record, notes: "IQ/OQ/PQ as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: "Tests queued from here (the lab's recorded count, or the number of finished start_protocol jobs when none is recorded)."}
+
+settings:
+  - {name: channel, type: string, approval: auto, during_job: true,
+     notes: "MITS Pro channel name whose state channel_state reports (digits and dashes as the console shows them, e.g. '3' or '1-2-3')."}
+
+actions:
+  - name: start_protocol
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      channel: {type: string, notes: "MITS Pro channel name the test is to run on (digits and dashes, as the console shows it)."}
+      barcode: {type: string, notes: "Cell barcode; becomes the test name prefix (<barcode>_mhp_<job>) so the export can be matched. Letters, digits, space, '_', '.', '-'; at most 64 characters."}
+      schedule: {type: string, notes: "Schedule file (.sdu) in the MITS Pro schedule library that implements the steps below; optionally restricted by allowed_schedules in config.json."}
+      steps:
+        type: array
+        notes: "What the schedule is expected to do, written into the request so the person starting the test can check it against the schedule; it does not change the schedule."
+        items:
+          type: object
+          required: [mode]
+          properties:
+            mode: {type: string, limits: {enum: [cc_charge, cc_discharge, cv_charge, rest]}, notes: "Constant-current charge or discharge, constant-voltage charge (voltage_v held, current_a the cut-off), or rest."}
+            current_a: {type: number, unit: A, limits: {min: 0, max: 1}, nullable: true, default: null, notes: "Step current, always positive; the mode gives the sign. 1 A is a placeholder cap; current_max_a in config.json tightens it."}
+            voltage_v: {type: number, unit: V, limits: {min: 0, max: 5}, nullable: true, default: null, notes: "Upper cut-off (cc_charge), hold (cv_charge) or lower cut-off (cc_discharge); voltage_max_v in config.json tightens it."}
+            time_limit_s: {type: number, unit: s, limits: {min: 1, max: 360000}, nullable: true, default: null, notes: "End the step after this time; required for rest."}
+            capacity_limit_ah: {type: number, unit: Ah, limits: {min: 0, max: 10}, nullable: true, default: null, notes: "End the step once this capacity has passed."}
+      cycles: {type: integer, limits: {min: 1, max: 1000}, default: 1, notes: "How many times the step list repeats in the schedule."}
+    required: [channel, barcode, schedule, steps]
+    notes: >
+      Writes mhp_<job>.json (channel, test name <barcode>_mhp_<job>, schedule, steps, cycles) into request_dir and waits
+      for a results export named *mhp_<job>*.csv in results_dir. By default this only queues work: a person starts the
+      test in MITS Pro (Start Channel(s), that schedule, that test name) and exports the results when it ends. If the
+      lab's helper starts tests from the request file, the request energises a cell, which is why each call is
+      confirmed by a person. Cancelling withdraws the request if nobody has started it; a running test finishes in
+      MITS Pro.
+    returns:
+      type: object
+      required: [channel, barcode, schedule, file, points, cycles_completed, last_capacity_ah, final_voltage_v, test_time_s, duration_s]
+      properties:
+        channel: {type: string}
+        barcode: {type: string}
+        schedule: {type: string}
+        file: {type: string, notes: "Path of the CSV export read."}
+        points: {type: integer, notes: "Data rows in the export."}
+        cycles_completed: {type: integer, notes: "Largest Cycle_Index in the export."}
+        last_capacity_ah: {type: number, unit: Ah, nullable: true, notes: "Largest Discharge_Capacity(Ah) in the last cycle (charge capacity if no discharge was recorded); null if the export has neither column."}
+        final_voltage_v: {type: number, unit: V, nullable: true, notes: "Voltage(V) of the last row."}
+        test_time_s: {type: number, unit: s, notes: "Test_Time(s) of the last row."}
+        duration_s: {type: number, unit: s, notes: "From writing the request to reading the export."}
+    examples:
+      - channel: "3"
+        barcode: "CC-2026-0007"
+        schedule: "Formation_C2_3cyc.sdu"
+        cycles: 3
+        steps:
+          - {mode: cc_charge, current_a: 0.0225, voltage_v: 4.2, time_limit_s: 14400}
+          - {mode: cv_charge, voltage_v: 4.2, current_a: 0.002, time_limit_s: 3600}
+          - {mode: rest, time_limit_s: 600}
+          - {mode: cc_discharge, current_a: 0.0225, voltage_v: 3.0, time_limit_s: 14400}
+          - {mode: rest, time_limit_s: 600}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 1800
+  watchdog_action: release
+  notes: >
+    No stop command reaches the cycler: a channel is stopped at the MITS Pro console, and the schedule's own
+    safety limits (voltage, current, temperature) are what protects the cells. An e-stop here withdraws every
+    request not yet started, so nothing further is queued; a test already started finishes in MITS Pro. Half an
+    hour of silence from the controller releases the lease and lets a waiting job finish: a formation test
+    takes days and should not be abandoned because a controller rebooted.

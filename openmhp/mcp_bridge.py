@@ -84,7 +84,7 @@ TOOLS = [
          "location": {"type": "string"}, "state": {"type": "string", "enum": ["idle", "busy", "fault", "estop"]},
          "limit": {"type": "integer", "default": 5}}},
      "input_examples": [
-         {"query": "heat a 96-well plate to 95 C", "class": "thermocycler", "state": "idle"},
+         {"query": "heat a 96-well plate to 95 C", "class": "thermal_cycler", "state": "idle"},
          {"query": "move plates between deck and thermocycler", "location": "bay 3"},
          {"class": "microscope", "tags": ["confocal"], "limit": 10}]},
     {"name": "mhp_describe",

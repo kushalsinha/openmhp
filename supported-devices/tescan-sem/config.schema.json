@@ -1,0 +1,25 @@
+{
+  "host": {
+    "ask": "Address of the microscope PC (SharkSEM listens there)",
+    "example": "tescan-pc.lab.local",
+    "help": "The TESCAN control PC; SharkSEM remote control must be enabled and licensed in the microscope software. Use 127.0.0.1 if this package runs on that PC."
+  },
+  "port": {
+    "ask": "TCP port SharkSEM listens on",
+    "kind": "int",
+    "example": "8300",
+    "help": "8300 is the port public example scripts use (unverified); the SharkSEM manual and the microscope software's remote-control settings give the real one."
+  },
+  "image_dir": {
+    "ask": "Folder the acquired TIFFs are written to",
+    "kind": "path",
+    "example": "C:/lab/data/tescan"
+  },
+  "reference_width_mm": {"ask": "Reference width in mm that TESCAN's magnification is defined against (the manual's display width; 120 is a placeholder)", "advanced": true},
+  "pump_timeout_s": {"ask": "Seconds to wait for a pump or vent before the job is failed", "kind": "int", "advanced": true},
+  "sharksem": {
+    "ask": "SharkSEM client module and function names (JSON object), from the SharkSEM manual",
+    "advanced": true,
+    "help": "Every shipped name is a placeholder; correct them from TESCAN's SharkSEM manual before the first hardware test."
+  }
+}

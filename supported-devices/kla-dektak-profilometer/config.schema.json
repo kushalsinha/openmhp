@@ -1,0 +1,37 @@
+{
+  "host": {
+    "ask": "Host name or IP of the PC running Vision64's control server (usually this PC)",
+    "example": "127.0.0.1",
+    "help": "Vision64's TCP/IP Runtime Control Server option; its port and command set come from Bruker's documentation for the option. Every shipped command string is a placeholder."
+  },
+  "data_dir": {
+    "ask": "Folder the recipe auto-saves .OPDx datasets to",
+    "kind": "path",
+    "example": "C:\\Users\\Public\\Documents\\Vision64\\Data\\openmhp",
+    "help": "The recipe's Advanced Options > Auto Save File Name folder; the package sets the file name <sample_id>_<token>.OPDx there."
+  },
+  "db_csv": {
+    "ask": "Database CSV the analysis recipe logs its results to (blank if none)",
+    "kind": "path",
+    "required": false,
+    "help": "Analyze > Database Setup > Create New CSV, with the step-height result (ASH) and the sample id selected and logging enabled; the package reads the row for each scan."
+  },
+  "port": {
+    "ask": "TCP port of the control server",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "recipes_dir": {
+    "ask": "Folder holding the Vision64 recipes an agent may run",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  },
+  "max_duration_s": {
+    "ask": "Longest scan duration an agent may request (seconds)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}

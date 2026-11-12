@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: sp-lyostar-freeze-dryer-01
-class: freeze_dryer
+class: lyophilizer
 make: SP Scientific
 model: LyoStar 3 / LyoStar 4 (Martin Christ Epsilon 2-4 LSCplus via notes)
 location: ""

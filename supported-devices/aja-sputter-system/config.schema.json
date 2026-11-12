@@ -1,0 +1,15 @@
+{
+  "host": {
+    "ask": "IP address or host name of the tool's control PLC (or the Modbus TCP gateway in front of it)",
+    "kind": "text",
+    "example": "192.168.1.80",
+    "help": "Ask the tool's integrator: on an AJA Orion the Phase II laptop talks to the PLC over a private network, so a second network port or a gateway is usually added for Modbus TCP. Port 502 is assumed; put `port` in config.json otherwise."
+  },
+  "unit": {
+    "ask": "Modbus unit (slave) id",
+    "kind": "int",
+    "example": 1,
+    "advanced": true,
+    "help": "1 unless the gateway maps the PLC under another id."
+  }
+}

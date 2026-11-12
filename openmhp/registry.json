@@ -456,7 +456,7 @@
   },
   {
    "name": "bruker-nmr-iconnmr",
-   "class": "nmr",
+   "class": "nuclear_magnetic_resonance_spectrometer",
    "make": "Bruker",
    "model": "Avance NEO / III HD under TopSpin with ICON-NMR",
    "kind": "file",
@@ -618,7 +618,7 @@
   },
   {
    "name": "protein-simple-maurice-ce",
-   "class": "electrophoresis",
+   "class": "capillary_electrophoresis_instrument",
    "make": "ProteinSimple (Bio-Techne)",
    "model": "Maurice (cIEF and CE-SDS) under Compass for iCE",
    "kind": "file",
@@ -658,7 +658,7 @@
   },
   {
    "name": "thermo-quantstudio-qpcr",
-   "class": "qpcr",
+   "class": "real_time_pcr_machine",
    "make": "Applied Biosystems (Thermo Fisher Scientific)",
    "model": "QuantStudio 5/7 under QuantStudio Design & Analysis Software 2",
    "kind": "file",
@@ -697,7 +697,7 @@
   },
   {
    "name": "cytek-aurora-flow-cytometer",
-   "class": "cytometer",
+   "class": "flow_cytometer",
    "make": "Cytek Biosciences",
    "model": "Aurora / Northern Lights under SpectroFlo",
    "kind": "file",
@@ -816,7 +816,7 @@
   },
   {
    "name": "sp-lyostar-freeze-dryer",
-   "class": "freeze_dryer",
+   "class": "lyophilizer",
    "make": "SP Scientific",
    "model": "LyoStar 3 / LyoStar 4 (Martin Christ Epsilon 2-4 LSCplus via notes)",
    "kind": "modbus",
@@ -894,7 +894,7 @@
   },
   {
    "name": "bmg-clariostar-plate-reader",
-   "class": "plate_reader",
+   "class": "microplate_reader",
    "make": "BMG LABTECH (also Molecular Devices, Tecan)",
    "model": "CLARIOstar / PHERAstar (SpectraMax via SoftMax Pro, Spark via SiLA 2)",
    "kind": "sdk",
@@ -1288,7 +1288,7 @@
   },
   {
    "name": "buchi-rotavapor-r300",
-   "class": "evaporator",
+   "class": "rotary_evaporator",
    "make": "Büchi",
    "model": "Rotavapor R-300 with Interface I-300 Pro, VacuBox and V-300 pump",
    "kind": "rest",
@@ -1798,7 +1798,7 @@
   },
   {
    "name": "labjack-t-series",
-   "class": "daq",
+   "class": "data_acquisition_device",
    "make": "LabJack",
    "model": "T4 / T7 / T8 (LJM library)",
    "kind": "sdk",
@@ -1838,7 +1838,7 @@
   },
   {
    "name": "ni-daqmx",
-   "class": "daq",
+   "class": "data_acquisition_device",
    "make": "National Instruments",
    "model": "USB-6001/6008/6009, USB-621x, 63xx (NI-DAQmx)",
    "kind": "sdk",
@@ -2225,7 +2225,7 @@
   },
   {
    "name": "alicat-flow-controller",
-   "class": "flow_controller",
+   "class": "mass_flow_controller",
    "make": "Alicat Scientific",
    "model": "MC / MCR mass flow controller (PC / PCD pressure controller compatible)",
    "kind": "serial",
@@ -2377,6 +2377,811 @@
      "C18": "Pass",
      "C19": "Fail",
      "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "eurotherm-tube-furnace",
+   "class": "furnace",
+   "make": "Eurotherm (Carbolite Gero, MTI, Thermcraft furnaces)",
+   "model": "2416 / 2404 / 2408 programmer-controllers (2400 series Modbus map); 3216 / 3508 / nanodac need their own map",
+   "kind": "modbus",
+   "category": "materials-synthesis",
+   "description": "Tube and box furnaces on a Eurotherm 2400-series programmer-controller over Modbus RTU/TCP: PV, setpoints, output, program run/hold/reset, typed segment writes.",
+   "tags": [
+    "furnace",
+    "tube-furnace",
+    "sintering",
+    "annealing",
+    "cvd",
+    "modbus"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/eurotherm-tube-furnace",
+   "sim": true,
+   "via": "Modbus RTU (EIA-485/232) or TCP gateway, HA026230 map",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "nabertherm-furnace",
+   "class": "furnace",
+   "make": "Nabertherm",
+   "model": "B400 / B410 / C440 / C450 / P470 / P480 (and series 500) controllers with the Modbus TCP communication module",
+   "kind": "modbus",
+   "category": "materials-synthesis",
+   "description": "Nabertherm furnaces on series 400/500 controllers over Modbus TCP: temperatures, status, program start/pause/stop, typed program transfer (P-controllers), external setpoint.",
+   "tags": [
+    "furnace",
+    "sintering",
+    "calcination",
+    "muffle",
+    "tube-furnace",
+    "modbus"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/nabertherm-furnace",
+   "sim": true,
+   "via": "Modbus TCP port 502, Nabertherm communication module (M03.0021)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "mbraun-glovebox",
+   "class": "glovebox",
+   "make": "MBRAUN",
+   "model": "LABstar / UNIlab / LABmaster / MB200 with the PLC Ethernet (Modbus TCP) option",
+   "kind": "modbus",
+   "category": "materials-synthesis",
+   "description": "MBRAUN inert-gas gloveboxes over the PLC's Modbus TCP option: O2/H2O ppm, pressures, antechamber cycle with purge count, interlocked door releases, purge and regeneration (template).",
+   "tags": [
+    "glovebox",
+    "inert-atmosphere",
+    "argon",
+    "antechamber",
+    "modbus",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/mbraun-glovebox",
+   "sim": true,
+   "via": "Modbus TCP to the MBRAUN/Siemens PLC Ethernet option",
+   "status": "template",
+   "rubric": {
+    "score": 26.0,
+    "max": 28,
+    "percent": 93,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "mettler-quantos-dosing",
+   "class": "dispenser",
+   "make": "Mettler Toledo",
+   "model": "Quantos QB1 / QS30 and XPR automatic powder dosing (XPR/XSR balance with a dosing module) over MT-SICS",
+   "kind": "serial",
+   "category": "materials-synthesis",
+   "description": "Mettler Quantos/XPR powder dosing heads over the balance's MT-SICS port: A10 target and tolerances, weighing, tare, a dose action returning the dispensed mass (dosing commands are placeholders).",
+   "tags": [
+    "powder-dosing",
+    "dispenser",
+    "balance",
+    "mt-sics",
+    "serial",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/mettler-quantos-dosing",
+   "sim": true,
+   "via": "RS-232/USB, MT-SICS on the XPR/XSR balance",
+   "status": "template",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "laurell-spin-coater",
+   "class": "spin_coater",
+   "make": "Laurell Technologies",
+   "model": "WS-650 and WS-400 series spin processors with the 650 controller (RS-232 / USB to Spin 3000)",
+   "kind": "serial",
+   "category": "materials-synthesis",
+   "description": "Laurell WS-650/WS-400 spin processors with the 650 controller over RS-232/USB: speed, lid and vacuum interlocks, typed recipe steps, stop (command set is a placeholder).",
+   "tags": [
+    "spin-coater",
+    "thin-film",
+    "photoresist",
+    "perovskite",
+    "serial",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/laurell-spin-coater",
+   "sim": true,
+   "via": "RS-232/USB to the 650 controller (Spin 3000 port)",
+   "status": "template",
+   "rubric": {
+    "score": 26.0,
+    "max": 28,
+    "percent": 93,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "ossila-spin-coater",
+   "class": "spin_coater",
+   "make": "Ossila",
+   "model": "Spin Coater L2001A3 (120-6,000 rpm) and L2001B1 (500-10,000 rpm)",
+   "kind": "serial",
+   "category": "materials-synthesis",
+   "description": "Ossila Spin Coater (L2001A3, L2001B1) over USB serial: speed, lid interlock, program and step, typed recipe steps, stop; no vacuum chuck (command set is a placeholder).",
+   "tags": [
+    "spin-coater",
+    "thin-film",
+    "perovskite",
+    "glovebox",
+    "serial",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/ossila-spin-coater",
+   "sim": true,
+   "via": "USB virtual COM port on the unit",
+   "status": "template",
+   "rubric": {
+    "score": 26.0,
+    "max": 28,
+    "percent": 93,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "rigaku-smartlab-xrd",
+   "class": "diffractometer",
+   "make": "Rigaku",
+   "model": "SmartLab / SmartLab SE / MiniFlex under SmartLab Studio II",
+   "kind": "file",
+   "category": "materials-characterization",
+   "description": "Queues a 2theta scan via a SmartLab Studio II job folder and parses the .rasx (zip) or .ras (text) result: points, range, tube kV/mA, speed.",
+   "tags": [
+    "xrd",
+    "pxrd",
+    "diffractometer",
+    "rigaku",
+    "smartlab",
+    "miniflex"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/rigaku-smartlab-xrd",
+   "sim": true,
+   "via": "Studio II job folder + .rasx/.ras results folder",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "panalytical-empyrean-xrd",
+   "class": "diffractometer",
+   "make": "Malvern Panalytical",
+   "model": "Empyrean / Aeris under Data Collector",
+   "kind": "file",
+   "category": "materials-characterization",
+   "description": "Queues a Gonio 2theta scan via a Data Collector job folder and parses the .xrdml result (schema 1.0-2.x): points, range, counting time, status.",
+   "tags": [
+    "xrd",
+    "pxrd",
+    "diffractometer",
+    "panalytical",
+    "empyrean",
+    "aeris"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/panalytical-empyrean-xrd",
+   "sim": true,
+   "via": "Data Collector job folder + .xrdml results folder",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Pass",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "instron-bluehill-tester",
+   "class": "mechanical_tester",
+   "make": "Instron",
+   "model": "3400 / 5900 / 6800 series under Bluehill Universal",
+   "kind": "sdk",
+   "category": "materials-characterization",
+   "description": "Template: Instron frame under Bluehill Universal via its WCF API (member names unverified, configurable): run_test at a typed rate with load/extension limits, peak load and modulus from the export.",
+   "tags": [
+    "tensile",
+    "mechanical-testing",
+    "instron",
+    "bluehill",
+    "modulus",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/instron-bluehill-tester",
+   "sim": true,
+   "via": "Bluehill Universal API (WCF) through pythonnet + results CSV export",
+   "status": "template",
+   "os": "windows",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "anton-paar-rheometer",
+   "class": "rheometer",
+   "make": "Anton Paar",
+   "model": "MCR 72 / 92 / 102e / 302e / 502e under RheoCompass",
+   "kind": "file",
+   "category": "materials-characterization",
+   "description": "Queues a flow curve or frequency sweep via a RheoCompass job folder and parses the ASCII export (UTF-16, tab, Interval data header): points, temperature, last-point viscosity or moduli.",
+   "tags": [
+    "rheometer",
+    "rheology",
+    "anton-paar",
+    "rheocompass",
+    "viscosity",
+    "flow-curve"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/anton-paar-rheometer",
+   "sim": true,
+   "via": "RheoCompass job folder + ASCII export folder",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 22.0,
+    "max": 26,
+    "percent": 85,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "kla-dektak-profilometer",
+   "class": "profilometer",
+   "make": "Bruker",
+   "model": "Dektak XT / XT-A under Vision64 (KLA Alpha-Step D-500/D-600 by the same shape)",
+   "kind": "socket",
+   "category": "materials-characterization",
+   "description": "Template: Dektak XT under Vision64 via a TCP command channel (commands unverified, configurable): scan with typed length, force and speed, returns the .OPDx file and the logged step height.",
+   "tags": [
+    "profilometer",
+    "stylus",
+    "step-height",
+    "dektak",
+    "vision64",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/kla-dektak-profilometer",
+   "sim": true,
+   "via": "Vision64 TCP/IP control server + .OPDx auto-save + database CSV",
+   "status": "template",
+   "os": "windows",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "phenom-desktop-sem",
+   "class": "electron_microscope",
+   "make": "Thermo Fisher Scientific (Phenom-World)",
+   "model": "Phenom XL G2 / G3 (Pharos, ProX by the same interface)",
+   "kind": "sdk",
+   "category": "materials-characterization",
+   "description": "Template for the Thermo Phenom XL/Pharos/ProX desktop SEM through PPI (PyPhenom over the network): load/unload the holder, move the stage, set kV, auto-focus and acquire TIFF images; most PPI member names unverified.",
+   "tags": [
+    "sem",
+    "electron-microscope",
+    "imaging",
+    "desktop-sem",
+    "phenom",
+    "ppi"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/phenom-desktop-sem",
+   "sim": true,
+   "via": "Phenom Programming Interface (PyPhenom), network",
+   "status": "template",
+   "rubric": {
+    "score": 26.0,
+    "max": 28,
+    "percent": 93,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "tescan-sem",
+   "class": "electron_microscope",
+   "make": "TESCAN",
+   "model": "VEGA / MIRA / CLARA (SharkSEM remote control)",
+   "kind": "socket",
+   "category": "materials-characterization",
+   "description": "Template for TESCAN VEGA/MIRA/CLARA through SharkSEM (TCP remote control): pump, beam on at kV, five-axis stage, auto-focus, SE/BSE TIFF images, vent; names unverified.",
+   "tags": [
+    "sem",
+    "electron-microscope",
+    "imaging",
+    "tescan",
+    "sharksem",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/tescan-sem",
+   "sim": true,
+   "via": "SharkSEM TCP remote control, TESCAN client library",
+   "status": "template",
+   "rubric": {
+    "score": 26.0,
+    "max": 28,
+    "percent": 93,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "zeiss-sem",
+   "class": "electron_microscope",
+   "make": "ZEISS",
+   "model": "EVO / Sigma / GeminiSEM under SmartSEM (Remote API)",
+   "kind": "sdk",
+   "category": "materials-characterization",
+   "description": "Template for ZEISS EVO/Sigma/GeminiSEM through the SmartSEM Remote API (COM, Windows): pump, EHT on at kV, five-axis stage, auto-focus, SE/BSD TIFF grabs, vent; names unverified.",
+   "tags": [
+    "sem",
+    "electron-microscope",
+    "imaging",
+    "zeiss",
+    "smartsem",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/zeiss-sem",
+   "sim": true,
+   "via": "SmartSEM Remote API (COM), pywin32",
+   "status": "template",
+   "os": "windows",
+   "rubric": {
+    "score": 25.0,
+    "max": 28,
+    "percent": 89,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "quantum-design-ppms",
+   "class": "cryostat",
+   "make": "Quantum Design",
+   "model": "PPMS / DynaCool / MPMS3 (VersaLab and OptiCool by the same shape)",
+   "kind": "socket",
+   "category": "materials-characterization",
+   "description": "Quantum Design PPMS/DynaCool/MPMS3 through the MultiVu socket server (MultiPyVu): temperature and field with rate and approach, ramp-and-wait jobs, chamber seal/purge/vent.",
+   "tags": [
+    "cryostat",
+    "magnet",
+    "low-temperature",
+    "ppms",
+    "dynacool",
+    "multivu"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/quantum-design-ppms",
+   "sim": true,
+   "via": "MultiPyVu client to the MultiVu socket server (port 27183)",
+   "status": "twin tested",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "neware-battery-cycler",
+   "class": "battery_cycler",
+   "make": "Neware",
+   "model": "CT-4008 / BTS 8.0 (BTS server TCP interface)",
+   "kind": "socket",
+   "category": "energy-storage",
+   "description": "Template for Neware BTS 8.0 cyclers through the BTS server's XML-over-TCP interface: typed charge/discharge protocols per channel, cycle count and last capacity back; step-file layout unverified.",
+   "tags": [
+    "battery",
+    "cycler",
+    "coin-cell",
+    "formation",
+    "tcp",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/neware-battery-cycler",
+   "sim": true,
+   "via": "BTS server TCP API (XML, port 502)",
+   "status": "template",
+   "rubric": {
+    "score": 24.0,
+    "max": 26,
+    "percent": 92,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "arbin-battery-cycler",
+   "class": "battery_cycler",
+   "make": "Arbin Instruments",
+   "model": "LBT / BT-2000 under MITS Pro (results-folder route)",
+   "kind": "file",
+   "category": "energy-storage",
+   "description": "Arbin cyclers under MITS Pro via a request folder and the CSV results export (console and SDK are under NDA); template.",
+   "tags": [
+    "battery",
+    "cycler",
+    "formation",
+    "file-based",
+    "windows",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/arbin-battery-cycler",
+   "sim": true,
+   "via": "MITS Pro request folder + CSV export",
+   "status": "template",
+   "os": "windows",
+   "rubric": {
+    "score": 22.0,
+    "max": 26,
+    "percent": 85,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Partial"
+    }
+   }
+  },
+  {
+   "name": "gamry-potentiostat",
+   "class": "potentiostat",
+   "make": "Gamry Instruments",
+   "model": "Interface 1010 / Reference 620 (Electrochemistry Toolkit, GamryCOM)",
+   "kind": "sdk",
+   "category": "energy-storage",
+   "description": "Gamry potentiostats through the Electrochemistry Toolkit COM interface (pywin32): OCP, chronoamperometry, CV and EIS with trace files back.",
+   "tags": [
+    "electrochemistry",
+    "potentiostat",
+    "eis",
+    "voltammetry",
+    "windows"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/gamry-potentiostat",
+   "sim": true,
+   "via": "GamryCOM (Electrochemistry Toolkit) via pywin32",
+   "status": "twin tested",
+   "os": "windows",
+   "rubric": {
+    "score": 23.0,
+    "max": 26,
+    "percent": 88,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Partial",
+     "C19": "Fail",
+     "C20": "N/A",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "retsch-planetary-mill",
+   "class": "mill",
+   "make": "Retsch",
+   "model": "PM 100 / PM 200 / PM 400 (serial interface)",
+   "kind": "serial",
+   "category": "materials-synthesis",
+   "description": "Retsch planetary ball mills over the serial socket: timed grind at a set speed with lid interlock; template, command set is a placeholder.",
+   "tags": [
+    "milling",
+    "ball-mill",
+    "mechanochemistry",
+    "serial",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/retsch-planetary-mill",
+   "sim": true,
+   "via": "RS-232/RS-485 serial (placeholder commands)",
+   "status": "template",
+   "rubric": {
+    "score": 26.0,
+    "max": 28,
+    "percent": 93,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Pass",
+     "C21": "Pass"
+    }
+   }
+  },
+  {
+   "name": "aja-sputter-system",
+   "class": "deposition_system",
+   "make": "AJA International",
+   "model": "ATC Orion (Phase II control); Kurt J. Lesker PVD 75 and Moorfield nanoPVD via notes",
+   "kind": "modbus",
+   "category": "materials-synthesis",
+   "description": "Sputter deposition tools whose PLC exposes Modbus TCP: pressures, power, shutter, interlocks and a timed deposition with a thickness estimate; template register map.",
+   "tags": [
+    "sputtering",
+    "pvd",
+    "thin-film",
+    "modbus",
+    "template"
+   ],
+   "target": "github:kushalsinha/openmhp/supported-devices/aja-sputter-system",
+   "sim": true,
+   "via": "Modbus TCP to the control PLC (placeholder map)",
+   "status": "template",
+   "rubric": {
+    "score": 26.0,
+    "max": 28,
+    "percent": 93,
+    "criteria": {
+     "C2": "Pass",
+     "C5": "Pass",
+     "C6": "Pass",
+     "C7": "Pass",
+     "C12": "Pass",
+     "C14": "Pass",
+     "C15": "Pass",
+     "C16": "Pass",
+     "C18": "Pass",
+     "C19": "Fail",
+     "C20": "Pass",
      "C21": "Pass"
     }
    }

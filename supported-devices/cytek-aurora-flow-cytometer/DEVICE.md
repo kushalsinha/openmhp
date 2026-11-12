@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: cytek-aurora-flow-cytometer-01
-class: cytometer
+class: flow_cytometer
 make: Cytek Biosciences
 model: Aurora / Northern Lights under SpectroFlo
 location: ""
