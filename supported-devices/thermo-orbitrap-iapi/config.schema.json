@@ -1,0 +1,28 @@
+{
+  "assembly_dir": {
+    "ask": "Folder holding Thermo.TNG.Factory.dll, API-2.0.dll and Fusion.API-1.0.dll",
+    "kind": "path",
+    "example": "C:/Thermo/IAPI",
+    "help": "The licensed IAPI assemblies from Thermo (not redistributable). Fusion.API-2.0.dll replaces Fusion.API-1.0.dll on Tune 4.3; rename or edit ASSEMBLIES in driver.py in that case."
+  },
+  "data_dir": {
+    "ask": "Folder where custom-scan centroid lists are written as CSV",
+    "kind": "path",
+    "example": "C:/lab/data/orbitrap"
+  },
+  "instrument_index": {
+    "ask": "Instrument index on this PC (1 unless several instruments are attached)",
+    "kind": "int",
+    "advanced": true
+  },
+  "connect_timeout_s": {
+    "ask": "Seconds to wait for the IAPI service to connect",
+    "kind": "int",
+    "advanced": true
+  },
+  "scan_timeout_s": {
+    "ask": "Seconds to wait for a requested custom scan beyond its injection time",
+    "kind": "int",
+    "advanced": true
+  }
+}

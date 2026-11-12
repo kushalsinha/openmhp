@@ -1,0 +1,38 @@
+{
+  "command_dir": {
+    "ask": "Sample Scheduler's command folder (its LIMS 'Command folder', default C:\\LIMS_Commands on the scheduler PC, as a share)",
+    "kind": "path",
+    "example": "//olab-sched/LIMS_Commands",
+    "help": "Sample Scheduler Configuration > LIMS: the folder it polls for XML commands. Share it (or its UNC path) to the machine serving this package, writable by the account that runs mhp."
+  },
+  "result_dir": {
+    "ask": "Folder where Sample Scheduler's 'Review for LIMS' copies result reports (its 'Result folder')",
+    "kind": "path",
+    "example": "//olab-sched/LIMS_Results",
+    "help": "Configure the project's report (csv or txt) to be copied there; the job returns its rows."
+  },
+  "project": {
+    "ask": "OpenLab project the analyses run in",
+    "example": "ProcessDev"
+  },
+  "instrument": {
+    "ask": "Instrument name as Sample Scheduler shows it",
+    "example": "HPLC-1290-01"
+  },
+  "injection_source": {
+    "ask": "Injection source as Sample Scheduler names it for this instrument",
+    "required": false,
+    "advanced": true
+  },
+  "methods_dir": {
+    "ask": "Shared folder holding the project's method files, for list_methods",
+    "kind": "path",
+    "required": false,
+    "advanced": true
+  },
+  "processing_method": {
+    "ask": "Processing method used when a sample names none",
+    "required": false,
+    "advanced": true
+  }
+}

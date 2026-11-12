@@ -1,0 +1,28 @@
+name: dcm-strip
+project: _shared
+action: evaporate
+params:
+  bath_c: 40
+  rotation_rpm: 120
+  vacuum_mbar: 450
+  duration_min: 20
+  stop_when_vapor_below_c: 20
+  keep_bath_warm: false
+compounds:
+- dcm
+- dichloromethane
+version: 1
+hash: 790941100c07
+created: 1794432366.518962
+updated: 1794432366.518962
+validated:
+  at: 1794432366.518962
+  hash: 790941100c07
+status: active
+notes: 'Strip dichloromethane from up to 150 mL in a 500 mL flask: 40 degC bath, 450
+  mbar (DCM boils near 24 degC there), 20 min or until the vapour probe falls below
+  20 degC.'
+source:
+  kind: manual
+  ref: Buchi solvent table (20/40/60 rule); bath 40 degC, DCM about 450 mbar
+author: package author

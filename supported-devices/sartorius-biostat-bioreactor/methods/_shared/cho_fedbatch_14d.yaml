@@ -1,0 +1,23 @@
+name: cho_fedbatch_14d
+project: _shared
+action: start_batch
+params:
+  recipe: CHO_fedbatch_14d
+  duration_s: null
+compounds:
+- cho
+- mab
+version: 1
+hash: 6ba32bea3cc2
+created: 1794431683
+updated: 1794431683
+validated:
+  at: 1794431683
+  hash: 6ba32bea3cc2
+status: active
+author: package example
+notes: Fourteen-day CHO fed-batch recipe as written in Biobrain; feeds are phases
+  of the recipe itself.
+source:
+  kind: manual
+  ref: example record shipped with the package; replace with the lab's own

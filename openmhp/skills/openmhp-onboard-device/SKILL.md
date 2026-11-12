@@ -180,6 +180,13 @@ Authoring, for any device:
 - [ ] frontmatter complete; description says what it is and when to pick it
 - [ ] DEVICE.md body has procedure, what to watch, resources
 - [ ] every numeric setting has limits; every energetic action gated; examples present
+- [ ] `class` is one of SPEC §13 (`mhp validate` names the nearest); every parameter is a typed shape with a UCUM `unit`, `limits`, and a `default` or `nullable: true` when optional; `resolution` where the instrument has a settable step
+- [ ] every `long` action declares `returns` (the result contract) matching what `on_invoke` returns
+- [ ] `state` and `busy` declared with `source: runtime`; `connected` read by the driver or `source: runtime`
+- [ ] instrument self-state (SPEC §4.6): `calibration_status`, `qualification_status`, `usage_count` with `source: record` (the base answers from config.json), or `source: instrument` where the device reports them
+- [ ] `robot_access_ready` wherever a lid, door, tray, drawer or deck meets a handling system, and `physical.automated_load`
+- [ ] `safety.hardware_stop` named where the instrument has a physical stop, with `latch_external_stop` in the driver
+- [ ] `mhp rubric <folder>`: every device-level criterion Pass or N/A, and each N/A is true of the instrument
 - [ ] `on_estop` does something real, or `safety.estop: false` and `safety.notes` says what stops it
 - [ ] a watchdog window, unless the device is operator-run and the notes say so
 - [ ] no assignment to `self.descriptor` outside `setup()`, none to `_enforced`/`_index`; no gate

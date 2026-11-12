@@ -274,6 +274,9 @@ locations:                       # optional, device-class specific extensions
 - `default` on a parameter shape declares what is used when the caller omits it. The driver fills it before the `required` check, and **reports it back**: the response and the job both carry `defaulted`, a map of parameter path to the value applied. A driver that substitutes a value not declared this way is invisible to the caller, which `mhp validate` warns about for every optional parameter with no declared default.
 - `params` on an action declares each parameter's **shape**: `{type, unit?, limits?, resolution?, nullable?, default?, notes?}` for a scalar, `{type: array, items: {...}}` for a list, and `{type: object, properties: {...}, required: [...]}` for a nested object, nested to any depth. The driver checks the whole shape before any step runs, so a bound on a value *inside* a parameter (a 200 °C step in an otherwise valid program) is enforced by the descriptor rather than by hand-written driver code. A parameter declared as a plain string (`steps: "array of {temp: degC}"`) is the legacy prose form: it is documentation, nothing structural is checked, and `mhp validate` reports it. Prose belongs in `notes`, which every shape may carry.
 - `returns` on an action declares the **result contract** in the same shape vocabulary as `params`. It is optional: an instrument whose output has no stable structure simply does not declare one. When it is declared, the driver compares the result against it and reports a mismatch as `resultMismatch` on the job rather than raising, because the physical work has already happened by the time the result exists and failing the job would misreport what the instrument did.
+- `source` on a signal says who answers it: `instrument` (the driver's `on_read`, the default for any other name), `record` (the base, from the lab's `self_state` record; only for the self-state names of §4.6) or `runtime` (the base, from its own state machine; only for `state`, `busy`, `active_jobs` and `connected`). A driver that can read one of those names itself declares `source: instrument` or simply answers it in `on_read`; the base falls back to its own answer when the driver has none.
+- `robot_access_ready` is a reserved boolean signal for instruments a handling system meets at a boundary (a lid, door, drawer, tray or deck): `true` exactly when a robot may load or unload, meaning the boundary is open and parked and nothing moves. An instrument with such a boundary SHOULD declare it and list it in the `interlocks` of its load and unload actions, so an orchestrator reads one name on every device rather than a different door signal per vendor. `physical.automated_load: true|false` says whether the instrument can be loaded by a handling system at all.
+- `safety.hardware_stop` names a physical stop the instrument has (a button, a light curtain, a safety relay) and what clears it; a driver that detects it calls `latch_external_stop` (§15.1).
 - `limits` on an action: a map from parameter name to `[min, max]`, `{min, max}` or `{enum: [...]}`, applied element-wise to lists. It bounds top-level parameters only; nested values are bounded inside `params`. The driver MUST enforce them, for dry runs and real runs alike, together with `required` and, when `params` is declared, the rule that undeclared parameters are refused. Checks that span a whole request (every step of a program) belong in the driver's side-effect-free `validate_params` hook, which also runs for dry runs, so no step starts before the whole request is known to be valid.
 - `approval`: `auto` (agent may act), `confirm` (each call needs `approved: true`, which only the host may set, and only after a person confirmed that exact request; §7.2), `forbid` (never agent-operable; listed so the agent knows the capability exists and why it is off-limits).
 - `interlocks`: names of boolean signals that MUST read exactly `true` at the moment of the write or invoke; false, unreadable or stale values count as open (`InterlockOpen`).
@@ -382,6 +385,36 @@ derived from.
 **M10. Plans.** In plan mode `methods/list`, `get`, `find` and `diff` are real; `save` and `delete` are
 recorded, not executed; a `run` of a method is a dry-run invoke with the resolved parameters, so the plan
 shows the method's name and version next to the step.
+
+### 4.6 Instrument self-state
+
+Whether an instrument is calibrated, qualified, worn or out of specification is the first thing a
+person asks before trusting a result from it, and the first thing a procurement checklist asks of
+the interface. These six signal names are reserved so that every device answers them alike:
+
+| signal | type | values |
+|---|---|---|
+| `calibration_status` | string | `valid`, `due`, `overdue`, `unknown` |
+| `calibration_last` | string, nullable | ISO-8601 date of the last calibration |
+| `calibration_due` | string, nullable | ISO-8601 date the next one is due |
+| `qualification_status` | string | `qualified`, `unqualified`, `unknown` (IQ/OQ/PQ as the lab records it) |
+| `usage_count` | integer | runs, injections, cycles or hours; `notes` says which |
+| `out_of_spec` | boolean | a self-check or limit the instrument itself reports |
+
+Every instrument that is not operator-run SHOULD declare at least `calibration_status` and
+`qualification_status`; `mhp validate` reports a package that declares none. An instrument that
+reports them itself (a balance with a calibration log, a chromatograph with an injection counter)
+declares `source: instrument` and answers in `on_read`. Every other instrument declares `source:
+record` and the base answers from the lab's record: the `self_state` block of `config.json`, or the
+same keys at its top level (`calibration_last`, `calibration_due`, `qualified`, `usage_count`,
+`out_of_spec`, written once by the person who installs the package; `mhp node setup --all` asks
+for them on every instrument that is not operator-run), with
+`calibration_status` derived from the due date (`due` within 30 days, `overdue` past it, `unknown`
+with no date) and `usage_count` from the device's own job records when the record has no count.
+The card tier of `device/describe` carries the record-sourced `calibration_status` and
+`qualification_status`, so a directory can answer "which balances are overdue" without opening a
+session on any of them. Nothing here is enforced as a gate: an overdue instrument still runs,
+because the decision belongs to the person, and the protocol's job is to make sure they are told.
 
 ---
 
@@ -792,9 +825,23 @@ Every error carries `ts`, the device's own clock at the moment it refused, so a 
 
 ## 13. Device classes (initial vocabulary)
 
-`thermocycler`, `liquid_handler`, `robot_arm`, `microscope`, `plate_reader`, `centrifuge`, `incubator`, `hotplate`, `balance`, `pump`, `valve`, `spectrometer`, `laser`, `stage`, `cnc`, `3d_printer`, `oven`, `power_supply`, `camera`, `generic`.
+`thermocycler`, `liquid_handler`, `robot_arm`, `microscope`, `plate_reader`, `centrifuge`, `incubator`, `hotplate`, `balance`, `pump`, `valve`, `spectrometer`, `laser`, `stage`, `cnc`, `3d_printer`, `oven`, `power_supply`, `camera`, `generic`,
+`chromatograph`, `mass_spectrometer`, `titrator`, `reactor`, `bioreactor`, `circulator`, `shaker`, `cell_counter`, `dissolution_tester`, `evaporator`, `freeze_dryer`, `flow_controller`, `source_meter`, `vacuum_gauge`, `lock_in_amplifier`, `daq`, `oscilloscope`, `sensor`, `environmental_chamber`, `potentiostat`, `nmr`, `diffractometer`, `particle_analyzer`, `biosensor`, `electrophoresis`, `cytometer`, `qpcr`, `thermal_analyzer`, `stirrer`, `temperature_controller`, `sampler`.
 
-A class is a hint for the agent and a namespace for conventions (a `robot_arm` SHOULD have a `locations` map; a `microscope` SHOULD expose an `acquire` action returning an image URI). Classes are not enforced by the protocol.
+A class is a hint for the agent and a namespace for conventions. Classes are not enforced by the protocol; `mhp validate` names the nearest known class for one it does not recognise, because agents and directories filter on the known ones. The conventions, each a SHOULD:
+
+| class | convention |
+|---|---|
+| `robot_arm`, `stage` | a `locations` map; `robot_access_ready` on anything it serves |
+| `microscope`, `camera` | an `acquire` action returning an image URI in `returns` |
+| `chromatograph`, `mass_spectrometer`, `nmr`, `diffractometer`, `thermal_analyzer`, `plate_reader`, `dissolution_tester`, `electrophoresis`, `qpcr`, `cytometer` | one method-driven run action (`methods: true`, §4.5) whose `returns` names the result file or table; `usage_count` counts injections, scans or runs |
+| `balance` | `weigh` returning `{mass, unit, stable}`; `tare`; `calibration_status` from the instrument's own log where it has one |
+| `pump`, `flow_controller`, `valve` | `flow`/`pressure` signals in UCUM; a `stop` that zeroes the setpoint; `estop: true` |
+| `hotplate`, `stirrer`, `circulator`, `temperature_controller`, `incubator`, `oven`, `environmental_chamber`, `bioreactor`, `reactor`, `shaker` | the measured value and the setpoint as separate signals; `door_closed`/`lid_closed` as a signal and an interlock where there is one; `robot_access_ready` where a handling system loads it |
+| `centrifuge`, `freeze_dryer`, `evaporator`, `thermocycler` | `lid_closed` interlock on the run action; `robot_access_ready`; a run action that is `cancellable` |
+| `potentiostat`, `source_meter`, `lock_in_amplifier`, `oscilloscope`, `power_supply`, `daq` | output enable as a boolean setting; `estop` disables every output; `returns` on acquisitions names the data file |
+| `sensor`, `vacuum_gauge`, `biosensor`, `particle_analyzer`, `cell_counter` | measurements as signals with units; `out_of_spec` from the instrument's self-check where it has one |
+| `sampler`, `liquid_handler` | `robot_access_ready`; positions named as the vendor names them in `notes` |
 
 ---
 

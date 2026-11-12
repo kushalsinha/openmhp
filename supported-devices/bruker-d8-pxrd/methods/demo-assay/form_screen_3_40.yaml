@@ -1,0 +1,28 @@
+name: form_screen_3_40
+project: demo-assay
+action: queue_scan
+params:
+  sample_id: sample
+  position: null
+  program:
+    start_2theta: 3
+    end_2theta: 40
+    step: 0.02
+    time_per_step_s: 0.5
+    method_file: null
+compounds:
+- demo compound
+version: 1
+hash: 638cbde0f224
+created: 1794431792.601592
+updated: 1794431792.601592
+validated:
+  at: 1794431792.601592
+  hash: 638cbde0f224
+status: active
+author: package author
+notes: 'Example only: a 3-40 deg form screen at 0.02 deg and 0.5 s per step (about
+  16 min). sample_id and position are passed per run.'
+source:
+  kind: person
+  ref: shipped example

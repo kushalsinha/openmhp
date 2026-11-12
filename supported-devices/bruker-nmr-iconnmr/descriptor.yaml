@@ -1,0 +1,90 @@
+device:
+  notes: >
+    A Bruker Avance NMR spectrometer run by TopSpin with ICON-NMR automation and a sample changer.
+    The package queues one experiment per request by writing a job file into the folder the
+    ICON-NMR automation import reads (user, dataset name, holder, expno, solvent, experiment,
+    title and parameter overrides), then waits for the dataset to appear under the TopSpin data
+    directory and reads the acquisition parameters back. ICON-NMR moves the changer, locks,
+    shims, acquires and processes; the package never touches the spectrometer.
+
+physical:
+  automated_load: true
+  notes: >
+    Samples sit in numbered holders of the changer (SampleCase, SampleXpress or SampleJet; 1 to
+    `holders` in config.json). A handling robot can place a spinner-mounted tube in a free holder
+    while the changer is idle, but the changer's own state (which holder is in the magnet, whether
+    the gripper is moving) is not written to any file by ICON-NMR, so no robot_access_ready signal
+    is declared: coordinate loading with the person at the spectrometer, or load before the run.
+    Strong static magnetic field around the magnet; keep ferromagnetic tools and the robot's
+    metal parts outside the 5 gauss line.
+
+signals:
+  - {name: connected, type: boolean, notes: True when config.json names the import folder (writable), the data folder (exists) and the ICON-NMR user.}
+  - {name: queue_depth, type: integer, unit: 1, notes: Job files (*.txt) still waiting in the import folder, from this package or anyone else; ICON-NMR removes a file once it has read it.}
+  - {name: sample_changer_position, type: integer, unit: 1, nullable: true, notes: "Holder number of the experiment this package is currently waiting on, once ICON-NMR has read its job file; null when idle. It is the holder requested, not a readback from the changer, which reports nothing to a file."}
+  - {name: last_result, type: object, nullable: true, notes: Result of the most recent queue_experiment from here (same shape as its returns); null before the first.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True from writing the job file until the dataset is complete or the wait times out.}
+  - {name: calibration_status, type: string, source: record, notes: "From the lab's record (config.json self_state): the spectrometer's own calibration (probe tuning, temperature, pulse calibration) lives in TopSpin and is not read here."}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Experiments queued from here (the lab's recorded count, or the number of finished queue_experiment jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: queue_experiment
+    duration: long
+    approval: confirm
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    notes: >
+      Writes one ICON-NMR job file and waits for <data_dir>/<dataset>/<expno>/pdata/1/1r and acqus.
+      Confirm-gated because ICON-NMR starts hardware (changer, lock, shim, RF) as soon as it reads
+      the file. A saved method is the experiment (TopSpin parameter set name) with its solvent,
+      scans and relaxation delay per project; the caller passes the holder and title. Cancelling
+      before ICON-NMR has read the file removes it; after that the run continues in ICON-NMR.
+    params:
+      experiment: {type: string, notes: "TopSpin parameter set as ICON-NMR lists it for this user: PROTON, C13CPD, HSQC, COSY, HMBC, DEPT135, F19, P31CPD or a lab-defined one; config.json allowed_experiments may restrict it."}
+      holder: {type: integer, unit: 1, limits: {min: 1, max: 60}, notes: Changer holder the tube sits in; also bounded by `holders` in config.json (SampleCase 24, SampleXpress 60, SampleJet up to 480 in racks).}
+      solvent: {type: string, limits: {enum: [CDCl3, DMSO, D2O, MeOD, C6D6, Acetone, CD3CN, CD2Cl2, THF, Tol, Pyr, TFE]}, notes: TopSpin solvent name as in the edlock table; the lock and the referencing depend on it.}
+      title: {type: string, default: "", notes: Text written to pdata/1/title; empty uses the dataset name. No tabs or line breaks.}
+      ns: {type: integer, unit: 1, limits: {min: 1, max: 65536}, nullable: true, notes: Number of scans; null keeps the parameter set's NS (16 for PROTON, 1024 for C13CPD on a typical lab setup). Acquisition time scales with it.}
+      d1_s: {type: number, unit: s, limits: {min: 0.1, max: 300}, nullable: true, notes: Relaxation delay D1; null keeps the parameter set's. Quantitative work needs 5x T1.}
+      dataset: {type: string, nullable: true, notes: "TopSpin dataset (NAME) the experiment is filed under; null generates mhp_<date>_<job>. Letters, digits, underscore, hyphen and dot only."}
+      expno: {type: integer, unit: 1, limits: {min: 1, max: 999}, nullable: true, notes: Experiment number; null takes the next free one under the dataset.}
+    required: [experiment, holder, solvent]
+    returns:
+      type: object
+      required: [dataset, expno, holder, files, acqus, duration_s]
+      properties:
+        dataset: {type: string}
+        expno: {type: integer}
+        holder: {type: integer}
+        files: {type: array, items: {type: string}, notes: Files of the experiment folder, relative to the data directory (acqus, pdata/1/1r, pdata/1/title, ...).}
+        acqus:
+          type: object
+          required: [NS, SW, O1, TD]
+          properties:
+            NS: {type: integer, notes: Scans acquired.}
+            SW: {type: number, unit: "[ppm]", notes: Spectral width in ppm (##$SW=).}
+            O1: {type: number, unit: Hz, notes: Transmitter offset (##$O1=).}
+            TD: {type: integer, notes: Time-domain points.}
+        duration_s: {type: number, unit: s, notes: From writing the job file to the dataset being complete.}
+    examples:
+      - {experiment: PROTON, holder: 3, solvent: CDCl3, title: "batch12 crude, 1H", ns: 16, d1_s: 1.0}
+      - {experiment: C13CPD, holder: 3, solvent: DMSO, title: "batch12 crude, 13C", ns: 1024, d1_s: 2.0}
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 900
+  watchdog_action: release
+  notes: >
+    The spectrometer's own safety (RF power limits, probe temperature limits, changer interlocks)
+    is in TopSpin and ICON-NMR; a person stops a run with ICON-NMR's Stop or TopSpin `halt`/`stop`.
+    An e-stop here removes job files this package queued that ICON-NMR has not read yet and fails
+    the waiting job; an experiment already started keeps running in ICON-NMR. A controller silent
+    for 15 minutes loses its lease and the experiment continues: interrupting an acquisition is
+    worse than finishing it, and the lease window must outlast ICON-NMR's lock/shim cycle.

@@ -275,7 +275,16 @@ OpenMHP directly: a driver, a simulated twin, operating instructions and a setup
 one to a lab with `mhp lab add github:kushalsinha/openmhp/supported-devices/<name>` (append
 `--sim` for the twin), then set the limits to your own rig. The
 [list](supported-devices/README.md) says, per device, whether the driver has been run on real
-hardware or only against its twin.
+hardware or only against its twin, and carries a self-assessed score against the twelve
+device-level criteria of Gottstein et al.'s autonomous-ready procurement profile (`mhp rubric
+<folder>` shows the evidence). Packages are grouped by category: pharma small molecule, pharma
+biologics, chemistry, biology, physics, engineering. Three declarative drivers cover most bench
+instruments with no package code at all: `serial_ascii` (text commands over USB or RS-232),
+`scpi_visa` (SCPI over VISA, a raw socket or serial) and `modbus` (TCP or RTU registers); the
+command map lives in `descriptor.yaml`. Every instrument that is not operator-run also answers
+the reserved self-state signals (`calibration_status`, `qualification_status`, `usage_count`,
+SPEC §4.6) and the runtime ones (`state`, `busy`, `connected`), so an agent asks every device
+the same question about fitness for use.
 
 A package carries the instrument's capabilities; the limits, interlocks and procedures are your
 lab's. Keep your edited copies, your recipes and your SOPs in your lab's repository, review limit
@@ -454,6 +463,9 @@ questions, roadmap work, interoperability gaps, bugs, and design proposals belon
 | `openmhp/runs.py` | Plans, background runs, logs, and run artifacts |
 | `openmhp/methods.py` | Versioned instrument methods and project history |
 | `openmhp/adapters/` | OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT, and callable bindings |
+| `openmhp/drivers/` | Declarative drivers with no package code: `serial_ascii`, `scpi_visa`, `modbus`, and `manual` for operator-run instruments |
+| `openmhp/rubric.py` | `mhp rubric`: scores a package against the device-level autonomous-ready procurement criteria |
+| `scripts/build_registry.py` | Refreshes `openmhp/registry.json` and the supported-devices table (classes, twins, rubric scores) |
 | `openmhp/devices/` | Bundled reference devices and simulated twins |
 | `openmhp/recipes/` | Reusable multi-step procedures |
 | `supported-devices/` | Ready-made device packages for specific instruments, each with a simulated twin |

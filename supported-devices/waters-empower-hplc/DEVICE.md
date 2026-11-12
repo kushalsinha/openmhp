@@ -1,7 +1,7 @@
 ---
 mhp: "2026-09-12"
 id: empower-hplc-01
-class: hplc
+class: chromatograph
 make: Waters
 model: HPLC/UPLC system under Empower 3
 location: ""
@@ -42,6 +42,8 @@ running sample set and read results back; the signal says which route is live an
 
 - `system_status` reporting an error or "Not ready" (pump pressure, lamp, sample manager) needs a
   person at Empower.
+- `robot_access_ready` is true while no sample set from here is running, so a handling system may
+  load or unload autosampler trays then; it does not see runs started from Empower itself.
 - Injection volumes must suit the loop and the sample manager; the limits here are generic.
 - Results (peak areas, amounts) are produced by Empower processing with run mode RunAndProcess
   or RunAndReport. The Toolkit route fetches them into the job result (`results_from: "toolkit"`);

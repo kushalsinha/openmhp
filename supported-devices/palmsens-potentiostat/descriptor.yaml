@@ -1,0 +1,154 @@
+device:
+  notes: >
+    Single-channel MethodSCRIPT potentiostat (EmStat Pico, EmStat4 LR/HR, Sensit) on a USB virtual COM port.
+    Each technique is sent as a complete script; the instrument streams (time, potential, current) packages
+    back and turns the cell off when the script ends or is aborted. Potentials are WE vs RE, currents are WE
+    current in amperes, sign as the instrument reports it (anodic positive).
+
+physical:
+  automated_load: false
+  notes: >
+    Three-electrode cell on the lab's leads; nothing here is loaded by a handling system. Compliance voltage is
+    the instrument's (a few volts); the chemistry in the cell, not the potentiostat, is the hazard. The cell is
+    off whenever no technique is running.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the port opens and the instrument answers 't' with its firmware string.}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while a technique job started here is active.}
+  - {name: firmware, type: string, notes: "The instrument's answer to 't' (e.g. 'espico1.3.0 ...'), which also names the device type."}
+  - {name: device_type, type: string, notes: "EmStat Pico, EmStat4 LR, EmStat4 HR, Sensit Wearable, Nexus or 'unknown device', from the firmware prefix."}
+  - {name: running, type: boolean, notes: True while a script sent from here is streaming data.}
+  - {name: cell_on, type: boolean, notes: True while a technique from here holds the cell on (ca, cv, lsv); false at rest and during ocp. Tracked by the driver, not read back from the instrument.}
+  - {name: current_range_max_A, type: number, unit: A, notes: The upper autoranging current limit the next script will use (the setting's value).}
+  - {name: last_result, type: object, notes: Summary of the most recent technique (same keys as its returns, without the script).}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); the instrument does not report its calibration."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next calibration (dummy-cell check) is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Techniques (ca, cv, lsv, ocp jobs) completed here, unless the lab's record carries its own count.}
+
+settings:
+  - name: current_range_max_A
+    type: number
+    unit: A
+    limits: {min: 1.0e-9, max: 0.1}
+    approval: auto
+    notes: >
+      Upper bound of current autoranging ('set_range ba' and 'set_autoranging ba 1n <this>') in the next script.
+      PLACEHOLDER limits: EmStat Pico ranges reach a few mA, EmStat4 LR 30 mA, EmStat4 HR 100 mA (vendor sheets,
+      not re-read); the lab sets the maximum its cell may ever pass. Applied by the next technique, not sent now.
+
+actions:
+  - name: ca
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      e_V: {type: number, unit: V, limits: {min: -1.2, max: 1.2}, notes: Applied potential vs RE. PLACEHOLDER bound of +/-1.2 V; the instrument allows more (EmStat Pico about -1.7 to +2 V, EmStat4 up to +/-6 V) and the lab sets what its cell tolerates.}
+      interval_s: {type: number, unit: s, limits: {min: 0.01, max: 10}, default: 0.1, notes: Time between samples.}
+      duration_s: {type: number, unit: s, limits: {min: 0.1, max: 3600}, notes: Total time at e_V; also bounded by max_run_s in config.json.}
+    required: [e_V, duration_s]
+    returns:
+      type: object
+      required: [technique, points, csv, duration_s, script, firmware]
+      properties:
+        technique: {type: string, notes: The action name.}
+        points: {type: integer, notes: Data packages received.}
+        csv: {type: string, notes: "Path of the trace (t_s, e_V, i_A)."}
+        duration_s: {type: number, unit: s, notes: Timer value of the last package.}
+        e_final_V: {type: number, unit: V, nullable: true, notes: Potential of the last package; null if none arrived.}
+        i_final_A: {type: number, unit: A, nullable: true, notes: Current of the last package; null if none arrived.}
+        script: {type: array, items: {type: string}, notes: The MethodSCRIPT lines that were sent, for the record.}
+        firmware: {type: string}
+    notes: Chronoamperometry at one potential. The script turns the cell on at e_V and off when it ends.
+    examples:
+      - {e_V: 0.5, interval_s: 0.1, duration_s: 10}
+  - name: cv
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      e_begin_V: {type: number, unit: V, limits: {min: -1.2, max: 1.2}, notes: Start potential, between the vertices. PLACEHOLDER bound as for ca.}
+      e_vertex1_V: {type: number, unit: V, limits: {min: -1.2, max: 1.2}, notes: First vertex.}
+      e_vertex2_V: {type: number, unit: V, limits: {min: -1.2, max: 1.2}, notes: Second vertex.}
+      e_step_V: {type: number, unit: V, limits: {min: 0.001, max: 0.1}, default: 0.01, notes: Potential step; one package per step.}
+      scan_rate_mV_s: {type: number, unit: mV/s, limits: {min: 1, max: 1000}, default: 100, notes: PLACEHOLDER upper bound; EmStat Pico scans faster in high-speed mode, the lab sets what its cell needs.}
+      n_scans: {type: integer, limits: {min: 1, max: 20}, default: 1, notes: Repeats of begin -> vertex1 -> vertex2 -> begin.}
+    required: [e_begin_V, e_vertex1_V, e_vertex2_V]
+    returns:
+      type: object
+      required: [technique, points, csv, duration_s, script, firmware]
+      properties:
+        technique: {type: string}
+        points: {type: integer}
+        csv: {type: string, notes: "Path of the trace (t_s, e_V, i_A); scans follow one another in time order."}
+        duration_s: {type: number, unit: s}
+        e_final_V: {type: number, unit: V, nullable: true}
+        i_final_A: {type: number, unit: A, nullable: true}
+        script: {type: array, items: {type: string}}
+        firmware: {type: string}
+    notes: Cyclic voltammetry, 'meas_loop_cv ... nscans(n)'. Expected run time is the sweep length over the scan rate times n_scans.
+    examples:
+      - {e_begin_V: 0.0, e_vertex1_V: 0.6, e_vertex2_V: -0.2, e_step_V: 0.01, scan_rate_mV_s: 100, n_scans: 2}
+  - name: lsv
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      e_begin_V: {type: number, unit: V, limits: {min: -1.2, max: 1.2}, notes: Start potential. PLACEHOLDER bound as for ca.}
+      e_end_V: {type: number, unit: V, limits: {min: -1.2, max: 1.2}, notes: End potential.}
+      e_step_V: {type: number, unit: V, limits: {min: 0.001, max: 0.1}, default: 0.01, notes: Potential step.}
+      scan_rate_mV_s: {type: number, unit: mV/s, limits: {min: 1, max: 1000}, default: 100, notes: PLACEHOLDER upper bound.}
+    required: [e_begin_V, e_end_V]
+    returns:
+      type: object
+      required: [technique, points, csv, duration_s, script, firmware]
+      properties:
+        technique: {type: string}
+        points: {type: integer}
+        csv: {type: string}
+        duration_s: {type: number, unit: s}
+        e_final_V: {type: number, unit: V, nullable: true}
+        i_final_A: {type: number, unit: A, nullable: true}
+        script: {type: array, items: {type: string}}
+        firmware: {type: string}
+    notes: Linear sweep from e_begin_V to e_end_V.
+    examples:
+      - {e_begin_V: -0.5, e_end_V: 0.5, e_step_V: 0.01, scan_rate_mV_s: 100}
+  - name: ocp
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      interval_s: {type: number, unit: s, limits: {min: 0.01, max: 10}, default: 0.1, notes: Time between samples.}
+      duration_s: {type: number, unit: s, limits: {min: 0.1, max: 3600}, notes: How long to record.}
+    required: [duration_s]
+    returns:
+      type: object
+      required: [technique, points, csv, duration_s, script, firmware]
+      properties:
+        technique: {type: string}
+        points: {type: integer}
+        csv: {type: string, notes: i_A is empty for an OCP trace.}
+        duration_s: {type: number, unit: s}
+        e_final_V: {type: number, unit: V, nullable: true, notes: The open-circuit potential at the end.}
+        i_final_A: {type: number, unit: A, nullable: true, notes: Always null for ocp (no current is measured).}
+        script: {type: array, items: {type: string}}
+        firmware: {type: string}
+    notes: Open-circuit potential with the cell off. Use it to check the cell before a technique that applies current.
+    examples:
+      - {interval_s: 0.5, duration_s: 10}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 30
+  notes: >
+    E-stop sends 'Z' (abort the running script) and then a one-line script 'cell_off', so no potential is applied
+    afterwards; a script that ends on its own also runs 'on_finished: cell_off'. A controller silent for 30 s while
+    holding the lease gets the same stop: a cell left polarised is worse than an interrupted scan. The instrument
+    has no physical stop button; unplugging USB resets it with the cell off.

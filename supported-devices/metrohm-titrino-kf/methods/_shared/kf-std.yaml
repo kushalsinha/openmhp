@@ -1,0 +1,28 @@
+name: kf-std
+project: _shared
+action: determine
+params:
+  method: KF-STD
+  sample_mass_g: 0.5
+  sample_id: null
+  result_unit: ppm
+  wait_for_conditioning: true
+  timeout_min: 30
+compounds:
+- solvent
+- water-standard
+version: 1
+hash: 455c9f2774a1
+created: 1794433349.943574
+updated: 1794433349.943574
+validated:
+  at: 1794433349.943574
+  hash: 455c9f2774a1
+status: active
+notes: 'Volumetric KF of a liquid sample with the KF-STD method stored in the Titrino:
+  about 0.5 g injected by syringe, result R1 in ppm. Override sample_mass_g with the
+  weighed mass.'
+source:
+  kind: person
+  ref: example record written for the package; the method name must exist in the Titrino
+author: package author

@@ -4,14 +4,21 @@ device:
     system through the Empower Web API or the Empower Toolkit. Empower keeps methods, audit trail and results.
 
 physical:
-  notes: Solvent delivery up to the system's pressure limit (set in the instrument method). Flammable and toxic mobile phases.
+  automated_load: true
+  notes: The sample manager's autosampler trays (vial positions such as '1:A,1') can be loaded by a handling system between sample sets. Solvent delivery up to the system's pressure limit (set in the instrument method). Flammable and toxic mobile phases.
 
 signals:
   - {name: connected, type: boolean, notes: True when Empower accepts this package's login through the configured backend.}
   - {name: backend, type: object, notes: "Which route to Empower is in use and why: {name: web_api | toolkit, can_abort, connected, reason}. With backend auto the package picks the Toolkit when this PC has it, else the Web API."}
   - {name: system_status, type: object, notes: "Empower's status entries for the configured node and system (name: value)."}
+  - {name: state, type: string, source: runtime}
   - {name: busy, type: boolean, notes: True while a sample set started here is running.}
-  - {name: last_result, type: object}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: "True exactly when no sample set from here is running (not busy): a handling system may then load or unload vials in the autosampler trays. The sample manager's own door and tray sensors are not read through the Web API, so a sample set started from Empower itself is not seen; check system_status too."}
+  - {name: last_result, type: object, notes: Result of the most recent run_samples from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); Empower's system suitability results are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Sample sets run from here (the lab's recorded count, or the number of finished run_samples jobs when none is recorded); Empower's own injection counter is not read.}
 
 settings: []
 
@@ -55,6 +62,22 @@ actions:
       the job aborts the sample set in Empower on the toolkit backend; on the web_api backend the
       sample set cannot be stopped from here, so the cancel fails the job and says so. The result
       carries result rows from the backend (toolkit) or from export_dir (web_api), and names the source.
+    returns:
+      type: object
+      required: [sample_set_method, sample_set_name, run_mode, plates, injections, samples, final_status, elapsed_s, backend, results_from, result_rows]
+      properties:
+        sample_set_method: {type: string, notes: Name of the sample set method written to Empower (mhp_<date>_<job>).}
+        sample_set_name: {type: string, notes: The sample set as named in Empower.}
+        run_mode: {type: string}
+        plates: {type: object, notes: "{plate position: plate type} actually used."}
+        injections: {type: integer, notes: Sample set lines run (one per injection).}
+        samples: {type: integer, notes: Entries in the samples parameter.}
+        final_status: {type: object, notes: "Empower's status entries for the node and system when the run finished (name: value)."}
+        elapsed_s: {type: number, unit: s}
+        backend: {type: string, enum: [web_api, toolkit], notes: Which Empower route ran the sample set.}
+        results_from: {type: string, enum: [toolkit, export_dir], nullable: true, notes: Where result_rows came from; null when neither the toolkit nor an export folder gave any.}
+        result_rows: {type: array, items: {type: object}, notes: Result rows as the backend or the export method names the columns (plus file for exported rows); empty when none.}
+        exported_rows: {type: array, items: {type: object}, notes: Kept for older clients; equals result_rows when results_from is export_dir, else empty.}
     examples:
       - samples: [{name: "std_1", vial: "1:A,1", injection_volume_ul: 5, method: "Assay_C18"},
                   {name: "batch12_t30", vial: "1:A,2", injection_volume_ul: 5, method: "Assay_C18", injections: 2}]

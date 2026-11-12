@@ -1,0 +1,234 @@
+device:
+  notes: >
+    Keithley 2400-series SourceMeter on a bench, wired by a person to a device under test. One
+    channel: it sources voltage and measures current, or sources current and measures voltage,
+    with a compliance limit on the measured quantity. The shipped limits are a placeholder far
+    below the instrument's range; the lab sets them to what its DUT survives.
+
+physical:
+  automated_load: false
+  notes: >
+    Bench instrument, 2U half-rack, about 4 kg. The DUT is wired to the front or rear banana
+    terminals by hand; there is nothing a handling system can load. Up to 200 V (1100 V on the
+    2410) can appear at the terminals: a person checks the wiring before the output is enabled.
+
+signals:
+  - name: voltage
+    type: number
+    unit: V
+    notes: >
+      Voltage of the most recent reading, the first field of the :FETC? reply
+      (voltage,current,resistance,time,status). :FETC? returns the reading the last `measure`
+      (:READ?) took; it triggers nothing and never changes the output state. Invoke `measure`
+      first, else this is stale (or, on a freshly powered instrument, an error).
+  - name: current
+    type: number
+    unit: A
+    notes: >
+      Current of the most recent reading, the second field of the :FETC? reply. Equal to the
+      compliance current means the source was clamped at compliance. Stale until `measure` runs.
+  - name: output_on
+    type: boolean
+    notes: True when the source output is enabled (:OUTP? answers 1). Interlock of `measure`.
+  - name: source_function_actual
+    type: string
+    notes: What the source is set to, VOLT or CURR, as the instrument reports it (:SOUR:FUNC?).
+  - name: voltage_setpoint_actual
+    type: number
+    unit: V
+    notes: The programmed source voltage (:SOUR:VOLT?), whether or not the output is on.
+  - name: current_setpoint_actual
+    type: number
+    unit: A
+    notes: The programmed source current (:SOUR:CURR?).
+  - name: compliance_current_actual
+    type: number
+    unit: A
+    notes: The current compliance in force when sourcing voltage (:SENS:CURR:PROT?).
+  - name: compliance_voltage_actual
+    type: number
+    unit: V
+    notes: The voltage compliance in force when sourcing current (:SENS:VOLT:PROT?).
+  - name: last_error
+    type: string
+    notes: >
+      Oldest entry of the instrument's error queue (:SYST:ERR?), '0,"No error"' when empty. A
+      write the instrument refused (out of range for the selected range, wrong state) lands
+      here, because SCPI writes get no reply.
+  - name: state
+    type: string
+    source: runtime
+    notes: "The driver's state machine: idle, busy, fault, estop; answered by the base."
+  - name: busy
+    type: boolean
+    source: runtime
+    notes: True while a job started here is running; answered by the base.
+  - name: connected
+    type: boolean
+    source: runtime
+    notes: True while the VISA session, socket or serial port is open; interlock of every action.
+  - name: calibration_status
+    type: string
+    source: record
+    notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record; the 2400's own calibration dates are not read.
+  - name: calibration_due
+    type: string
+    nullable: true
+    source: record
+    notes: ISO-8601 date the next calibration is due, from the lab's record; null when none is recorded.
+  - name: qualification_status
+    type: string
+    source: record
+    notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.
+  - name: usage_count
+    type: integer
+    source: record
+    notes: Source or measure jobs completed from here (the lab's recorded count, or the number of finished jobs when none is recorded).
+
+settings:
+  - name: source_function
+    type: string
+    limits: {enum: [VOLT, CURR]}
+    approval: auto
+    notes: Source voltage (VOLT) or current (CURR). The setpoint of the other function is kept but not applied.
+  - name: voltage_setpoint
+    type: number
+    unit: V
+    limits: {min: -20, max: 20}
+    resolution: 0.001
+    approval: auto
+    notes: >
+      Source voltage when source_function is VOLT. Placeholder bounds: the 2400 sources up to
+      ±210 V (±1100 V on the 2410); the lab sets min and max to what the DUT survives. Applied
+      immediately when the output is on.
+  - name: current_setpoint
+    type: number
+    unit: A
+    limits: {min: -0.1, max: 0.1}
+    approval: auto
+    notes: >
+      Source current when source_function is CURR. Placeholder bounds (the instrument reaches
+      ±1.05 A); the lab lowers them to the DUT's rating.
+  - name: compliance_current
+    type: number
+    unit: A
+    limits: {min: 0.000001, max: 0.105}
+    approval: auto
+    notes: >
+      Current limit while sourcing voltage (:SENS:CURR:PROT). This is what protects the DUT; set
+      it before enabling the output. Placeholder max 105 mA (instrument: 1.05 A).
+  - name: compliance_voltage
+    type: number
+    unit: V
+    limits: {min: 0.2, max: 21}
+    approval: auto
+    notes: >
+      Voltage limit while sourcing current (:SENS:VOLT:PROT). Placeholder max 21 V (instrument:
+      210 V, 1100 V on the 2410).
+  - name: output_on
+    type: boolean
+    approval: auto
+    notes: >
+      Enables (true) or disables (false) the source output. The first enable of a session
+      deserves a person at the bench; approval stays automatic because the compliance and
+      setpoint limits above protect the DUT, and because a sweep writes it many times. A lab
+      that wants a person on every enable sets approval: confirm here.
+  - name: beeper_on
+    type: boolean
+    approval: auto
+    notes: Front-panel beeper (:SYST:BEEP:STAT). Off is quieter; on tells a person in the room that something was set.
+
+actions:
+  - name: reset
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: "*RST then *CLS: power-on defaults, output off, source VOLT 0 V, compliance 105 uA, error queue cleared."
+  - name: source_voltage
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      voltage: {type: number, unit: V, limits: {min: -20, max: 20}, resolution: 0.001, notes: Source voltage to program; same placeholder bounds as voltage_setpoint.}
+      compliance_current: {type: number, unit: A, limits: {min: 0.000001, max: 0.105}, default: 0.01, notes: Current limit that protects the DUT; default 10 mA.}
+    required: [voltage]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples:
+      - {voltage: 1.0, compliance_current: 0.01}
+      - {voltage: -0.5}
+    notes: >
+      Selects the voltage source function in fixed mode, programs the voltage and the current
+      compliance, in that order. Does not enable the output: write output_on afterwards. The
+      replies are empty strings, since SCPI writes do not answer.
+  - name: source_current
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      current: {type: number, unit: A, limits: {min: -0.1, max: 0.1}, notes: Source current to program; same placeholder bounds as current_setpoint.}
+      compliance_voltage: {type: number, unit: V, limits: {min: 0.2, max: 21}, default: 10, notes: Voltage limit that protects the DUT; default 10 V.}
+    required: [current]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples:
+      - {current: 0.001, compliance_voltage: 10}
+    notes: Selects the current source function in fixed mode, programs the current and the voltage compliance. Does not enable the output.
+  - name: measure
+    duration: long
+    approval: auto
+    interlocks: [connected, output_on]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: >
+      One :READ? trigger. The single reply is the 2400's reading line
+      "voltage,current,resistance,time,status" (default :FORM:ELEM); 9.91E+37 marks a quantity
+      not measured. Afterwards `voltage` and `current` (:FETC?) answer this reading. Interlocked
+      on output_on because :READ? is refused by the instrument (error +803) with the output
+      off, and because a measurement with the output off is not a measurement of the DUT.
+      :MEAS:VOLT? / :MEAS:CURR? are deliberately not used: the manual's :MEAS? sequence includes
+      :CONFigure, which can turn the source on, and a read must never energise the DUT.
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 30
+  notes: >
+    E-stop sends :OUTP OFF then :ABOR: the output is disabled and any triggered measurement is
+    aborted. The DUT is then floating at the terminals. There is no hardware stop on the 2400;
+    the front-panel OUTPUT key and the power switch are the physical ones. After an e-stop,
+    safety/reset and a person checks the DUT before output_on goes true again.
+
+scpi:
+  resource: "GPIB0::24::INSTR"
+  eol: "\n"
+  timeout: 2
+  idn_match: KEITHLEY
+  read:
+    voltage: ":FETC?"
+    current: ":FETC?"
+    output_on: ":OUTP?"
+    source_function_actual: ":SOUR:FUNC?"
+    voltage_setpoint_actual: ":SOUR:VOLT?"
+    current_setpoint_actual: ":SOUR:CURR?"
+    compliance_current_actual: ":SENS:CURR:PROT?"
+    compliance_voltage_actual: ":SENS:VOLT:PROT?"
+    last_error: ":SYST:ERR?"
+  write:
+    source_function: ":SOUR:FUNC {value}"
+    voltage_setpoint: ":SOUR:VOLT {value}"
+    current_setpoint: ":SOUR:CURR {value}"
+    compliance_current: ":SENS:CURR:PROT {value}"
+    compliance_voltage: ":SENS:VOLT:PROT {value}"
+    output_on: ":OUTP {value}"
+    beeper_on: ":SYST:BEEP:STAT {value}"
+  actions:
+    reset: ["*RST", "*CLS"]
+    source_voltage: [":SOUR:FUNC VOLT", ":SOUR:VOLT:MODE FIX", ":SOUR:VOLT {voltage}", ":SENS:CURR:PROT {compliance_current}"]
+    source_current: [":SOUR:FUNC CURR", ":SOUR:CURR:MODE FIX", ":SOUR:CURR {current}", ":SENS:VOLT:PROT {compliance_voltage}"]
+    measure: [":READ?"]
+  estop: [":OUTP OFF", ":ABOR"]
+  parse:
+    voltage: {field: 1}
+    current: {field: 2}
+  booleans:
+    output_on: {true: ["1", "ON"], false: ["0", "OFF"]}

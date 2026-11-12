@@ -1,0 +1,99 @@
+device:
+  notes: >
+    Hamilton Microlab STAR / STARlet (and Vantage with the STAR backend) driven through PyLabRobot over USB.
+    PyLabRobot owns the deck model: every carrier, rack, plate and well is a named resource in the deck layout
+    file, and this package names them as strings ("tips_1000/A1", "src_plate/A1", "site_1"). Hamilton's VENUS
+    software must be closed; the two cannot share the instrument.
+
+physical:
+  automated_load: true
+  notes: Enclosed deck behind a front cover with a position sensor (STAR cover monitoring). A handling robot may
+    place or remove labware on the deck only when the cover is open and no action runs, which is what
+    robot_access_ready reports; keep hands and robots out while the channels or the iSWAP move.
+
+signals:
+  - {name: connected, type: boolean, notes: True once PyLabRobot has set the STAR up (USB open, instrument initialised). False with connect_error saying why.}
+  - {name: connect_error, type: string, nullable: true, notes: Why connected is false (library missing, USB not found, initialisation failed); null when connected.}
+  - {name: setup_finished, type: boolean, notes: PyLabRobot's own flag; the same as connected on this package.}
+  - {name: cover_open, type: boolean, nullable: true, notes: The front cover sensor (STARBackend.request_cover_open). Null when the instrument has no cover monitoring or is not connected.}
+  - {name: cover_closed, type: boolean, notes: True when the front cover reads closed. Every action needs it, as the STAR firmware itself refuses to move with the cover open when cover monitoring is installed.}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: True exactly when the cover reads open, the STAR is connected and no action from here is running; a handling robot reads this before touching the deck. A cover without monitoring installed never reads true.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a pipetting or plate-move action runs from here.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); Hamilton's channel volume verification lives in VENUS and is not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next volume verification due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Actions completed from here (the lab's recorded count, or finished jobs when none is recorded).}
+
+settings:
+  - {name: volume_cap, type: number, unit: uL, limits: {min: 0.5, max: 1000}, approval: auto,
+     notes: "Largest volume any aspirate or dispense may ask for: set it to the tip or pipette mounted (1000 uL tips 1000, 300 uL tips 300, 50 uL tips 50). Starts from config.json volume_cap; the descriptor range is the instrument's widest. Refused while a job runs."}
+
+actions:
+  - name: pick_up_tips
+    duration: long
+    approval: auto
+    interlocks: [connected, cover_closed]
+    params:
+      tip_spots: {type: array, items: {type: string}, notes: "Tip spots as 'rack/A1', one per channel used, in channel order. 1000 uL CO-RE tips for 50-1000 uL, 300 uL tips for 5-300, 50 uL tips below."}
+    required: [tip_spots]
+    notes: Picks up one tip per spot. Refuses if tips are already mounted (PyLabRobot tracks the head).
+    returns: {type: object, nullable: true, notes: PyLabRobot returns nothing; null.}
+    examples:
+      - {tip_spots: ["tips_1000/A1", "tips_1000/B1"]}
+  - name: drop_tips
+    duration: long
+    approval: auto
+    interlocks: [connected, cover_closed]
+    params:
+      tip_spots: {type: array, items: {type: string}, notes: "'trash' to discard, or the rack spots to return them to."}
+    required: [tip_spots]
+    notes: Drops the mounted tips.
+    returns: {type: object, nullable: true}
+    examples:
+      - {tip_spots: ["trash", "trash"]}
+  - name: aspirate
+    duration: long
+    approval: auto
+    interlocks: [connected, cover_closed]
+    params:
+      resources: {type: array, items: {type: string}, notes: "Wells as 'plate/A1', one per channel."}
+      vols: {type: array, items: {type: number, unit: uL, limits: {min: 0.5, max: 1000}}, notes: Per channel. 0.5-1000 uL is the 1000 uL channel's range; the tip on the channel caps it (300 uL tips 300, 50 uL tips 50) and the lab lowers max here for smaller channels.}
+      flow_rate: {type: number, unit: uL/s, limits: {min: 1, max: 500}, nullable: true, default: null, notes: Applied to every channel; null uses the liquid class / pipette default.}
+    required: [resources, vols]
+    notes: Aspirates with the mounted tips. Liquid classes (speeds, air gaps) are PyLabRobot's defaults unless flow_rate is given.
+    returns: {type: object, nullable: true}
+    examples:
+      - {resources: ["src_plate/A1", "src_plate/B1"], vols: [100, 100]}
+  - name: dispense
+    duration: long
+    approval: auto
+    interlocks: [connected, cover_closed]
+    params:
+      resources: {type: array, items: {type: string}}
+      vols: {type: array, items: {type: number, unit: uL, limits: {min: 0.5, max: 1000}}}
+      flow_rate: {type: number, unit: uL/s, limits: {min: 1, max: 500}, nullable: true, default: null, notes: Applied to every channel; null uses the liquid class / pipette default.}
+    required: [resources, vols]
+    notes: Dispenses from the mounted tips.
+    returns: {type: object, nullable: true}
+    examples:
+      - {resources: ["dst_plate/A1", "dst_plate/B1"], vols: [100, 100]}
+  - name: move_plate
+    duration: long
+    approval: auto
+    interlocks: [connected, cover_closed]
+    params:
+      plate: {type: string, notes: Plate resource name.}
+      to: {type: string, notes: Destination site resource name (a carrier site in the deck layout).}
+    required: [plate, to]
+    notes: Moves a plate with the iSWAP (or CO-RE gripper when configured in PyLabRobot). Keep the path clear.
+    returns: {type: object, nullable: true}
+    examples:
+      - {plate: "src_plate", to: "site_2"}
+
+safety:
+  estop: true
+  interlocks: [connected, cover_closed, robot_access_ready]
+  watchdog_s: 30
+  hardware_stop: The STOP button on the front of the instrument halts all axes; after it a person re-initialises the STAR (setup again).
+  notes: E-stop calls PyLabRobot stop(), which ends the session with the instrument; the firmware then holds the axes. Actions cannot be cancelled mid-move (PyLabRobot limitation); stop them with safety/estop. A controller silent for 30 s stops the robot.

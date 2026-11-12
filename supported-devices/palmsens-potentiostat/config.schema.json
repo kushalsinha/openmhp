@@ -1,0 +1,23 @@
+{
+  "port": {
+    "ask": "Serial port of the potentiostat (the USB virtual COM port)",
+    "kind": "com_port",
+    "example": "COM5",
+    "help": "Windows Device Manager lists it as 'EmStat4', 'ESPicoDev' or 'USB Serial Port'; on Linux it is /dev/ttyACM0 or /dev/ttyUSB0. PSTrace must be closed."
+  },
+  "data_dir": {
+    "ask": "Folder where technique traces are saved as CSV",
+    "kind": "path",
+    "example": "C:/lab/data/echem"
+  },
+  "baud": {
+    "ask": "Baud rate (230400 for EmStat Pico and Sensit, 921600 for EmStat4 and Nexus)",
+    "kind": "int",
+    "advanced": true
+  },
+  "max_run_s": {
+    "ask": "Longest technique the agent may start, seconds",
+    "kind": "int",
+    "advanced": true
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "port": {
+    "ask": "Serial port the RGA electronics control unit is cabled to",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "A straight DB-9 cable (the ECU is wired as DCE) to a PC serial port or USB-to-RS-232 adapter: /dev/ttyUSB0 or /dev/tty.usbserial-* or COM3. The baud rate is fixed at 28800 and is not asked."
+  }
+}

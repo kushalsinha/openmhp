@@ -1,12 +1,23 @@
 physical:
   mass_kg: 4.0
   footprint_mm: [220, 330, 105]
+  automated_load: false
   notes: Ceramic plate up to 500 degC. Keep solvents capped. Do not move while hot.
 
 signals:
   - {name: plate_temperature, type: number, unit: Cel, notes: Plate probe (PV of channel 1).}
   - {name: temperature_setpoint_actual, type: number, unit: Cel, notes: Setpoint the instrument holds (SP of channel 1).}
   - {name: stir_rpm_actual, type: number, unit: "{rev}/min", notes: Measured stirring speed (PV of channel 4).}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while any job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record.}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next plate-probe calibration is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record,
+     notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: heating or stirring commands completed here}
 
 settings:
   - {name: target_temperature, type: number, unit: Cel, limits: {min: 20, max: 300}, approval: auto,

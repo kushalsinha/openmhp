@@ -1,0 +1,10 @@
+{
+  "import_dir": "C:\\Bruker\\TopSpin4.1\\conf\\instr\\spect\\iconnmr\\import",
+  "data_dir": "C:\\Bruker\\TopSpin4.1\\data\\openmhp\\nmr",
+  "user": "openmhp",
+  "holders": 60,
+  "allowed_experiments": [],
+  "lock_shim_s": 180,
+  "poll_s": 10,
+  "result_wait_s": 7200
+}

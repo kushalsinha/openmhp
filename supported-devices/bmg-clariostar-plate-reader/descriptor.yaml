@@ -1,0 +1,76 @@
+device:
+  notes: >
+    Microplate reader (absorbance, fluorescence, luminescence; most models incubate to 45 Cel) run through its
+    vendor software's automation interface: BMG Reader Control's ActiveX (CLARIOstar, PHERAstar, Omega),
+    SoftMax Pro's Automation API (SpectraMax) or the Spark's SiLA 2 server (Tecan). Read protocols are written
+    and validated in the vendor software; this package moves the plate carrier, runs a named protocol on a
+    plate and returns the exported well table.
+
+physical:
+  automated_load: true
+  notes: The plate carrier (tray) slides out of the front of the reader; a handling robot places or removes the
+    plate on it when it is out and no read runs, which is what robot_access_ready reports. Keep fingers clear
+    while the tray moves. Reads need the tray in; a plate without a lid unless the protocol says otherwise.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the vendor software's automation interface answers (Reader Control ActiveX, SoftMax Pro automation server, or the Spark SiLA 2 server).}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a read started here runs; status says what the reader itself is doing.}
+  - {name: status, type: string, notes: "The vendor status word: BMG Ready/Busy/Error; SoftMax Pro IDLE/BUSY/INITIALIZING/STOPPING/ERROR/TIMEOUT/OFFLINE; Spark Ready/Running."}
+  - {name: plate_in, type: boolean, notes: True when the plate carrier (drawer) is inside the reader.}
+  - {name: temperature, type: number, unit: Cel, nullable: true, notes: Incubator temperature at the bottom plate (BMG Temp1, SoftMax GetTemperature); null on readers without incubation or on the Spark SiLA route.}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: True exactly when the tray is out and no read is running (here or on the instrument); a handling robot reads this before placing or taking a plate.}
+  - {name: last_result, type: object, notes: Result of the most recent read from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the reader's own filter and photometric checks are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next verification due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Plates read from here (the lab's recorded count, or finished read jobs when none is recorded).}
+
+settings:
+  - {name: temperature_setpoint, type: number, unit: Cel, limits: {min: 25, max: 45}, resolution: 0.1, nullable: true, approval: auto,
+     notes: "Incubator setpoint for incubating readers; null switches the incubator off. 25-45 Cel is the common range (BMG extended-range models reach 60; the lab sets its own). The drawer cannot open on a SpectraMax while the incubator is on. Not available on the Spark SiLA route."}
+
+actions:
+  - name: plate_in
+    duration: short
+    approval: auto
+    interlocks: [connected, robot_access_ready]
+    notes: Moves the plate carrier into the reader (BMG PlateIn, SoftMax CloseDrawer, Spark door close). Needs the tray out and nothing reading, so a robot's plate is never pinched.
+  - name: plate_out
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Moves the plate carrier out. Refused while a read runs (busy here, or the instrument's own status).
+  - name: read
+    duration: long
+    approval: auto
+    interlocks: [connected, plate_in]
+    methods: true
+    cancellable: true
+    params:
+      protocol: {type: string, notes: Name of the read protocol as the vendor software lists it (BMG test name in the Definit database, SoftMax .spr file name in protocol_dir, Spark method name). One per assay; saved methods pin it.}
+      plate_id: {type: string, notes: Plate barcode or name; passed to the reader as plate ID 1 (BMG) or the section title (SoftMax) and used in the export file name.}
+      export_path: {type: string, nullable: true, default: null, notes: File name for the ASCII export inside export_dir; null names it from the time, plate and protocol.}
+    required: [protocol, plate_id]
+    notes: >
+      Starts the named protocol on the plate in the reader, follows the vendor status until it is idle, exports
+      the plate table and parses it. Cancelling the job aborts the read. Kinetic protocols run as long as the
+      protocol says; max_read_minutes in config caps the wait.
+    returns:
+      type: object
+      required: [protocol, plate_id, file, wells, duration_s]
+      properties:
+        protocol: {type: string}
+        plate_id: {type: string}
+        file: {type: string, notes: Path of the exported plate table.}
+        wells: {type: object, notes: "{well: value} parsed from the export (A1..H12 for a 96-well plate; raw OD, RFU or RLU as the protocol's export writes them); empty when the export could not be parsed."}
+        duration_s: {type: number, unit: s}
+        warning: {type: string, nullable: true, notes: Present when no plate table could be parsed.}
+    examples:
+      - {protocol: "abs_600", plate_id: "PLT-000123", export_path: null}
+
+safety:
+  estop: true
+  interlocks: [connected, plate_in, robot_access_ready]
+  watchdog_s: 60
+  notes: E-stop aborts a running read (BMG Terminate, SoftMax StopRead, Spark cancel) and moves the tray in so nothing protrudes. The lamp and the incubator stay as the vendor software leaves them. A controller silent for 60 s stops the read.

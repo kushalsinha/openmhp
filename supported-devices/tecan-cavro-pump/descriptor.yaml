@@ -1,0 +1,117 @@
+device:
+  notes: >
+    Cavro OEM syringe pump (XLP 6000: 6000 increments per 60 mm stroke in standard mode, 48000 in fine
+    or microstep mode; XCalibur: 3000) with a plunger drive and a rotary valve, on RS-232/RS-485 at 9600
+    or 38400 baud 8N1 with the DT protocol. The pump accepts only Report (?, Q) and Terminate (T) commands
+    while a move is in progress. Volumes are converted to steps here from the configured syringe size.
+
+physical:
+  automated_load: false
+  notes: >
+    A module with a glass syringe screwed to the valve and a plunger lock-screw at the bottom; a person
+    fits the syringe. Nothing is loaded by a handling system. The plunger drive is strong enough to crack
+    the syringe against a blocked port (reported as plunger overload, error 9).
+
+signals:
+  - {name: plunger_position, type: number, unit: "1", notes: "Absolute plunger position in increments from the top of the stroke (report command ?). 0 is the top (empty syringe); steps_full_stroke is the bottom."}
+  - {name: status_reply, type: string, notes: "Raw answer to Q: /0, the status byte, ETX. Status byte bit 5 set (characters ` a-o) means ready, clear (@ A-O) means busy; the low four bits are the error code (0 none, 1 initialisation, 2 invalid command, 3 invalid operand, 6 EEPROM, 7 not initialised, 8 internal, 9 plunger overload, 10 valve overload, 11 move not allowed, 15 command overflow)."}
+  - {name: valve_position_reply, type: string, notes: "Raw answer to ?6 (report valve position); the data field's encoding is model-dependent and not verified here, so it is reported as the pump sends it."}
+  - {name: firmware, type: string, notes: "Raw answer to & (?23, report firmware version)."}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a move or initialisation job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, from calibration_due in the lab's config.json self_state record. The pump reports no calibration of its own; a gravimetric check of dispensed volumes is the lab's record.}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next volumetric check is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record, notes: "initialize, aspirate, dispense and move_to jobs completed here (from this device's job records unless the lab records its own count). The pump also counts its own plunger moves (?16)."}
+
+settings:
+  - name: speed_code
+    type: integer
+    unit: "1"
+    limits: {min: 0, max: 40}
+    approval: auto
+    notes: Plunger speed code (S n, 0 fastest to 40 slowest; manual default 11). Sent as /1S<n>R. Slow down for viscous liquids and small syringes.
+  - name: top_velocity
+    type: integer
+    unit: Hz
+    limits: {min: 5, max: 6000}
+    approval: auto
+    notes: Peak plunger speed in increments per second (V n, 5-6000; manual default 1400). Sent as /1V<n>R. Overrides the speed code's top speed.
+
+actions:
+  - {name: initialize, duration: long, approval: confirm, interlocks: [connected], cancellable: true,
+     returns: {type: object, properties: {replies: {type: array, items: {type: string}}}},
+     notes: "ZR: initialises the plunger (full travel to the top) and homes the valve clockwise, then waits until Q reports ready. A person confirms because the plunger moves through its whole stroke and expels whatever the syringe holds. Required after power-on and after a plunger or valve overload."}
+  - name: aspirate
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      volume_ul: {type: number, unit: uL, limits: {min: 0.1, max: 50000}, resolution: 0.1, notes: Volume to draw into the syringe (P<steps>R, relative pickup). Converted to steps from syringe_ul and steps_full_stroke; refused before sending if the result exceeds the full stroke.}
+    required: [volume_ul]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples: [{volume_ul: 250}]
+    notes: Relative pickup; the pump refuses (error 3 or 11) if the plunger would pass the bottom of the stroke from where it stands. Polls Q until ready. Set the valve to the input port first.
+  - name: dispense
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      volume_ul: {type: number, unit: uL, limits: {min: 0.1, max: 50000}, resolution: 0.1, notes: Volume to push out (D<steps>R, relative dispense).}
+    required: [volume_ul]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples: [{volume_ul: 250}]
+    notes: Relative dispense; refused by the pump if the plunger would pass the top. Polls Q until ready. Set the valve to the output port first.
+  - name: move_to
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      volume_ul: {type: number, unit: uL, limits: {min: 0, max: 50000}, resolution: 0.1, notes: Absolute plunger position as the volume held in the syringe (A<steps>R); 0 is the top (empty).}
+    required: [volume_ul]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples: [{volume_ul: 0}]
+    notes: Absolute move; the direction follows from where the plunger stands, so mind the valve position. Polls Q until ready.
+  - {name: valve_input, duration: short, approval: auto, interlocks: [connected], notes: "IR: valve to the input port. A valve move takes well under a second; the pump reports busy meanwhile."}
+  - {name: valve_output, duration: short, approval: auto, interlocks: [connected], notes: "OR: valve to the output port."}
+  - {name: terminate, duration: short, approval: auto, interlocks: [connected], notes: "T: stops a plunger move at once (sent without R). A valve move in progress is not stopped."}
+
+safety:
+  estop: true
+  interlocks: []
+  watchdog_s: 30
+  notes: >
+    E-stop sends T, which terminates the plunger move; the plunger stays where it stopped and the valve
+    finishes its own move. A controller silent for 30 s while holding the lease triggers the same stop. The
+    pump's own overload detection (errors 9 and 10) stops a blocked plunger or valve. No physical stop beyond
+    removing power; the address switch position F runs a self-test and must not be used while a syringe is fitted.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600
+  eol: "\r"
+  read:
+    plunger_position: "/1?"
+    status_reply: "/1Q"
+    valve_position_reply: "/1?6"
+    firmware: "/1&"
+  write:
+    speed_code: "/1S{value}R"
+    top_velocity: "/1V{value}R"
+  actions:
+    initialize: ["/1ZR"]
+    aspirate: ["/1P{steps}R"]
+    dispense: ["/1D{steps}R"]
+    move_to: ["/1A{steps}R"]
+    valve_input: ["/1IR"]
+    valve_output: ["/1OR"]
+    terminate: ["/1T"]
+  estop: ["/1T"]
+  parse:
+    plunger_position: {regex: "^/0[^0-9]?(\\d+)", group: 1}

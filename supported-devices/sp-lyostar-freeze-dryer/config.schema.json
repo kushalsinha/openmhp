@@ -1,0 +1,15 @@
+{
+  "host": {
+    "ask": "IP address or host name of the freeze dryer's control PLC (Modbus TCP)",
+    "kind": "text",
+    "example": "192.168.1.70",
+    "help": "The LyoStar's control system (LyoS / SCADA PC or the PLC behind it) has an Ethernet port; SP service or your SCADA engineer knows its address and whether Modbus TCP is enabled. Port 502 is assumed; put `port` in config.json if yours differs. For Modbus RTU use `serial_port` and `baud` instead of `host`."
+  },
+  "unit": {
+    "ask": "Modbus unit (slave) id",
+    "kind": "int",
+    "example": 1,
+    "advanced": true,
+    "help": "1 unless the PLC or gateway was configured otherwise."
+  }
+}

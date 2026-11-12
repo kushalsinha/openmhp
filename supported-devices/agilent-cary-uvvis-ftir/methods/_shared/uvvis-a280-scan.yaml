@@ -1,0 +1,28 @@
+name: uvvis-a280-scan
+project: _shared
+action: scan
+params:
+  sample_name: protein A280
+  mode: uvvis
+  start: 240
+  stop: 340
+  step: 1
+  baseline: true
+compounds:
+- igg
+- mab
+- protein
+version: 1
+hash: 8e5affcf9672
+created: 1794432301.7401412
+updated: 1794432301.7401412
+validated:
+  at: 1794432301.7401412
+  hash: 8e5affcf9672
+status: active
+notes: 'UV-Vis scan 240-340 nm at 1 nm with a water/buffer baseline: A280 and lambda-max
+  of a protein solution in a 1 cm cuvette. Override sample_name per sample.'
+source:
+  kind: manual
+  ref: Cary WinUV Scan application; example window chosen for A280
+author: client-8bc87d5623

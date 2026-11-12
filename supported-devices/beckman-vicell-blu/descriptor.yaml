@@ -1,0 +1,91 @@
+device:
+  notes: >
+    Automated cell viability analyser (trypan blue exclusion, imaging). Samples sit in a 24-position carousel,
+    a 96-well plate, or the automation sample cup that a liquid handler fills (200 +/- 20 uL). Beckman's OPC UA
+    automation interface takes an exclusive lock, starts a sample with a cell type and dilution, and hands back
+    counts, viability and diameter. Reagent pack uses and the waste level are the usual stoppers.
+
+physical:
+  automated_load: true
+  notes: The sample stage and carousel are reachable from the front; a liquid handler fills the automation cup
+    or a robot places a carousel while the instrument is idle and nothing from here runs, which is what
+    robot_access_ready reports. Trypan blue and cleaning agent in the reagent pack; waste tube must have capacity.
+
+signals:
+  - {name: connected, type: boolean, notes: True when the Vi-CELL BLU OPC UA server accepts the session (user, password, certificate).}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, source: runtime, notes: True while a count, prime or clean from here runs.}
+  - {name: status, type: string, notes: "The instrument's CurrentStatus: Unknown, Idle, Initializing, Cleaning, Running, Error, Warning, RequiresUserInteraction."}
+  - {name: reagent_remaining, type: integer, nullable: true, notes: Sample analyses left in the reagent pack (ReagentUsesRemaining); null if the server does not report it. Order a pack below 20.}
+  - {name: carousel_present, type: boolean, notes: True when a carousel is on the sample stage (unverified property; see references).}
+  - {name: robot_access_ready, type: boolean, source: instrument, notes: True exactly when the instrument reports Idle and nothing from here is running, so the sample cup and carousel may be loaded; a liquid handler reads this before dispensing into the cup.}
+  - {name: last_result, type: object, notes: Result of the most recent count from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the instrument's concentration-control bead checks are not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next control-bead check due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Samples counted from here (the lab's recorded count, or finished count jobs when none is recorded).}
+
+settings: []
+
+actions:
+  - name: count
+    duration: long
+    approval: auto
+    interlocks: [connected, robot_access_ready]
+    cancellable: true
+    params:
+      position: {type: string, notes: "'cup' for the automation sample cup, or a carousel slot '1'..'24'."}
+      cell_type: {type: string, notes: A cell type defined on the instrument (CellTypes property; CHO, HEK293, Hybridoma, ... as the lab named them).}
+      dilution: {type: integer, limits: {min: 1, max: 10}, default: 1, notes: Dilution factor the instrument applies to the concentrations; 1 for an undiluted sample.}
+      wash: {type: string, limits: {enum: [normal, fast]}, default: normal, notes: Wash cycle between samples; fast shortens the cycle at the cost of carry-over. Ignored for the cup.}
+      save_images: {type: boolean, default: false, notes: Keep the cell images on the instrument PC (SaveEveryNthImage 1); large files, only for troubleshooting.}
+    required: [position, cell_type]
+    limits: {dilution: {min: 1, max: 10}}
+    notes: >
+      Takes the automation lock, starts one sample with the cell type's analysis settings, waits for the
+      instrument to return to Idle (about 3 minutes), fetches the result by sample name and releases the lock.
+      Cancelling sends Stop.
+    returns:
+      type: object
+      required: [position, cell_type, viability_pct, avg_diameter_um, duration_s]
+      properties:
+        position: {type: string}
+        cell_type: {type: string}
+        viability_pct: {type: number, unit: "%"}
+        viable_cells_per_ml: {type: number, unit: "/mL", nullable: true, notes: Null when the interface revision reports counts only (Rev A of the guide lists CellCount and ViableCellCount, no concentrations).}
+        total_cells_per_ml: {type: number, unit: "/mL", nullable: true}
+        avg_diameter_um: {type: number, unit: um}
+        images: {type: string, nullable: true, notes: Where the images were saved; null unless save_images.}
+        duration_s: {type: number, unit: s}
+    examples:
+      - {position: "cup", cell_type: "CHO", dilution: 1, wash: normal, save_images: false}
+  - name: prime
+    duration: long
+    approval: confirm
+    interlocks: [connected, robot_access_ready]
+    notes: Primes the fluidics with reagent (a few minutes, consumes reagent). A person confirms because it spends pack uses and needs the waste checked first. Method name unverified in the public guide.
+    returns:
+      type: object
+      required: [action, duration_s, status]
+      properties:
+        action: {type: string}
+        duration_s: {type: number, unit: s}
+        status: {type: string}
+  - name: clean
+    duration: long
+    approval: confirm
+    interlocks: [connected, robot_access_ready]
+    notes: Runs the instrument's cleaning cycle (about 10 minutes). A person confirms because cleaning agent is consumed and the instrument is unavailable meanwhile. Method name unverified in the public guide.
+    returns:
+      type: object
+      required: [action, duration_s, status]
+      properties:
+        action: {type: string}
+        duration_s: {type: number, unit: s}
+        status: {type: string}
+
+safety:
+  estop: true
+  interlocks: [connected, robot_access_ready]
+  watchdog_s: 60
+  notes: E-stop sends the interface's Stop, which ends the running sample or cycle; the instrument then needs a fresh sample. Nothing heats or moves fast; the lock is released at the next reset. A controller silent for 60 s stops the run.

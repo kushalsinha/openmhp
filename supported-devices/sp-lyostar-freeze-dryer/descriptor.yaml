@@ -1,0 +1,142 @@
+device:
+  notes: >
+    SP Scientific LyoStar 3 / LyoStar 4 laboratory freeze dryer (Martin Christ Epsilon 2-4
+    LSCplus is similar, see notes): temperature-controlled shelves -70 to +60 degC, external
+    condenser to -85 degC, vacuum to about 10 ubar, capacitance manometer and Pirani gauge,
+    recipes (freezing, annealing, primary and secondary drying) held in the controller. The
+    register map is a TEMPLATE: no public Modbus or OPC map exists for these controllers, so
+    every address is an unverified placeholder (references/registers.md). Confirm each against
+    the controller's own document before the first hardware use.
+
+physical:
+  mass_kg: 410
+  footprint_mm: [1120, 940, 1880]
+  power_w: 6000
+  automated_load: false
+  notes: >
+    Floor-standing unit with an acrylic or stainless chamber door; shelves are loaded by hand
+    with trays of vials or bulk trays, and the stoppering ram closes vials under vacuum or
+    nitrogen at the end of the cycle. No handling robot meets this bench model, and the door
+    contact reports only closed or open, so robot_access_ready is not declared. Needs a
+    vacuum-pump exhaust, condenser drain and, for stoppering back-fill, a nitrogen supply.
+    Shelf surfaces reach -70 and +60 degC; the condenser coil is at -85 degC with ice on it.
+
+signals:
+  - {name: shelf_temperature, type: number, unit: Cel,
+     notes: Shelf inlet fluid or shelf surface temperature as the controller reports it; the product lags it by several degC during sublimation.}
+  - {name: condenser_temperature, type: number, unit: Cel,
+     notes: Ice condenser coil temperature. Below -40 degC before primary drying; rising toward -20 means the condenser is loaded or defrosting.}
+  - {name: chamber_pressure, type: number, unit: mbar,
+     notes: Chamber pressure from the capacitance manometer (gas-independent), the value the recipe controls to; typically 0.05-0.3 mbar in primary drying.}
+  - {name: pirani_pressure, type: number, unit: mbar,
+     notes: Pirani gauge reading, calibrated for nitrogen so it reads high while water vapour is present; its convergence with chamber_pressure marks the end of primary drying.}
+  - {name: product_temperature_1, type: number, unit: Cel, nullable: true,
+     notes: Product thermocouple 1, placed in a vial by the operator; null or shelf temperature when not in product.}
+  - {name: product_temperature_2, type: number, unit: Cel, nullable: true, notes: Product thermocouple 2, as probe 1.}
+  - {name: product_temperature_3, type: number, unit: Cel, nullable: true, notes: Product thermocouple 3, as probe 1.}
+  - {name: phase_code, type: integer,
+     notes: "Recipe phase as an integer the controller reports (placeholder coding, confirm): 0 idle, 1 loading/ready, 2 freezing, 3 annealing, 4 primary drying, 5 secondary drying, 6 hold, 7 stoppering/venting, 8 defrost, 9 alarm hold. The Modbus driver reads numbers, so the phase is a code, not a string."}
+  - {name: vacuum_ok, type: boolean,
+     notes: True while the controller reports chamber pressure within the recipe's band and the vacuum pump healthy; false means a leak, pump fault or overloaded condenser.}
+  - {name: door_closed, type: boolean,
+     notes: True when the chamber door contact is closed. The controller refuses to pull vacuum with it open; an interlock on start_recipe and defrost_condenser here.}
+  - {name: recipe_running, type: boolean,
+     notes: True while the run coil is set and a recipe is executing (read back from the controller); hold is only meaningful then.}
+  - {name: idle, type: boolean,
+     notes: True when the controller reports no recipe active and no defrost running; an interlock for defrost_condenser.}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job (start_recipe) is in progress here; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the Modbus connection is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record (shelf RTDs, product thermocouples, capacitance manometer and Pirani).}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next sensor calibration is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record,
+     notes: qualified, unqualified or unknown (IQ/OQ/PQ, shelf mapping), as the lab recorded it in config.json self_state.}
+  - {name: usage_count, type: integer, source: record,
+     notes: Cycles started through this package (the lab's recorded count, or the number of finished start_recipe jobs here when none is recorded); the controller's own cycle counter is not read.}
+
+settings:
+  - {name: shelf_setpoint, type: number, unit: Cel, limits: {min: -60, max: 60}, resolution: 0.1, approval: confirm, during_job: true,
+     notes: Manual shelf temperature setpoint, -60 to 60 degC (the LyoStar shelf reaches -70; the lab sets its own band). during_job because a recipe may need a manual intervention, approval confirm because a shelf ramp during primary drying can take the product above its collapse temperature and ruin the cake; a person confirms every change.}
+  - {name: chamber_pressure_setpoint, type: number, unit: mbar, limits: {min: 0.01, max: 1}, approval: confirm, during_job: true,
+     notes: Manual chamber pressure setpoint for the controller's pressure control (bleed valve), 0.01-1 mbar placeholder band. Raising it during primary drying increases heat transfer and product temperature, so a person confirms each change.}
+
+actions:
+  - name: start_recipe
+    duration: long
+    approval: auto
+    interlocks: [door_closed, idle, connected]
+    cancellable: true
+    methods: true
+    params:
+      recipe: {type: integer, limits: {min: 1, max: 99},
+               notes: Number of the recipe loaded in the controller (its steps are written and validated in the controller software, not here).}
+    required: [recipe]
+    notes: >
+      Writes the recipe number and sets the run coil; the controller then runs the cycle on
+      its own (typically 24-72 h) while this job finishes as soon as both writes are done.
+      Follow the cycle through phase_code and recipe_running, not through the job. Method-
+      driven: a lyophilisation recipe is per product, so the method record names the recipe
+      number validated for a compound. Cancelling between the two writes leaves nothing started.
+    returns: {type: object, properties: {steps: {type: integer}}}
+    examples:
+      - {recipe: 3}
+  - name: hold
+    duration: short
+    approval: auto
+    interlocks: [recipe_running]
+    notes: Sets the hold coil so the controller holds the current step's conditions indefinitely; the person resumes at the controller or by the run coil as the controller's document describes.
+  - name: stop_recipe
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    notes: Clears the run coil, ending the cycle; the controller returns the shelves toward ambient and vents per its own sequence. Confirm because it aborts the batch.
+  - name: defrost_condenser
+    duration: short
+    approval: confirm
+    interlocks: [door_closed, idle]
+    notes: Sets the defrost coil; the controller heats the condenser and drains the melt (20-60 min). Only with the door closed and no recipe active, which the interlocks express; confirm because it takes the dryer out of readiness for an hour.
+
+safety:
+  estop: true
+  interlocks: [door_closed]
+  watchdog_s: 120
+  watchdog_action: release
+  notes: >
+    E-stop clears the run coil and the shelf-heater enable coil (both placeholder addresses,
+    unverified); the vacuum pump and condenser are left to the controller's own shutdown
+    sequence, and the shelves cool passively. The cycle is run by the controller, not by the
+    agent, so a controller silent for 2 minutes loses its lease and the batch continues
+    (watchdog_action release): stopping a 48-hour cycle because an agent went quiet would
+    cost the batch. The front-panel emergency stop button is the hardware stop; after it,
+    the controller must be reset at its screen before any coil is accepted again.
+  hardware_stop: Front-panel emergency stop button, not detected by this declarative driver (the controller reports it only at its own screen); cleared by releasing it and resetting the alarm at the controller screen.
+
+modbus:
+  host: 192.168.1.70          # placeholder; config.json overrides host, port and unit
+  port: 502
+  unit: 1
+  read:
+    # UNVERIFIED placeholder addresses: see references/registers.md
+    shelf_temperature:        {reg: 0,   kind: input,    type: int16,   scale: 0.1}
+    condenser_temperature:    {reg: 1,   kind: input,    type: int16,   scale: 0.1}
+    product_temperature_1:    {reg: 2,   kind: input,    type: int16,   scale: 0.1}
+    product_temperature_2:    {reg: 3,   kind: input,    type: int16,   scale: 0.1}
+    product_temperature_3:    {reg: 4,   kind: input,    type: int16,   scale: 0.1}
+    phase_code:               {reg: 5,   kind: input,    type: uint16}
+    chamber_pressure:         {reg: 10,  kind: input,    type: float32}
+    pirani_pressure:          {reg: 12,  kind: input,    type: float32}
+    door_closed:              {reg: 0,   kind: discrete}
+    vacuum_ok:                {reg: 1,   kind: discrete}
+    idle:                     {reg: 2,   kind: discrete}
+    recipe_running:           {reg: 0,   kind: coil}
+  write:
+    shelf_setpoint:           {reg: 100, kind: holding,  type: int16,   scale: 0.1}
+    chamber_pressure_setpoint: {reg: 101, kind: holding, type: float32}
+  actions:
+    start_recipe:      [{reg: 110, kind: holding, type: uint16, value: "{recipe}"}, {reg: 0, kind: coil, value: 1}]
+    hold:              [{reg: 1, kind: coil, value: 1}]
+    stop_recipe:       [{reg: 0, kind: coil, value: 0}]
+    defrost_condenser: [{reg: 2, kind: coil, value: 1}]
+  estop:               [{reg: 0, kind: coil, value: 0}, {reg: 3, kind: coil, value: 0}]

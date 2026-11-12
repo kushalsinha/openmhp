@@ -18,7 +18,7 @@ from __future__ import annotations
 import threading
 import time
 
-from ..driver import Driver, InvalidValue, Job, check_type
+from ..driver import Driver, InvalidValue, Job, UnknownName, check_type
 
 OPERATOR_ACTIONS = [
     {"name": "acknowledge", "duration": "short", "approval": "confirm", "concurrent": True,
@@ -47,6 +47,8 @@ class ManualDriver(Driver):
 
     def on_read(self, name):
         v = self.observed.get(name)
+        if v is None and name in self.RUNTIME_SIGNALS:
+            raise UnknownName(f"{name} is answered by the runtime, not by the operator")   # the base answers it
         return v[0] if v else None
 
     def on_write(self, name, value):

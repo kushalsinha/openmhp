@@ -1,0 +1,22 @@
+{
+  "port": {
+    "ask": "Serial port of the Titrino (the RS-232/USB box's COM2 on a Titrino plus, or the RS-232 port of a 7xx Titrino)",
+    "kind": "com_port",
+    "example": "COM4",
+    "help": "On an 870 KF Titrino plus only the box's second port (RS-232/2) accepts remote control; the first is for the balance."
+  },
+  "dialect": {
+    "ask": "Protocol dialect: plus (870/8xx Titrino plus) or classic (758/784/787 and other 7xx Titrinos)",
+    "kind": "choice",
+    "choices": ["plus", "classic"]
+  },
+  "baud": {
+    "ask": "Baud rate as set on the instrument (plus: 19200 recommended; classic: 9600 default)",
+    "kind": "int",
+    "advanced": true
+  },
+  "titer_mg_ml": {
+    "ask": "Titer of the KF reagent (mg water per mL), for the drift water-equivalent on the classic dialect",
+    "advanced": true
+  }
+}

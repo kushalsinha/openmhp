@@ -1,0 +1,8 @@
+{
+  "import_dir": "C:\\OpenMHP\\aurora\\worklists",
+  "results_dir": "C:\\CytekbioExport\\OpenMHP",
+  "software": "SpectroFlo 3.x",
+  "allowed_templates": [],
+  "result_wait_s": 3600,
+  "poll_s": 10
+}

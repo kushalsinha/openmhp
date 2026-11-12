@@ -1,0 +1,23 @@
+{
+  "port": {
+    "ask": "Serial port the pump's To Computer socket is cabled to (COM8, /dev/ttyUSB0, /dev/tty.usbserial-*)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "New Era cable CBL-PC-PUMP to a PC serial port, or with the CBL-USB232 adapter to USB (a virtual COM port)."
+  },
+  "address": {
+    "ask": "Pump network address shown in the pump's setup (0 for a single pump)",
+    "kind": "int",
+    "example": 0,
+    "required": false,
+    "advanced": true,
+    "help": "0-99. The driver prefixes it to every command; a pump ignores commands for other addresses. Several pumps on one cable need distinct addresses, set with *ADR n."
+  },
+  "baud": {
+    "ask": "Baud rate as set in the pump's setup (factory 19200)",
+    "kind": "int",
+    "example": 19200,
+    "required": false,
+    "advanced": true
+  }
+}

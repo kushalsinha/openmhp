@@ -4,15 +4,22 @@ device:
     cell's reference electrode, without iR correction.
 
 physical:
+  automated_load: false
   notes: Cell leads carry up to 12 V compliance. Electrolysis evolves H2 and CO at the cathode; the cell exhaust must be vented.
 
 signals:
   - {name: connected, type: boolean, notes: True when the instrument answers.}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job started here is active. `running` is the channel state the driver tracks itself.}
   - {name: running, type: boolean, notes: True while a technique is running on the channel.}
   - {name: ewe_V, type: number, unit: V, notes: Working-electrode potential vs the reference, read now.}
   - {name: current_mA, type: number, unit: mA, notes: Cell current, read now.}
   - {name: live, type: object, notes: "Pushed every few seconds during a run: t_s, ewe_V, current_mA, v_reduction_V, v_oxidation_V, cycle, points."}
   - {name: last_result, type: object, notes: Summary of the most recent technique.}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); the SP-300 does not report its own calibration."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next calibration is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Techniques (ocv, cp_static, cp_pulsed, cv jobs) completed here, unless the lab's record carries its own count.}
 
 settings: []
 
@@ -23,12 +30,25 @@ actions:
     interlocks: [connected]
     cancellable: true
     params:
-      duration_s: "number: how long to record the open-circuit potential"
-      record_dt_s: "number (optional, default 1): sampling interval"
+      duration_s: {type: number, unit: s, notes: How long to record the open-circuit potential.}
+      record_dt_s: {type: number, unit: s, default: 1, notes: Sampling interval.}
     required: [duration_s]
     limits:
       duration_s: [1, 3600]
       record_dt_s: [0.1, 60]
+    returns:
+      type: object
+      properties:
+        technique: {type: string, notes: The action name.}
+        params: {type: object, notes: The parameters as run, defaults filled.}
+        points: {type: integer, notes: Rows recorded in the trace.}
+        elapsed_s: {type: number, unit: s, notes: Time of the last recorded row.}
+        v_reduction_median_V: {type: number, unit: V, nullable: true, notes: Median potential while current was negative; null if it never was.}
+        v_oxidation_median_V: {type: number, unit: V, nullable: true, notes: Median potential while current was positive; null if it never was.}
+        charge_reduction_C: {type: number, unit: C, notes: Integrated cathodic charge (0 at open circuit).}
+        charge_oxidation_C: {type: number, unit: C, notes: Integrated anodic charge (0 at open circuit).}
+        final_ewe_V: {type: number, unit: V, nullable: true, notes: Last recorded potential; null if no row was recorded.}
+        trace_csv: {type: string, notes: "Path of the full trace (t_s, ewe_V, current_A, cycle)."}
     notes: No current flows. Use to check the cell before electrolysis.
     examples:
       - {duration_s: 60}
@@ -38,14 +58,27 @@ actions:
     interlocks: [connected]
     cancellable: true
     params:
-      current_mA: "number: constant cell current; negative = reduction"
-      duration_s: "number: total time"
-      record_dt_s: "number (optional, default 1): sampling interval"
+      current_mA: {type: number, unit: mA, notes: Constant cell current; negative = reduction.}
+      duration_s: {type: number, unit: s, notes: Total time.}
+      record_dt_s: {type: number, unit: s, default: 1, notes: Sampling interval.}
     required: [current_mA, duration_s]
     limits:
       current_mA: [-500, 0]
       duration_s: [1, 10800]
       record_dt_s: [0.1, 60]
+    returns:
+      type: object
+      properties:
+        technique: {type: string, notes: The action name.}
+        params: {type: object, notes: The parameters as run, defaults filled.}
+        points: {type: integer, notes: Rows recorded in the trace.}
+        elapsed_s: {type: number, unit: s, notes: Time of the last recorded row.}
+        v_reduction_median_V: {type: number, unit: V, nullable: true, notes: Median potential while current was negative; null if it never was.}
+        v_oxidation_median_V: {type: number, unit: V, nullable: true, notes: Median potential while current was positive; null if it never was.}
+        charge_reduction_C: {type: number, unit: C, notes: Integrated cathodic charge.}
+        charge_oxidation_C: {type: number, unit: C, notes: Integrated anodic charge.}
+        final_ewe_V: {type: number, unit: V, nullable: true, notes: Last recorded potential; null if no row was recorded.}
+        trace_csv: {type: string, notes: "Path of the full trace (t_s, ewe_V, current_A, cycle)."}
     notes: Static CO2 reduction (sCO2R). PROVISIONAL current limit = SP-300 range without a booster; set from the electrode area.
     examples:
       - {current_mA: -150, duration_s: 2700}
@@ -55,12 +88,12 @@ actions:
     interlocks: [connected]
     cancellable: true
     params:
-      i_reduction_mA: "number: reduction current (negative)"
-      i_oxidation_mA: "number: oxidation current (positive)"
-      t_reduction_s: "number: length of each reduction pulse"
-      t_oxidation_s: "number: length of each oxidation pulse"
-      duration_s: "number: total time; the driver runs whole cycles"
-      record_dt_s: "number (optional, default 0.1): sampling interval"
+      i_reduction_mA: {type: number, unit: mA, notes: Reduction current (negative).}
+      i_oxidation_mA: {type: number, unit: mA, notes: Oxidation current (positive).}
+      t_reduction_s: {type: number, unit: s, notes: Length of each reduction pulse.}
+      t_oxidation_s: {type: number, unit: s, notes: Length of each oxidation pulse.}
+      duration_s: {type: number, unit: s, notes: Total time; the driver runs whole cycles, so it must be at least one cycle (t_oxidation_s + t_reduction_s).}
+      record_dt_s: {type: number, unit: s, default: 0.1, notes: Sampling interval.}
     required: [i_reduction_mA, i_oxidation_mA, t_reduction_s, t_oxidation_s, duration_s]
     limits:
       i_reduction_mA: [-500, 0]
@@ -69,6 +102,19 @@ actions:
       t_oxidation_s: [0.1, 10]
       duration_s: [1, 10800]
       record_dt_s: [0.05, 10]
+    returns:
+      type: object
+      properties:
+        technique: {type: string, notes: The action name.}
+        params: {type: object, notes: The parameters as run, defaults filled.}
+        points: {type: integer, notes: Rows recorded in the trace.}
+        elapsed_s: {type: number, unit: s, notes: Time of the last recorded row.}
+        v_reduction_median_V: {type: number, unit: V, nullable: true, notes: Median potential over the reduction pulses; null if none was recorded.}
+        v_oxidation_median_V: {type: number, unit: V, nullable: true, notes: Median potential over the oxidation pulses; null if none was recorded.}
+        charge_reduction_C: {type: number, unit: C, notes: Integrated cathodic charge.}
+        charge_oxidation_C: {type: number, unit: C, notes: Integrated anodic charge.}
+        final_ewe_V: {type: number, unit: V, nullable: true, notes: Last recorded potential; null if no row was recorded.}
+        trace_csv: {type: string, notes: "Path of the full trace (t_s, ewe_V, current_A, cycle)."}
     notes: >
       Pulsed CO2 reduction (pCO2R): each cycle is an oxidation pulse then a reduction pulse.
       PROVISIONAL limits. Oxidation current and duration are capped because a stronger or longer
@@ -81,11 +127,11 @@ actions:
     interlocks: [connected]
     cancellable: true
     params:
-      e_start_V: "number: start potential"
-      e_vertex1_V: "number: first turning potential"
-      e_vertex2_V: "number: second turning potential"
-      scan_rate_mV_s: "number: scan rate"
-      cycles: "integer (optional, default 1)"
+      e_start_V: {type: number, unit: V, notes: Start potential vs the reference.}
+      e_vertex1_V: {type: number, unit: V, notes: First turning potential.}
+      e_vertex2_V: {type: number, unit: V, notes: Second turning potential; also the final potential.}
+      scan_rate_mV_s: {type: number, unit: mV/s, notes: Scan rate.}
+      cycles: {type: integer, default: 1, notes: Number of full cycles.}
     required: [e_start_V, e_vertex1_V, e_vertex2_V, scan_rate_mV_s]
     limits:
       e_start_V: [-2.0, 0.5]
@@ -93,6 +139,17 @@ actions:
       e_vertex2_V: [-2.0, 0.5]
       scan_rate_mV_s: [1, 200]
       cycles: [1, 10]
+    returns:
+      type: object
+      properties:
+        technique: {type: string, notes: The action name.}
+        params: {type: object, notes: The parameters as run, defaults filled.}
+        points: {type: integer, notes: Rows recorded in the trace.}
+        elapsed_s: {type: number, unit: s, notes: Time of the last recorded row.}
+        v_reduction_median_V: {type: number, unit: V, nullable: true, notes: Median potential while current was negative; null if it never was.}
+        v_oxidation_median_V: {type: number, unit: V, nullable: true, notes: Median potential while current was positive; null if it never was.}
+        final_ewe_V: {type: number, unit: V, nullable: true, notes: Last recorded potential; null if no row was recorded.}
+        trace_csv: {type: string, notes: "Path of the full trace (t_s, ewe_V, current_A, cycle). No charge totals for a CV."}
     notes: Cyclic voltammetry vs the reference. The paper scans -1.5 to 0 V vs Ag/AgCl at 10 mV/s. PROVISIONAL window.
     examples:
       - {e_start_V: 0, e_vertex1_V: -1.5, e_vertex2_V: 0, scan_rate_mV_s: 10}

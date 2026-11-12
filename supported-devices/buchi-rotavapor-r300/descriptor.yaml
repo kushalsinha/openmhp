@@ -1,0 +1,135 @@
+device:
+  notes: >
+    Rotary evaporator with heating bath, vacuum pump (V-300) and VacuBox, controlled by the Interface I-300 Pro
+    over its Ethernet OpenInterface (HTTPS, JSON). The package sets bath, rotation, vacuum and chiller setpoints,
+    starts and stops the process, moves the flask lift, and runs a timed distillation as a long action.
+
+physical:
+  automated_load: false
+  notes: >
+    The evaporating flask is clamped to the vapour duct by a person; nothing here can be loaded by a handling
+    system. The bath holds water (limit 95 degC) or oil (up to 220 degC); the flask and the bath are hot and the
+    glassware is under vacuum while the process runs. Solvent vapour collects in the condenser and receiving flask.
+
+signals:
+  - {name: connected, type: boolean, notes: True when GET /api/v1/info answers with the OpenInterface password from the keyring.}
+  - {name: state, type: string, source: runtime}
+  - {name: busy, type: boolean, notes: True while an evaporate job from here is running.}
+  - {name: bath_temperature, type: number, unit: Cel, notes: "heating.act: the bath liquid, not the flask contents."}
+  - {name: vapor_temperature, type: number, unit: Cel, nullable: true, notes: "vacuum.vaporTemp: the probe at the vapour duct; null until the VacuBox reports it. Reads the boiling point of the solvent at the current pressure while it distils."}
+  - {name: rotation_rpm, type: number, unit: "{rev}/min", notes: "rotation.act; 0 while rotation is off."}
+  - {name: vacuum_mbar, type: number, unit: mbar, notes: "vacuum.act, absolute pressure in the system; about 1013 when vented."}
+  - {name: cooling_temperature, type: number, unit: Cel, nullable: true, notes: "cooling.act of the recirculating chiller when one is connected; null otherwise."}
+  - {name: lift_position, type: string, notes: "up, down or moving, from lift.act (0 mm is up, 220 mm is down on the I-300 Pro)."}
+  - {name: running, type: boolean, notes: "globalStatus.running: the process (pump and the enabled bath, rotation and chiller) is on."}
+  - {name: heating_on, type: boolean, notes: "heating.running: the bath heater is enabled."}
+  - {name: process_status, type: object, notes: "globalStatus as the interface reports it: timeStamp, processTime, runId, onHold, foamActive, currentError, running."}
+  - {name: last_result, type: object, notes: Result of the most recent evaporate from here; same shape as its returns.}
+  - {name: calibration_status, type: string, source: record, notes: From the lab's record (config.json self_state); the vacuum sensor's calibration program is not read.}
+  - {name: calibration_due, type: string, source: record, nullable: true, notes: ISO-8601 date of the next calibration due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: IQ/OQ/PQ as the lab records it.}
+  - {name: usage_count, type: integer, source: record, notes: Distillations run from here (the lab's recorded count, or the number of finished evaporate jobs when none is recorded); the controller's own runCounters are not read.}
+
+settings:
+  - name: bath_setpoint
+    type: number
+    unit: Cel
+    limits: {min: 20, max: 95}
+    resolution: 0.1
+    approval: auto
+    during_job: true
+    notes: "heating.set. Placeholder for a water bath (the interface accepts 0 to 220; the bath's own limit is 95 for water, 180 or 220 for oil, settings.heating.maxTemperature). A lab with an oil bath raises the max here deliberately."
+  - name: rotation_setpoint
+    type: number
+    unit: "{rev}/min"
+    limits: {min: 0, max: 280}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: "rotation.set, the interface's full range. Above about 200 rpm a full 1 L flask splashes; 100 to 150 is usual."
+  - name: vacuum_setpoint
+    type: number
+    unit: mbar
+    limits: {min: 1, max: 1013}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: "vacuum.set, absolute. The interface accepts 0 to 1300; this package stops at atmospheric. Set it to the solvent's boiling point at about 40 degC bath (the 20/40/60 rule), lower for bumping-prone samples only with a person watching."
+  - name: cooling_setpoint
+    type: number
+    unit: Cel
+    limits: {min: -10, max: 25}
+    resolution: 0.1
+    approval: auto
+    during_job: true
+    notes: "cooling.set for a connected recirculating chiller (the interface's range). Ignored by a unit without one."
+
+actions:
+  - name: start
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Closes the aerate valve and starts the process with the current setpoints (globalStatus.running plus rotation and heating enabled). The lift is not moved; invoke lift_down first if the flask is up.
+  - name: stop
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Stops the process, rotation and the bath heater. Does not vent and does not move the lift; invoke vent and lift_up when the sample is done.
+  - name: vent
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Opens the aerate valve (vacuum.aerateValveOpen) so the system returns to atmospheric pressure.
+  - name: lift_up
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Raises the flask out of the bath (lift.set 0).
+  - name: lift_down
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    notes: Lowers the flask into the bath (lift.set 220 mm). Needs a person's confirmation because the flask enters a hot bath and the depth stop must have been set for this flask size.
+  - name: evaporate
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    methods: true
+    cancellable: true
+    params:
+      bath_c: {type: number, unit: Cel, limits: {min: 20, max: 95}, resolution: 0.1, notes: Bath setpoint for the distillation.}
+      rotation_rpm: {type: number, unit: "{rev}/min", limits: {min: 0, max: 280}, resolution: 1, default: 120}
+      vacuum_mbar: {type: number, unit: mbar, limits: {min: 1, max: 1013}, resolution: 1, notes: Absolute pressure setpoint.}
+      cooling_c: {type: number, unit: Cel, limits: {min: -10, max: 25}, resolution: 0.1, nullable: true, notes: Chiller setpoint; omitted or null leaves the chiller as it is.}
+      duration_min: {type: number, unit: min, limits: {min: 1, max: 480}, notes: Time at the setpoints before the job ends and the system vents and lifts.}
+      stop_when_vapor_below_c: {type: number, unit: Cel, limits: {min: -20, max: 100}, nullable: true, notes: "Ends early once the vapour probe drops below this after the first minute (the solvent is gone). Omitted or null runs the full duration."}
+      keep_bath_warm: {type: boolean, default: false, notes: Leave the bath heater on after the job (for the next flask) instead of switching it off.}
+    required: [bath_c, vacuum_mbar, duration_min]
+    notes: >
+      Writes the setpoints, lowers the flask, closes the aerate valve and starts the process; polls the live
+      values until the time is up or the vapour temperature says the solvent is gone; then stops, vents and
+      lifts the flask out. A method is one solvent's distillation (bath, vacuum, time); cancelling vents and
+      lifts too.
+    returns:
+      type: object
+      required: [duration_s, final_vacuum_mbar, final_bath_c, stopped_by, final]
+      properties:
+        duration_s: {type: number, unit: s}
+        final_vacuum_mbar: {type: number, unit: mbar, notes: Pressure at the last poll before venting.}
+        final_bath_c: {type: number, unit: Cel}
+        final_vapor_c: {type: number, unit: Cel, nullable: true, notes: Vapour probe at the last poll; null when the unit has none.}
+        stopped_by: {type: string, notes: time or vapor_temperature.}
+        final: {type: object, notes: "Snapshot after venting and lifting: bath_c, vapor_c, rotation_rpm, vacuum_mbar, cooling_c, lift, running, error."}
+    examples:
+      - {bath_c: 40, rotation_rpm: 120, vacuum_mbar: 450, duration_min: 20, stop_when_vapor_below_c: 20}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 60
+  hardware_stop: "The I-300 Pro's own Stop key on the interface ends the process; there is no latching e-stop relay, and the package does not see the key being pressed."
+  notes: >
+    E-stop sends one PUT /process that stops the process (globalStatus.running false), switches the bath heater
+    and rotation off, opens the aerate valve to vent to atmosphere and raises the lift (lift.set 0). The bath
+    stays hot for a while and the chiller keeps running. A controller silent for 60 s while holding the lease
+    triggers the same stop.

@@ -40,6 +40,11 @@ def parse_results(text: str) -> list[dict]:
     return peaks
 
 
+def text_lines(text: str) -> list[str]:
+    """Result text as lines the protocol can carry: tabs expanded, other control characters dropped (SPEC 4.4)."""
+    return ["".join(c for c in line.expandtabs() if ord(c) >= 0x20 and ord(c) != 0x7F) for line in text.splitlines()]
+
+
 def control_run_time_s(control_path) -> float | None:
     """Run length from the control file: '<CHANNEL 1 TIME>=' is in milliseconds."""
     try:
@@ -224,14 +229,14 @@ class SRI8610C(Driver):
         self.runs += 1
         result = {"control_file": p["control_file"], "sample": p.get("sample"), "run_time_s": run_s,
                   "injected_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(started)),
-                  "files": [f for f, _ in files], "chromatograms": {}, "peaks": [], "raw": ""}
+                  "files": [f for f, _ in files], "chromatograms": {}, "peaks": [], "raw": []}
         for path, text in files:
             name = pathlib.PurePath(path).name
             if name.lower().endswith(".asc"):
                 result["chromatograms"][name] = parse_asc(text)
             else:
                 result["peaks"] += parse_results(text)
-                result["raw"] += text[:2000]
+                result["raw"] += text_lines(text[:2000])
         if not files:
             result["warning"] = ("PeakSimple wrote no files into results_dir; in the control file set "
                                  "'<DATA FILE PATH>=' to that folder and the POSTRUN SAVE DATA / SAVE RESULTS options to 1")

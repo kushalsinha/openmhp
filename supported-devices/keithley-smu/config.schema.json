@@ -1,0 +1,9 @@
+{
+  "resource": {
+    "ask": "VISA resource of the SourceMeter (GPIB address 24 is the factory default), or its serial port",
+    "kind": "choice",
+    "choices_from": "resource",
+    "example": "GPIB0::24::INSTR",
+    "help": "Examples: GPIB0::24::INSTR (GPIB), ASRL/dev/ttyUSB0::INSTR or COM4 (RS-232, 9600 8N1 with RS-232 selected in the COMM menu), TCPIP0::192.168.1.20::inst0::INSTR or tcp://192.168.1.20:5025 (only on a 2400 behind a LAN-to-GPIB gateway; the 2400 itself has no LAN port). `pyvisa` lists what it can see; with none installed, type the string."
+  }
+}

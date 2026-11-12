@@ -1,0 +1,149 @@
+device:
+  notes: >
+    A microscope whose camera, XY stage, Z (focus) stage and channel presets are configured in Micro-Manager
+    (a .cfg hardware configuration), driven through pymmcore-plus in-process. Positions are in micrometres in
+    the stage's own coordinates; a channel is a preset of the configured config group (default 'Channel').
+    Images are saved as 8- or 16-bit grayscale TIFF.
+
+physical:
+  automated_load: false
+  notes: >
+    The sample (a slide, dish or plate on the stage insert) is placed by a person; this package cannot report a
+    safe exchange position or whether the objective is clear, so nothing here is loaded by a handling system.
+    Stage travel and objective clearance are the lab's: set soft_limits_um in config.json before any move,
+    because Micro-Manager will drive a stage into its hard stop or an objective into a dish if asked.
+
+signals:
+  - {name: connected, type: boolean, notes: True once the Micro-Manager configuration has loaded and the devices answered.}
+  - {name: state, type: string, source: runtime, notes: "The driver's state machine: idle, busy, estop, fault."}
+  - {name: busy, type: boolean, source: runtime, notes: True while an acquisition or move job started here is active.}
+  - {name: config_loaded, type: boolean, notes: True after loadSystemConfiguration succeeded in this process.}
+  - {name: camera, type: string, notes: Label of the current camera device (getCameraDevice).}
+  - {name: xy_position, type: object, notes: "{x_um, y_um}: the XY stage position in micrometres (getXYPosition)."}
+  - {name: z_um, type: number, unit: um, notes: Focus (Z) stage position (getPosition on the focus device).}
+  - {name: exposure_ms, type: number, unit: ms, notes: Camera exposure (getExposure).}
+  - {name: channel, type: string, nullable: true, notes: Current preset of the channel config group (getCurrentConfig); null when the group has no preset applied or does not exist.}
+  - {name: channels, type: array, notes: The presets of the channel config group (getAvailableConfigs); what the channel setting accepts.}
+  - {name: last_image, type: object, nullable: true, notes: Result of the most recent snap from here; null before the first.}
+  - {name: calibration_status, type: string, source: record, notes: "valid, due, overdue or unknown, from the lab's record (config.json self_state); pixel size and stage calibration live in the Micro-Manager configuration and are not checked here."}
+  - {name: calibration_due, type: string, nullable: true, source: record, notes: ISO-8601 date the next calibration is due; null when the lab has not recorded one.}
+  - {name: qualification_status, type: string, source: record, notes: "qualified, unqualified or unknown, as the lab records it."}
+  - {name: usage_count, type: integer, source: record, notes: Acquisition and move jobs completed here, unless the lab's record carries its own count.}
+
+settings:
+  - name: exposure_ms
+    type: number
+    unit: ms
+    limits: {min: 0.01, max: 10000}
+    resolution: 0.01
+    approval: auto
+    during_job: false
+    notes: Camera exposure. Cameras round internally; the value read back is what the camera accepted.
+  - name: z_um
+    type: number
+    unit: um
+    limits: {min: -10000, max: 10000}
+    approval: auto
+    during_job: false
+    notes: >
+      Moves the focus stage and waits for it. PLACEHOLDER limits of +/-10000 um: set them to the stage's travel, and
+      set soft_limits_um.z in config.json to the range that keeps the objective clear of the sample. A move toward the
+      sample can break a slide or an objective; there is no interlock a microscope can report for that.
+  - name: channel
+    type: string
+    approval: auto
+    during_job: false
+    notes: >
+      Applies a preset of the channel config group (filters, light source). The allowed names cannot be declared
+      here because they come from the loaded .cfg; the driver reads getAvailableConfigs and refuses any other name
+      with InvalidValue. Read the channels signal first.
+
+actions:
+  - name: snap
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: false
+    params:
+      label: {type: string, nullable: true, notes: A tag stored with the image record. Omitted or null stores no label.}
+    returns:
+      type: object
+      required: [file, width, height, bit_depth, exposure_ms, z_um]
+      properties:
+        file: {type: string, notes: Path of the TIFF under data_dir.}
+        width: {type: integer, unit: "1"}
+        height: {type: integer, unit: "1"}
+        bit_depth: {type: integer, unit: "1", notes: 8 or 16.}
+        exposure_ms: {type: number, unit: ms}
+        z_um: {type: number, unit: um, notes: Focus position when the image was taken.}
+        channel: {type: string, nullable: true, notes: Channel preset in force, or null.}
+        label: {type: string, nullable: true}
+    notes: One image with the current exposure and channel (snapImage, getImage), written as grayscale TIFF.
+    examples:
+      - {label: "well B3, FITC"}
+  - name: move_xy
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: false
+    params:
+      x_um: {type: number, unit: um, limits: {min: -50000, max: 50000}, notes: Target X. PLACEHOLDER bound; the lab's soft_limits_um.x in config.json is also enforced.}
+      y_um: {type: number, unit: um, limits: {min: -50000, max: 50000}, notes: Target Y. PLACEHOLDER bound as for x_um.}
+    required: [x_um, y_um]
+    limits:
+      x_um: [-50000, 50000]
+      y_um: [-50000, 50000]
+    returns:
+      type: object
+      required: [x_um, y_um]
+      properties:
+        x_um: {type: number, unit: um, notes: Position read back after the move.}
+        y_um: {type: number, unit: um}
+    notes: >
+      Moves the XY stage and waits for it (setXYPosition, waitForDevice). Not cancellable: pymmcore blocks until the
+      stage arrives; use safety/estop to stop a stage mid-move. Approval is auto because the travel limits are the
+      lab's (soft_limits_um); a lab that wants a person to confirm every move sets approval: confirm here.
+    examples:
+      - {x_um: 1200.0, y_um: -350.0}
+  - name: acquire_z_stack
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    cancellable: true
+    params:
+      z_start_um: {type: number, unit: um, limits: {min: -10000, max: 10000}, notes: First plane. PLACEHOLDER bound as for the z_um setting; soft_limits_um.z is also enforced.}
+      z_end_um: {type: number, unit: um, limits: {min: -10000, max: 10000}, notes: Last plane (inclusive when the span is a multiple of step_um).}
+      step_um: {type: number, unit: um, limits: {min: 0.01, max: 1000}, default: 1.0, notes: Plane spacing. The number of planes, span / step + 1, may not exceed 500.}
+      return_to_start: {type: boolean, default: true, notes: Move Z back to where it was before the stack, even after a cancel.}
+      label: {type: string, nullable: true, notes: A tag stored with the stack record. Omitted or null stores no label.}
+    required: [z_start_um, z_end_um]
+    limits:
+      z_start_um: [-10000, 10000]
+      z_end_um: [-10000, 10000]
+      step_um: [0.01, 1000]
+    returns:
+      type: object
+      required: [files, count, folder, z_start_um, z_end_um, step_um, exposure_ms]
+      properties:
+        files: {type: array, items: {type: string}, notes: One TIFF per plane, in acquisition order.}
+        count: {type: integer, notes: Planes acquired (fewer than planned after a cancel).}
+        folder: {type: string, notes: Folder under data_dir holding the planes.}
+        z_start_um: {type: number, unit: um}
+        z_end_um: {type: number, unit: um}
+        step_um: {type: number, unit: um}
+        channel: {type: string, nullable: true}
+        exposure_ms: {type: number, unit: ms}
+        label: {type: string, nullable: true}
+    notes: Moves Z plane by plane and snaps at each. Cancelling between planes stops the stack; the planes already taken stay on disk.
+    examples:
+      - {z_start_um: -5.0, z_end_um: 5.0, step_um: 1.0, label: "bead stack"}
+
+safety:
+  estop: true
+  interlocks: [connected]
+  watchdog_s: 30
+  notes: >
+    E-stop calls CMMCore.stop on the XY stage and the focus stage (stages that implement Stop halt mid-move) and
+    cancels the running acquisition; the camera and light source are not switched. A controller silent for 30 s
+    while holding the lease gets the same stop. Micro-Manager's own hard limits and the stage controller's end
+    stops are the physical protection; the shipped bounds are placeholders.

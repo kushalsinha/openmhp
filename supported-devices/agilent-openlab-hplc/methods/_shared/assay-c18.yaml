@@ -1,0 +1,34 @@
+name: assay-c18
+project: _shared
+action: run_samples
+params:
+  samples:
+  - name: sample
+    vial: P1-A1
+    injection_volume_ul: 5
+    method: Assay_C18
+    processing_method: null
+    injections: 1
+    sample_type: Sample
+  processing_method: Assay_C18_proc
+  sequence_name: null
+  expected_run_min: 15
+compounds:
+- api-assay
+- generic-c18-assay
+version: 1
+hash: f6ea6392c7ce
+created: 1794433163.09009
+updated: 1794433163.09009
+validated:
+  at: 1794433163.09009
+  hash: f6ea6392c7ce
+status: active
+notes: 'Generic C18 assay: 5 uL from P1-A1 with the Assay_C18 acquisition method and
+  Assay_C18_proc, 15 min per injection. Override samples with the real sample list
+  when running it.'
+source:
+  kind: person
+  ref: example record written for the package; method names must exist in the OpenLab
+    project
+author: package author

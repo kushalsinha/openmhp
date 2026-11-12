@@ -1,0 +1,15 @@
+{
+  "port": {
+    "ask": "Serial port the TPG controller appears on (USB virtual COM port of a TPG 36x, or the RS-232 port a TPG 26x is cabled to)",
+    "kind": "com_port",
+    "example": "/dev/ttyUSB0",
+    "help": "On Linux /dev/ttyUSB0 or /dev/serial/by-id/usb-FTDI..., on macOS /dev/tty.usbserial-*, on Windows COM3. The TPG 36x USB port is an FTDI chip; install the FTDI VCP driver if no port appears."
+  },
+  "baud": {
+    "ask": "Baud rate set on the controller (BAU parameter; 9600 is the factory default)",
+    "kind": "int",
+    "example": 9600,
+    "required": false,
+    "advanced": true
+  }
+}

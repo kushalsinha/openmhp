@@ -1,0 +1,172 @@
+device:
+  notes: >
+    Thorlabs PM100D-family power meter console with one sensor head, on an optical bench. It
+    measures optical power in watts using the head's calibration at the wavelength set here.
+    Nothing moves and nothing is sourced; the head's wavelength range and maximum power are
+    the real limits, and the lab sets the descriptor's wavelength bounds to its head.
+
+physical:
+  automated_load: false
+  notes: >
+    Hand-held console (about 0.3 kg) and a head on a post in the beam. The head is placed by a
+    person; nothing is loaded into the instrument. Photodiode heads are damaged above their
+    rated power (typically 500 mW for an S121C): the limit is optical, not something this
+    package can enforce.
+
+signals:
+  - name: power
+    type: number
+    unit: W
+    notes: >
+      Optical power in watts (:MEAS:POW?) at the set wavelength, averaged over `averaging`
+      samples. Equal to the range maximum with auto_range false means saturation. Thermal heads
+      settle over seconds.
+  - name: wavelength
+    type: number
+    unit: nm
+    notes: Wavelength the console applies the head's calibration at (:SENS:CORR:WAV?), in nm.
+  - name: sensor_head
+    type: string
+    notes: >
+      The head's identity (:SYST:SENS:IDN?): name, serial number, calibration message, type,
+      subtype and flags, comma-separated. "no sensor" means nothing is plugged in.
+  - name: temperature
+    type: number
+    unit: Cel
+    nullable: true
+    notes: >
+      Head temperature (:MEAS:TEMP?) on heads with a thermistor; on the others the query
+      errors and the read is refused rather than answering a number. Declared nullable because
+      the value legitimately does not exist on most heads.
+  - name: averaging_actual
+    type: integer
+    notes: Samples averaged per reading as held (:SENS:AVER?); one sample is about 3 ms.
+  - name: auto_range_actual
+    type: boolean
+    notes: True when the power range is selected automatically (:SENS:POW:RANG:AUTO?).
+  - name: power_range
+    type: number
+    unit: W
+    notes: Upper limit of the power range in use (:SENS:POW:RANG?), in watts.
+  - name: low_bandwidth_actual
+    type: boolean
+    notes: True when the photodiode input's low-pass filter is on (:INP:PDIO:FILT:LPAS:STAT?), quieter but slower.
+  - name: last_error
+    type: string
+    notes: "Oldest entry of the error queue (:SYST:ERR?), '0,\"No error\"' when empty. A wavelength outside the head's range lands here."
+  - name: state
+    type: string
+    source: runtime
+    notes: "The driver's state machine: idle, busy, fault, estop; answered by the base."
+  - name: busy
+    type: boolean
+    source: runtime
+    notes: True while a job started here is running; answered by the base.
+  - name: connected
+    type: boolean
+    source: runtime
+    notes: True while the VISA session is open; interlock of every action.
+  - name: calibration_status
+    type: string
+    source: record
+    notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record; the head's own calibration date in sensor_head is reported but not parsed.
+  - name: calibration_due
+    type: string
+    nullable: true
+    source: record
+    notes: ISO-8601 date the next head recalibration is due, from the lab's record; null when none is recorded.
+  - name: qualification_status
+    type: string
+    source: record
+    notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.
+  - name: usage_count
+    type: integer
+    source: record
+    notes: Measurement jobs (measure, zero) completed from here, or the lab's recorded count.
+
+settings:
+  - name: wavelength
+    type: number
+    unit: nm
+    limits: {min: 200, max: 2000}
+    resolution: 1
+    approval: auto
+    during_job: true
+    notes: >
+      Wavelength in nm for the head's responsivity correction (:SENS:CORR:WAV). 200 to 2000
+      is a placeholder spanning the console; the head's range is narrower (S120C 400 to 1100,
+      S130C 400 to 1100, S302C 190 to 25000) and the console refuses values outside it. Set min
+      and max to the head in use.
+  - name: averaging
+    type: integer
+    limits: {min: 1, max: 3000}
+    approval: auto
+    during_job: true
+    notes: Samples averaged per reading (:SENS:AVER), 1 to 3000; about 3 ms each. 100 gives a 0.3 s reading.
+  - name: auto_range
+    type: boolean
+    approval: auto
+    notes: Automatic power range selection (:SENS:POW:RANG:AUTO). On for a first look; off for logging so the range does not step mid-series.
+  - name: low_bandwidth
+    type: boolean
+    approval: auto
+    notes: Photodiode input low-pass filter (:INP:PDIO:FILT:LPAS:STAT); on for a quiet CW reading, off for modulated light.
+
+actions:
+  - name: zero
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: Dark-current zero (:SENS:CORR:COLL:ZERO:INIT); block the beam first. Photodiode heads only; thermal heads ignore it.
+  - name: measure
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    notes: >
+      Queries :SENS:CORR:WAV? then :MEAS:POW?; the two replies are the wavelength in nm and
+      the power in watts, kept together in the job record. Reading `power` alone is quicker.
+  - name: reset
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    notes: "*RST then *CLS: returns the console to its defaults, which resets wavelength, averaging and range. Confirm because it discards the operator's settings."
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 60
+  watchdog_action: release
+  notes: >
+    A power meter sources nothing and moves nothing, so there is no energy to remove and no
+    e-stop is declared. If the controller goes silent the lease is released after 60 s and the
+    meter keeps displaying; nothing needs stopping. The laser being measured is another
+    device's business and its own stop.
+
+scpi:
+  resource: "USB0::0x1313::0x8078::P0012345::INSTR"
+  eol: "\n"
+  timeout: 2
+  idn_match: Thorlabs
+  read:
+    power: ":MEAS:POW?"
+    wavelength: ":SENS:CORR:WAV?"
+    sensor_head: ":SYST:SENS:IDN?"
+    temperature: ":MEAS:TEMP?"
+    averaging_actual: ":SENS:AVER?"
+    auto_range_actual: ":SENS:POW:RANG:AUTO?"
+    power_range: ":SENS:POW:RANG?"
+    low_bandwidth_actual: ":INP:PDIO:FILT:LPAS:STAT?"
+    last_error: ":SYST:ERR?"
+  write:
+    wavelength: ":SENS:CORR:WAV {value}"
+    averaging: ":SENS:AVER {value}"
+    auto_range: ":SENS:POW:RANG:AUTO {value}"
+    low_bandwidth: ":INP:PDIO:FILT:LPAS:STAT {value}"
+  actions:
+    zero: [":SENS:CORR:COLL:ZERO:INIT"]
+    measure: [":SENS:CORR:WAV?", ":MEAS:POW?"]
+    reset: ["*RST", "*CLS"]
+  booleans:
+    auto_range_actual: {true: ["1", "ON"], false: ["0", "OFF"]}
+    low_bandwidth_actual: {true: ["1", "ON"], false: ["0", "OFF"]}

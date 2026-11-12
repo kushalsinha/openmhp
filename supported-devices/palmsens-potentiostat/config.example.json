@@ -1,0 +1,7 @@
+{
+  "port": "COM5",
+  "baud": 230400,
+  "timeout_s": 2,
+  "max_run_s": 7200,
+  "data_dir": "C:/lab/data/echem"
+}

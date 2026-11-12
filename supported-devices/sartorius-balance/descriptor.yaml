@@ -1,0 +1,73 @@
+device:
+  notes: >
+    Laboratory balance with the Sartorius SBI interface. Commands are ESC plus one character (format 1)
+    or ESC plus a two-character code and an underscore (format 2), each followed by CR LF; the balance answers
+    only print and identity commands, with a fixed-width frame. One package instance addresses one balance.
+    Cubis II balances speak SBI when their interface is set to it; an MT-SICS-like mode on Cubis II is not
+    documented in the sources read for this package and is not used.
+
+physical:
+  automated_load: false
+  notes: >
+    A bench balance with a weighing pan and, on analytical models, a draft shield a person opens and closes.
+    Nothing is loaded by a handling system in this package. No moving parts under power beyond a motorised
+    draft shield on some models.
+
+signals:
+  - {name: mass, type: number, unit: g, notes: "The weight from one print frame (ESC P): sign, value and unit. The frame is answered at once, stable or not; an unstable frame has no unit symbol, which this number cannot show, so check mass_frame when stability matters. Display unit of the balance, grams on every balance this package was written for."}
+  - {name: mass_frame, type: string, notes: "The raw 16- or 22-character print frame: optional 6-character id (N net, G# gross, T tare), sign, 9-character value, space, 3-character unit or spaces when unstable. Read it to confirm the unit is present (stable) before trusting mass."}
+  - {name: model, type: string, notes: Model designation printed by ESC x1_.}
+  - {name: serial_number, type: string, notes: Serial number printed by ESC x2_.}
+  - {name: software_version, type: string, notes: Software version printed by ESC x3_ (old notation; x20_ on newer firmware).}
+  - {name: state, type: string, source: runtime, notes: Driver state machine (idle, busy, fault, estop); answered by the base.}
+  - {name: busy, type: boolean, source: runtime, notes: True while a job is running; answered by the base.}
+  - {name: connected, type: boolean, source: runtime, notes: True while the serial port is open; answered by the base.}
+  - {name: calibration_status, type: string, source: record,
+     notes: valid, due, overdue or unknown, from calibration_due in the lab's config.json self_state record. No SBI command reports the last adjustment, so the lab's record is the source, not the balance.}
+  - {name: calibration_due, type: string, nullable: true, source: record,
+     notes: ISO-8601 date the next calibration or adjustment check is due, from the lab's record; null when none is recorded.}
+  - {name: qualification_status, type: string, source: record, notes: qualified, unqualified or unknown (IQ/OQ/PQ as the lab records it in config.json self_state).}
+  - {name: usage_count, type: integer, source: record, notes: tare, zero and adjustment jobs completed here (from this device's job records unless the lab records its own count); weighings are reads and are not counted.}
+
+settings: []
+
+actions:
+  - {name: tare, duration: short, approval: auto, interlocks: [connected], notes: "Zero/tare command (ESC T): stores the current load as tare. No reply; read mass afterwards (expect 0). On Entris II and newer this acts as the TARE key; ESC U is the key itself."}
+  - {name: zero, duration: short, approval: auto, interlocks: [connected], notes: "ZERO key (ESC V): zeros within the balance's zero-setting range. No reply. Do it with an empty pan."}
+  - {name: lock_keys, duration: short, approval: auto, interlocks: [connected], notes: Blocks the balance keys (ESC O) so nobody tares by hand while a sequence runs. No reply.}
+  - {name: unlock_keys, duration: short, approval: auto, interlocks: [connected], notes: Releases the keys (ESC R). No reply.}
+  - {name: restart, duration: short, approval: confirm, interlocks: [connected], notes: Restart and self-test (ESC S). The balance is away for some seconds and clears its tare. A person confirms.}
+  - {name: internal_adjustment, duration: short, approval: confirm, interlocks: [connected], notes: Starts the internal adjustment with the built-in weight (ESC Z; only balances that have one, isoCAL models). No reply over SBI; the balance shows progress on its display, so a person confirms and watches it finish before weighing.}
+
+safety:
+  estop: false
+  interlocks: []
+  watchdog_s: 60
+  watchdog_action: release
+  notes: >
+    A balance has no motion or energy to remove: no heater, no pump, no drive beyond a draft-shield motor a
+    person can stop by hand, so estop is false and nothing is declared as a stop command. A controller silent
+    for 60 s while holding the lease loses the lease (watchdog_action release) so another controller can
+    weigh; nothing on the balance needs stopping when that happens.
+
+serial:
+  port: /dev/ttyUSB0
+  baud: 9600
+  eol: "\r\n"
+  prefix: "\x1b"
+  read:
+    mass: P
+    mass_frame: P
+    model: x1_
+    serial_number: x2_
+    software_version: x3_
+  write: {}
+  actions:
+    tare: [T]
+    zero: [V]
+    lock_keys: [O]
+    unlock_keys: [R]
+    restart: [S]
+    internal_adjustment: [Z]
+  parse:
+    mass: {regex: "([-+]?\\d+\\.?\\d*)", group: 1}

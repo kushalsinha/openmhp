@@ -15,5 +15,5 @@ class Sim(ManualDriver):
         if job.action == "spin":
             speed = self.requested.get("speed", (0, 0))[0]
             self.observed["actual_speed"] = (speed, time.time())
-            return {"spun": True, "at_rpm": speed, "completed_by": "simulated operator"}
+            return {"completed_by": "simulated operator", "notes": f"spun at {speed} rpm"}
         return super().on_invoke(job)

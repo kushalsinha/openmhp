@@ -74,3 +74,21 @@ there is no API for it. Editing a package changes its fingerprint, so the lab th
 sees "changed on disk" and must accept the new version (`mhp_lab op='reload'`) before anything
 runs — which is the point: a person sees the diff. Ship a limit change as a PR, not as a note
 telling operators to edit the file.
+
+## The rubric line
+
+The report ends with one more line, which is not a gate:
+
+```
+Rubric (device-level criteria, self-assessed): 21.0 / 24; to raise: C5 Partial, C20 Fail   -- mhp rubric <folder> for the evidence
+```
+
+`mhp rubric <folder>` grades the package against the twelve of Gottstein et al.'s twenty-one
+autonomous-ready procurement criteria that a package can affect (typing and units, result
+contract, self-description, observable state, instrument self-state, simulation, control-loss
+observability, error taxonomy, OS independence, automated load, motion readiness, safety-event
+participation), Pass / Partial / Fail / N/A with one line of evidence each. The other nine are
+answered by the protocol for every device and are listed as inherited. The score is written into
+`openmhp/registry.json` by `scripts/build_registry.py` and shown per device on the website. It is
+a self-assessment from the package's files: it says what the package declares, not what an
+instrument did.

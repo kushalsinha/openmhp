@@ -1,0 +1,48 @@
+{
+  "import_dir": {
+    "ask": "Folder ICON-NMR's automation import reads job files from",
+    "kind": "path",
+    "example": "C:\\Bruker\\TopSpin4.1\\conf\\instr\\spect\\iconnmr\\import",
+    "help": "Set in ICON-NMR Configuration > Automation (the import folder of the automation/spooler import). Ask the spectrometer administrator; the folder must exist and be writable by the account running mhp."
+  },
+  "data_dir": {
+    "ask": "TopSpin data directory the ICON-NMR user's datasets land in (the folder that holds <dataset>/<expno>)",
+    "kind": "path",
+    "example": "C:\\Bruker\\TopSpin4.1\\data\\openmhp\\nmr",
+    "help": "TopSpin files data as <DIR>/<user>/nmr/<dataset>/<expno>/pdata/1 on TopSpin 3 and older, or <DIR>/<dataset>/<expno> on TopSpin 4; give the folder directly above <dataset>."
+  },
+  "user": {
+    "ask": "ICON-NMR user the jobs are submitted as",
+    "example": "openmhp",
+    "help": "An ICON-NMR user whose allowed experiments and solvents are set in ICON-NMR Configuration > User Settings; written to the USER column of every job."
+  },
+  "holders": {
+    "ask": "Number of holders in the sample changer",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "allowed_experiments": {
+    "ask": "Experiments an agent may queue (empty for any the ICON-NMR user has)",
+    "required": false,
+    "advanced": true
+  },
+  "lock_shim_s": {
+    "ask": "Seconds ICON-NMR typically needs for sample change, lock and shim (for progress and the wait)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "poll_s": {
+    "ask": "Seconds between checks of the data directory",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  },
+  "result_wait_s": {
+    "ask": "Longest wait for a dataset before the job fails (seconds)",
+    "kind": "int",
+    "required": false,
+    "advanced": true
+  }
+}

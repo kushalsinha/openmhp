@@ -1,0 +1,23 @@
+name: mab_size_25c
+project: _shared
+action: measure_size
+params:
+  sop: mAb_size_25C.zsop
+compounds:
+- mab
+- igg
+version: 1
+hash: 7df748607af3
+created: 1794432891
+updated: 1794432891
+validated:
+  at: 1794432891
+  hash: 7df748607af3
+status: active
+author: package example
+notes: Size SOP for a monoclonal antibody in formulation buffer at 25 Cel (protein
+  material, water dispersant, DTS0012 cuvette, 3 runs), as saved in ZS Xplorer; the
+  sample name is given per run.
+source:
+  kind: manual
+  ref: example record shipped with the package; replace with the lab's own

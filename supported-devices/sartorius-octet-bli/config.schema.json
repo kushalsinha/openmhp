@@ -1,0 +1,20 @@
+{
+  "host": {
+    "ask": "PC running Octet BLI Discovery (the automation interface listens there)",
+    "example": "octet-pc.lab.local",
+    "help": "In Octet BLI Discovery: File > Options > Automation, choose TCP/IP and note the port; tick Localhost only if this package runs on the same PC."
+  },
+  "port": {
+    "ask": "TCP port set in the Automation options",
+    "kind": "int",
+    "example": "7000"
+  },
+  "method_dir": {
+    "ask": "Folder on the Octet PC holding the method files (.fmf) agents may run",
+    "kind": "path",
+    "example": "C:/Octet/Methods",
+    "help": "A Windows path as the Octet PC sees it; the interface opens methods by that path."
+  },
+  "allowed_methods": {"ask": "Method file names an agent may run (JSON list; empty = any in the folder)", "advanced": true},
+  "max_run_hours": {"ask": "Longest run before the job is failed", "kind": "int", "advanced": true}
+}

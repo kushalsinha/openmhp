@@ -1,0 +1,225 @@
+device:
+  notes: >
+    Rigol DS1000Z-family four-channel oscilloscope on a bench, probes wired by a person. It
+    measures and never sources. This package exposes acquisition control, channel 1 vertical
+    and timebase settings, the edge trigger, and the automatic measurements; the binary
+    waveform download is not expressible in the declarative grammar and is left out.
+
+physical:
+  automated_load: false
+  notes: >
+    Bench instrument, about 3 kg, with four BNC probe inputs on the front. Nothing is loaded
+    into it. Inputs are rated 300 V rms CAT I with the 1X probe; what the probes touch is the
+    experiment's business.
+
+signals:
+  - name: trigger_status
+    type: string
+    notes: ":TRIG:STAT? answers TD (triggered), WAIT (armed), RUN, AUTO or STOP."
+  - name: vpp_ch1
+    type: number
+    unit: V
+    notes: Peak-to-peak voltage of channel 1 (:MEAS:ITEM? VPP,CHAN1). 9.9E37 means the scope could not measure it.
+  - name: vmax_ch1
+    type: number
+    unit: V
+    notes: Maximum voltage of channel 1 (:MEAS:ITEM? VMAX,CHAN1); at the screen edge means clipping.
+  - name: vmin_ch1
+    type: number
+    unit: V
+    notes: Minimum voltage of channel 1 (:MEAS:ITEM? VMIN,CHAN1).
+  - name: vrms_ch1
+    type: number
+    unit: V
+    notes: RMS voltage of channel 1 over the displayed record (:MEAS:ITEM? VRMS,CHAN1).
+  - name: freq_ch1
+    type: number
+    unit: Hz
+    notes: Frequency of channel 1 (:MEAS:ITEM? FREQ,CHAN1); 9.9E37 when fewer than one period is on screen.
+  - name: period_ch1
+    type: number
+    unit: s
+    notes: Period of channel 1 (:MEAS:ITEM? PER,CHAN1).
+  - name: sample_rate
+    type: number
+    unit: Hz
+    notes: Current sample rate in samples per second (:ACQ:SRAT?); it follows the timebase and memory depth.
+  - name: ch1_display
+    type: boolean
+    notes: True when channel 1 is shown (:CHAN1:DISP?); measurements on a hidden channel answer 9.9E37.
+  - name: timebase_actual
+    type: number
+    unit: s
+    notes: Horizontal scale per division as applied (:TIM:SCAL?), after the scope snapped it to its 1-2-5 sequence.
+  - name: ch1_scale_actual
+    type: number
+    unit: V
+    notes: Channel 1 vertical scale per division as applied (:CHAN1:SCAL?).
+  - name: ch1_offset_actual
+    type: number
+    unit: V
+    notes: Channel 1 vertical offset as applied (:CHAN1:OFFS?).
+  - name: trigger_level_actual
+    type: number
+    unit: V
+    notes: Edge trigger level as applied (:TRIG:EDG:LEV?).
+  - name: trigger_source_actual
+    type: string
+    notes: "Edge trigger source as applied (:TRIG:EDG:SOUR?): CHAN1..CHAN4, EXT, AC, or D0..D15 on an MSO."
+  - name: last_error
+    type: string
+    notes: "Oldest entry of the error queue (:SYST:ERR?), '0,\"No error\"' when empty."
+  - name: state
+    type: string
+    source: runtime
+    notes: "The driver's state machine: idle, busy, fault, estop; answered by the base."
+  - name: busy
+    type: boolean
+    source: runtime
+    notes: True while a job started here is running; answered by the base.
+  - name: connected
+    type: boolean
+    source: runtime
+    notes: True while the socket or VISA session is open; interlock of every action.
+  - name: calibration_status
+    type: string
+    source: record
+    notes: valid, due, overdue or unknown, derived from the calibration_due date in the lab's config.json self_state record; the scope's self-calibration is not read.
+  - name: calibration_due
+    type: string
+    nullable: true
+    source: record
+    notes: ISO-8601 date the next calibration is due, from the lab's record; null when none is recorded.
+  - name: qualification_status
+    type: string
+    source: record
+    notes: qualified, unqualified or unknown, as the lab recorded it in config.json self_state.
+  - name: usage_count
+    type: integer
+    source: record
+    notes: Measurement jobs (measure) completed from here, or the lab's recorded count.
+
+settings:
+  - name: timebase_s
+    type: number
+    unit: s
+    limits: {min: 0.000000005, max: 50}
+    approval: auto
+    during_job: true
+    notes: Horizontal scale per division (:TIM:SCAL), 5 ns to 50 s on a DS1054Z; the scope snaps to 1-2-5 steps, so read timebase_actual afterwards.
+  - name: ch1_scale_v
+    type: number
+    unit: V
+    limits: {min: 0.001, max: 10}
+    approval: auto
+    during_job: true
+    notes: Channel 1 vertical scale per division (:CHAN1:SCAL), 1 mV to 10 V with a 1X probe; scaled by the probe ratio set on the scope. Snapped to 1-2-5 steps.
+  - name: ch1_offset_v
+    type: number
+    unit: V
+    limits: {min: -100, max: 100}
+    approval: auto
+    during_job: true
+    notes: Channel 1 vertical offset (:CHAN1:OFFS). The usable range depends on the scale (±2 V below 500 mV/div, ±100 V above); the scope clamps the rest. Placeholder bounds.
+  - name: trigger_level_v
+    type: number
+    unit: V
+    limits: {min: -40, max: 40}
+    approval: auto
+    during_job: true
+    notes: Edge trigger level (:TRIG:EDG:LEV); the usable range is about ±5 divisions of the source's scale, the scope clamps the rest. Placeholder bounds.
+  - name: trigger_source
+    type: string
+    limits: {enum: [CHAN1, CHAN2, CHAN3, CHAN4, EXT, AC]}
+    approval: auto
+    notes: Edge trigger source (:TRIG:EDG:SOUR). D0..D15 exist on the MSO1000Z and are not in this enum.
+  - name: ch1_display
+    type: boolean
+    approval: auto
+    notes: Show or hide channel 1 (:CHAN1:DISP). A hidden channel's measurements answer 9.9E37.
+
+actions:
+  - name: run
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: ":RUN, continuous acquisition."
+  - name: stop
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: ":STOP, freezes the display. This halts acquisition only; it is not a safety stop, nothing here is energised."
+  - name: single
+    duration: short
+    approval: auto
+    interlocks: [connected]
+    notes: ":SING, arms a single-shot capture; trigger_status reads WAIT until the trigger, then STOP."
+  - name: autoset
+    duration: short
+    approval: confirm
+    interlocks: [connected]
+    notes: ":AUT, the scope's autoscale. Confirm-gated because it rewrites every channel, timebase and trigger setting, including ones a person set by hand."
+  - name: measure
+    duration: long
+    approval: auto
+    interlocks: [connected]
+    params:
+      item: {type: string, limits: {enum: [VPP, VMAX, VMIN, VRMS, VAVG, FREQ, PER, VTOP, VBAS, VAMP]}, notes: Measurement item name as the scope spells it.}
+      channel: {type: string, limits: {enum: [CHAN1, CHAN2, CHAN3, CHAN4]}, default: CHAN1, notes: Source channel; default CHAN1.}
+    required: [item]
+    returns: {type: object, properties: {replies: {type: array, items: {type: string}}}}
+    examples:
+      - {item: VPP, channel: CHAN1}
+      - {item: FREQ, channel: CHAN2}
+    notes: >
+      One :MEAS:ITEM? <item>,<channel> query; the single reply is the value in V, Hz or s, or
+      9.9E37 when the scope cannot make the measurement. Use it for channels 2 to 4 and for
+      items the fixed signals do not cover.
+
+safety:
+  estop: false
+  interlocks: [connected]
+  watchdog_s: 60
+  watchdog_action: release
+  notes: >
+    An oscilloscope sources nothing and moves nothing, so there is no energy to remove and no
+    e-stop is declared; the `stop` action halts acquisition and is not a safety stop. If the
+    controller goes silent the lease is released after 60 s and the scope keeps acquiring. What
+    the probes touch is another device's business and its own stop.
+
+scpi:
+  resource: "TCPIP0::192.168.1.60::inst0::INSTR"
+  eol: "\n"
+  timeout: 2
+  idn_match: RIGOL
+  read:
+    trigger_status: ":TRIG:STAT?"
+    vpp_ch1: ":MEAS:ITEM? VPP,CHAN1"
+    vmax_ch1: ":MEAS:ITEM? VMAX,CHAN1"
+    vmin_ch1: ":MEAS:ITEM? VMIN,CHAN1"
+    vrms_ch1: ":MEAS:ITEM? VRMS,CHAN1"
+    freq_ch1: ":MEAS:ITEM? FREQ,CHAN1"
+    period_ch1: ":MEAS:ITEM? PER,CHAN1"
+    sample_rate: ":ACQ:SRAT?"
+    ch1_display: ":CHAN1:DISP?"
+    timebase_actual: ":TIM:SCAL?"
+    ch1_scale_actual: ":CHAN1:SCAL?"
+    ch1_offset_actual: ":CHAN1:OFFS?"
+    trigger_level_actual: ":TRIG:EDG:LEV?"
+    trigger_source_actual: ":TRIG:EDG:SOUR?"
+    last_error: ":SYST:ERR?"
+  write:
+    timebase_s: ":TIM:SCAL {value}"
+    ch1_scale_v: ":CHAN1:SCAL {value}"
+    ch1_offset_v: ":CHAN1:OFFS {value}"
+    trigger_level_v: ":TRIG:EDG:LEV {value}"
+    trigger_source: ":TRIG:EDG:SOUR {value}"
+    ch1_display: ":CHAN1:DISP {value}"
+  actions:
+    run: [":RUN"]
+    stop: [":STOP"]
+    single: [":SING"]
+    autoset: [":AUT"]
+    measure: [":MEAS:ITEM? {item},{channel}"]
+  booleans:
+    ch1_display: {true: ["1", "ON"], false: ["0", "OFF"]}
