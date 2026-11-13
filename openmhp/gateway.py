@@ -171,6 +171,7 @@ class Gateway:
         self.waiting: list[str] = []                   # run IDs queued for their instruments, first come first served
         self._alloc_lock = threading.Lock()
         self._lease_thread: threading.Thread | None = None
+        self.supervisor = None                         # set by Supervisor(...): wakes runs on their instruments' events
         self.lock = threading.Lock()
         self._index_tokens()
 
@@ -483,6 +484,11 @@ class Gateway:
                 node.devices[did]["state"] = ev["state"]
             for q in list(self.subs.get((node.name, did), [])):
                 q.put(ev.get("event"))
+            if self.supervisor is not None:
+                try:
+                    self.supervisor.on_device_event(f"{node.name}/{did}", ev.get("event") or {})
+                except Exception:                      # noqa: BLE001  supervision must never break the relay
+                    pass
 
     # ---- agent face ----------------------------------------------------------------------------
     def relay(self, node: Node, device: str, kind: str, body: dict | None, client: str, timeout: float) -> tuple[int, dict]:
@@ -587,6 +593,23 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
             if agent is None:
                 return self._json(401, {"error": AGENT_401})
             gate = gw.gate_for(self._auth())               # a run token: only its instruments, only its charter
+            if len(parts) == 2 and parts[0] == "runs" and parts[1] in ("ask_scientist", "report", "finish"):
+                if gate is None or gw.supervisor is None:
+                    return self._json(403, {"ok": False, "error": "only a run's own token, on a supervising gateway"})
+                b, sv = self._body(), gw.supervisor
+                try:
+                    if parts[1] == "ask_scientist":
+                        ans = sv.ask(gate.run, str(b.get("question", "")), tried=str(b.get("tried", "")),
+                                     meanwhile=b.get("meanwhile") if b.get("meanwhile") in ("wait", "continue") else "wait",
+                                     needs_lab=b.get("needs_lab") is True)
+                    elif parts[1] == "report":
+                        ans = sv.report(gate.run, str(b.get("text", "")))
+                    else:
+                        ans = sv.finish(gate.run, str(b.get("summary", "")), str(b.get("outcome", "objective met")),
+                                        [str(x) for x in (b.get("next_experiments") or [])])
+                except (ValueError, LookupError) as e:
+                    return self._json(409, {"ok": False, "error": str(e)})
+                return self._json(200, ans)
             if parts == ["directory", "rpc"]:
                 from .transport import dispatch
                 msg = self._body()
@@ -716,6 +739,11 @@ def serve(host: str | None = None, port: int | None = None) -> int:
     say(f"MHP gateway '{state['server_name']}' listening on https://{host}:{port}",
         f"  lab PCs join with:   mhp node <devices folder> --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair`>",
         f"  agent machines join: mhp agent --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair-agent`>", "  Ctrl-C to stop")
+    from . import scientists as S
+    from .supervisor import Supervisor
+    ssh = state.get("ssh") or {}
+    Supervisor(gw, lab_root=Path(ssh.get("lab_root") or S.lab_root()), runs_dir=RUNS_DIR,
+               run_as_users=ssh.get("mode") == "users").start()
     U.watch(lambda v: say(f"OpenMHP {v} is out (this gateway runs {__version__}). `mhp gateway status` lists the lab PCs "
                           f"that are behind. To update the gateway itself: pip install -U openmhp, then restart `mhp gateway serve`."))
     try:

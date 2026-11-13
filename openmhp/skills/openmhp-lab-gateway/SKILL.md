@@ -47,6 +47,29 @@ ssh mhp-gateway mhp-gw status R-2611-0042    # one run
 Run `help` first when you are unsure. If it lists verbs this skill does not describe, use them as
 `help` explains.
 
+## Approving and watching a run
+
+A run starts only when the scientist approves its charter: what the run may do on which instruments,
+its limits, and what always comes back to them.
+
+```bash
+ssh mhp-gateway mhp-gw show R-2611-0042                     # charter (English), its digest, state, open questions
+ssh mhp-gateway mhp-gw approve R-2611-0042 --charter-digest sha256:...
+ssh mhp-gateway mhp-gw status R-2611-0042
+ssh mhp-gateway mhp-gw message R-2611-0042 "stop after 10 more cells"
+ssh mhp-gateway mhp-gw answer R-2611-0042 q1 "re-make cell 4 in the next batch"
+ssh mhp-gateway mhp-gw stop R-2611-0042
+```
+
+- Show the scientist the charter text from `show` and ask them, in plain words, whether to approve
+  it. Approve only after they say yes, and pass the digest exactly as `show` gave it. Never approve
+  on their behalf.
+- After `approve`, give them the run ID and the `show_to_scientist` message, as given.
+- `status` and `show` list the run's open questions. Read each one to the scientist, and send back
+  their answer with `answer`. A question with `needs_lab` means someone has to go to the lab.
+- The scientist can change their mind in plain words: pass it on with `message`. A request outside
+  the approved charter cannot be granted by the run; it will say so.
+
 ## Handing over skills, scripts and data
 
 Use rsync. The trailing slashes matter: `<folder>/` copies the folder's contents.

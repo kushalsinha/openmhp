@@ -39,8 +39,14 @@ VERBS = {
     "open": "a new run in your folder; copy your skills, scripts and data into its in/ folder with rsync",
     "list": "your runs and their states",
     "status": "status <run id>: one run's state",
+    "show": "show <run id>: the run's charter to approve, its state and any open questions",
+    "approve": "approve <run id> --charter-digest <digest>: the scientist approves exactly that charter; the run starts",
+    "message": "message <run id> <text, or on stdin>: tell the running agent something",
+    "answer": "answer <run id> <question id> <text, or on stdin>: answer the run's question",
+    "stop": "stop <run id>: stop now; the agent cleans up as the charter says",
     "help": "this list",
 }
+WAIT_S = 60                                    # how long a request waits for the supervisor before saying "pending"
 
 
 SFTP_HINT = ("copy files with rsync (rsync -a <folder>/ <gateway>:runs/<run id>/in/); scp works only in its "
@@ -57,13 +63,16 @@ SCP_FLAGS = {"-r", "-d", "-p", "-v", "-q"}
 
 
 class Shell:
-    def __init__(self, scientist: str, root: Path | None = None, out=None, env=None, execvp=None, err=None):
+    def __init__(self, scientist: str, root: Path | None = None, out=None, env=None, execvp=None, err=None, stdin=None,
+                 wait_s: float | None = None):
         self.scientist = S.check_name(scientist)
         self.root = root
         self.out = out if out is not None else sys.stdout
         self.err = err if err is not None else sys.stderr
         self.env = os.environ if env is None else env
         self.execvp = execvp or os.execvp
+        self.stdin = stdin if stdin is not None else sys.stdin
+        self.wait_s = WAIT_S if wait_s is None else wait_s
 
     def answer(self, code: int, **obj) -> int:
         self.out.write(json.dumps({"ok": code == OK, **obj}, default=str) + "\n")
@@ -175,6 +184,73 @@ class Shell:
     def verb_list(self, args) -> int:
         return self.answer(OK, scientist=self.scientist,
                            runs=[{k: r.get(k) for k in ("id", "state", "created")} for r in S.runs(self.scientist, self.root)])
+
+    # ---- requests the supervisor acts on ---------------------------------------------------
+    def _run(self, run_id: str) -> dict:
+        meta = S.load_run(self.scientist, S.check_run_id(run_id), self.root)
+        if meta is None:
+            raise LookupError(f"no run {run_id} in your folder")
+        return meta
+
+    def _text(self, rest: list[str]) -> str:
+        text = " ".join(rest).strip()
+        if not text and self.stdin is not None and not getattr(self.stdin, "isatty", lambda: False)():
+            text = self.stdin.read().strip()
+        if not text:
+            raise ValueError("say something: put the text after the arguments, or on stdin")
+        return text
+
+    def request(self, run_id: str, body: dict) -> int:
+        """Leave the request in the run's inbox for the supervisor, and wait for its answer."""
+        import time
+        self._run(run_id)
+        inbox = S.run_folder(self.scientist, run_id, self.root) / "inbox"
+        inbox.mkdir(exist_ok=True)
+        name = f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-{body['kind']}"
+        tmp = inbox / (name + ".tmp")
+        tmp.write_text(json.dumps(body), encoding="utf-8")
+        os.replace(tmp, inbox / (name + ".json"))
+        done = inbox / (name + ".done.json")
+        end = time.time() + self.wait_s
+        while time.time() < end:
+            if done.is_file():
+                ans = json.loads(done.read_text(encoding="utf-8"))
+                done.unlink()
+                if ans.get("ok"):
+                    return self.answer(OK, **{k: v for k, v in ans.items() if k != "ok"})
+                return self.refuse(ans.get("error", "refused"), NOT_FOUND if ans.get("not_found") else REFUSED)
+            time.sleep(0.2)
+        return self.answer(WAITING, run=run_id, pending=body["kind"],
+                           note="the gateway has the request but has not acted on it yet; check again with mhp-gw status")
+
+    def verb_show(self, args) -> int:
+        if len(args) != 1:
+            return self.refuse("show needs one run ID")
+        meta = self._run(args[0])
+        d = S.run_folder(self.scientist, args[0], self.root)
+        charter = (d / "charter.md").read_text(encoding="utf-8") if (d / "charter.md").is_file() else None
+        return self.answer(OK, run=meta, charter=charter, charter_digest=meta.get("charter_digest"),
+                           open_questions=meta.get("open_questions") or {})
+
+    def verb_approve(self, args) -> int:
+        if len(args) != 3 or args[1] != "--charter-digest":
+            return self.refuse("approve needs: approve <run id> --charter-digest <digest from mhp-gw show>")
+        return self.request(args[0], {"kind": "approve", "digest": args[2]})
+
+    def verb_message(self, args) -> int:
+        if not args:
+            return self.refuse("message needs a run ID and the text")
+        return self.request(args[0], {"kind": "message", "text": self._text(args[1:])})
+
+    def verb_answer(self, args) -> int:
+        if len(args) < 2:
+            return self.refuse("answer needs a run ID, a question ID and the text")
+        return self.request(args[0], {"kind": "answer", "question": args[1], "text": self._text(args[2:])})
+
+    def verb_stop(self, args) -> int:
+        if len(args) != 1:
+            return self.refuse("stop needs one run ID")
+        return self.request(args[0], {"kind": "stop"})
 
     def verb_status(self, args) -> int:
         if len(args) != 1:
