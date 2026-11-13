@@ -352,6 +352,7 @@ class Bridge:
         from .runs import HOME
         self.home = home or (fleet.path.parent if fleet is not None else HOME)
         self._update_told = False
+        self._inbox_told = False
         self.log = RunLog(self.home)
         self._updates: dict[str, list[dict]] = {}          # device -> recent pushed events (ring buffer)
         self._run_devices: dict[str, set[str]] = {}         # run id -> devices it has touched
@@ -994,7 +995,8 @@ class Bridge:
             return self._ok(mid, {"protocolVersion": requested if requested in SUPPORTED_MCP_VERSIONS else SUPPORTED_MCP_VERSIONS[0],
                                   "capabilities": {"tools": {}, "resources": {}, "prompts": {}, "logging": {}},
                                   "serverInfo": {"name": "openmhp-bridge", "version": __version__},
-                                  "instructions": INSTRUCTIONS + (f"\n- {n}" if (n := update_notice()) else "")})
+                                  "instructions": INSTRUCTIONS + (f"\n- {n}" if (n := update_notice()) else "")
+                                  + (f"\n- {n}" if (n := inbox_notice()) else "")})
         if m == "prompts/list":
             return self._ok(mid, {"prompts": [{"name": n, "description": d} for n, (d, _) in PROMPTS.items()]})
         if m == "prompts/get":
@@ -1035,6 +1037,9 @@ class Bridge:
                 content = [{"type": "text", "text": json.dumps(res, indent=1, default=str)}]
                 if not self._update_told and (n := update_notice()):
                     self._update_told = True           # once per session: the agent relays it, then gets on with the work
+                    content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
+                if not self._inbox_told and (n := inbox_notice()):
+                    self._inbox_told = True
                     content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
                 return self._ok(mid, {"content": content})
             except RemoteError as e:
@@ -1195,6 +1200,21 @@ def http_token(home: Path) -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(tok)
     return tok
+
+
+def inbox_notice() -> str | None:
+    """Unread news from the lab gateway (questions from runs, plans to approve, results), told to the agent once."""
+    try:
+        from .watcher import unread
+        items = unread()
+    except Exception:                                  # noqa: BLE001
+        return None
+    if not items:
+        return None
+    lab = sum(1 for i in items if i.get("needs_lab"))
+    return (f"The lab gateway has {len(items)} unread message(s) for the user" + (f", {lab} needing someone in the lab" if lab else "")
+            + ": questions from their runs, plans to approve, or results. Tell the user, and read them with "
+              "`mhp agent inbox` (the openmhp-lab-gateway skill says how to answer).")
 
 
 def main(argv=None):

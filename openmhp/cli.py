@@ -81,7 +81,7 @@ def main(argv=None):
 
     if a.target == "agent":                 # mhp agent --join <gateway url> <code> | status | leave
         from . import agent
-        return agent.main(a.verb, a.args, join_args=a.join, name=a.name)
+        return agent.main(a.verb, a.args + (["--install-service"] if a.install_service else []), join_args=a.join, name=a.name)
 
     if a.target == "gateway":               # mhp gateway init | serve | pair | pair-agent | add-agent <name> | check | status
         from . import gateway

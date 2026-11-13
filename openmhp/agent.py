@@ -241,7 +241,9 @@ def main(verb: str | None, args: list[str], *, join_args: list[str] | None = Non
         if cfg.get("ssh"):
             say("", f"runs and files on the gateway, as scientist '{cfg['ssh']['scientist']}':",
                 f"  ssh {SSH_ALIAS} mhp-gw help",
-                f"  rsync -a <folder>/ {SSH_ALIAS}:runs/<run id>/in/")
+                f"  rsync -a <folder>/ {SSH_ALIAS}:runs/<run id>/in/",
+                "", "to hear about your runs (questions, plans to approve, results) even when no agent is open, run once:",
+                "  mhp agent watch --install-service")
         elif cfg.get("ssh_error"):
             say("", f"the gateway did not set up SSH for this machine: {cfg['ssh_error']}")
         return 0
@@ -249,5 +251,19 @@ def main(verb: str | None, args: list[str], *, join_args: list[str] | None = Non
         return status()
     if verb == "leave":
         return leave()
-    say(f"unknown agent command {verb!r}. One of: --join <gateway url> <code>, status, leave")
+    if verb == "watch":
+        from . import watcher
+        return watcher.main(args)
+    if verb == "inbox":
+        from . import watcher
+        items = watcher.unread()
+        if not items:
+            say("no unread news from the lab gateway")
+            return 0
+        for it in items:
+            print(f"{it['at']}  {it['run']}  {it['kind']}: {it['text']}")
+        if "--keep" not in args:
+            watcher.mark_read(items)
+        return 0
+    say(f"unknown agent command {verb!r}. One of: --join <gateway url> <code>, status, leave, watch, inbox")
     return 2

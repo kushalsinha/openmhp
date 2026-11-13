@@ -30,6 +30,7 @@ TRANSITIONS = {
     "finished": set(), "stopped": set(), "failed": set(),
 }
 ENDED = {"finished", "stopped", "failed"}
+KEEP_RESULTS_S = 7 * 24 * 3600            # results stay on the gateway this long after a run ends, unless received sooner
 LIVE = {"queued", "running", "waiting_scientist"}
 
 
@@ -272,6 +273,7 @@ class Supervisor:
             (pub / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
         if rec.state in ("open", "planning"):
             rec.to("waiting_approval", "charter ready for the scientist", charter_digest=d, harness=harness)
+            rec.event("charter_proposed", digest=d)
         elif rec.state == "waiting_approval":
             rec.set(charter_digest=d, harness=harness)
             rec.event("charter_revised", digest=d)
@@ -403,7 +405,7 @@ class Supervisor:
             _shutil.copytree(pub / "plan" / "preview", pub / "preview", dirs_exist_ok=True)
         (pub / "plan-notes.md").write_text(notes, encoding="utf-8")
         rec.set(phase="approval")
-        rec.event("charter_proposed", digest=d, notes=notes[:4000],
+        rec.event("plan_notes", digest=d, notes=notes[:4000],
                   preview=sorted(p.name for p in (pub / "preview").iterdir()) if (pub / "preview").is_dir() else [])
         return {"proposed": True, "digest": d, "note": "the scientist sees it with mhp-gw show; wait for their approval or changes"}
 
@@ -450,8 +452,11 @@ class Supervisor:
 
     def _start(self, run_id: str) -> None:
         rec = self.record(run_id)
-        self.prepare(run_id)
-        rec.to("running", "all instruments allocated")
+        with self.lock:                                 # approval and the tick may both see the instruments come free
+            if rec.state != "queued":
+                return
+            self.prepare(run_id)
+            rec.to("running", "all instruments allocated")
         self.wake(run_id, "start", "The run has started. Read the charter in your instructions and notebook.md, plan, "
                   "rehearse, then begin.")
 
@@ -582,7 +587,8 @@ class Supervisor:
         (out / "report.md").write_text("\n".join(lines), encoding="utf-8")
         rec.event("finish", outcome=outcome, summary=summary, next_experiments=next_experiments or [])
         self.gw.end_run(run_id)
-        rec.to("finished", outcome, ended=now())
+        rec.to("finished", outcome, ended=now(), ended_ts=time.time())
+        self.results_ready(run_id)
         return {"ok": True, "state": "finished"}
 
     # ---- the scientist's requests ------------------------------------------------------------
@@ -621,8 +627,67 @@ class Supervisor:
         pub = rec.public_folder()
         if (pub / "work" / "out").is_dir():
             _shutil.copytree(pub / "work" / "out", pub / "out", dirs_exist_ok=True)
-        rec.to("stopped", f"stopped by {by}", ended=now())
+        rec.to("stopped", f"stopped by {by}", ended=now(), ended_ts=time.time())
+        self.results_ready(run_id)
         return {"run": run_id, "state": "stopped"}
+
+    # ---- results: a manifest, received by the scientist's machine, then deleted here ----------
+    def results_ready(self, run_id: str) -> dict:
+        import hashlib
+        rec = self.record(run_id)
+        out = rec.public_folder() / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        lines = []
+        for f in sorted(p for p in out.rglob("*") if p.is_file() and p.name != "manifest.sha256"):
+            lines.append(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(out).as_posix()}")
+        (out / "manifest.sha256").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        days = KEEP_RESULTS_S // 86400
+        rec.event("results_ready", files=len(lines), keep_days=days,
+                  pull=f"rsync -a mhp-gateway:runs/{run_id}/out/ <here>/   then: mhp-gw ack {run_id}")
+        return {"files": len(lines)}
+
+    def ack(self, run_id: str, by: str) -> dict:
+        rec = self.record(run_id)
+        if by != rec.owner:
+            raise PermissionError("only the run's scientist acknowledges its results")
+        if rec.state not in ENDED:
+            raise ValueError(f"run {run_id} is {rec.state}; results are acknowledged after it ends")
+        rec.set(acked=now(), acked_ts=time.time())
+        rec.event("results_received", by=by)
+        return {"run": run_id, "acknowledged": True, "note": "the gateway deletes its copy of the results"}
+
+    def purge(self, run_id: str, why: str) -> None:
+        """Delete a run's files from the scientist's folder on the gateway; the record (meta, events) stays."""
+        rec = self.record(run_id)
+        pub = rec.public_folder()
+        failed = []
+        for child in sorted(pub.iterdir()) if pub.is_dir() else []:
+            if child.name in ("meta.json", "events.jsonl", "inbox"):   # the record, and replies mhp-gw is still to read
+                continue
+            try:
+                _shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
+            except OSError as e:
+                failed.append(f"{child.name}: {e}")
+        rec.set(purged=now())
+        rec.event("results_deleted", why=why, **({"could_not_delete": failed} if failed else {}))
+
+    def retention(self, now_ts: float | None = None) -> list[str]:
+        t = time.time() if now_ts is None else now_ts
+        done = []
+        for d in sorted(self.runs_dir.iterdir()) if self.runs_dir.is_dir() else []:
+            try:
+                doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if doc.get("state") not in ENDED or doc.get("purged"):
+                continue
+            if doc.get("acked_ts"):
+                self.purge(doc["id"], "the scientist's machine received the results")
+                done.append(doc["id"])
+            elif doc.get("ended_ts") and t - doc["ended_ts"] > KEEP_RESULTS_S:
+                self.purge(doc["id"], f"kept {KEEP_RESULTS_S // 86400} days after the run ended; not received")
+                done.append(doc["id"])
+        return done
 
     # ---- the loop ----------------------------------------------------------------------------
     def tick(self) -> None:
@@ -633,6 +698,7 @@ class Supervisor:
             if rec is not None and rec.state == "queued":
                 self._start(run_id)
         self.process_inboxes()
+        self.retention()
         for run_id, c in list(self.ctl.items()):
             if c.record.state != "running":
                 continue
@@ -663,6 +729,8 @@ class Supervisor:
                         ans = self.answer(run_id, body.get("question", ""), body.get("text", ""), owner)
                     elif kind == "stop":
                         ans = self.stop(run_id, owner)
+                    elif kind == "ack":
+                        ans = self.ack(run_id, owner)
                     else:
                         raise ValueError(f"unknown request {kind!r}")
                     result = {"ok": True, **ans}

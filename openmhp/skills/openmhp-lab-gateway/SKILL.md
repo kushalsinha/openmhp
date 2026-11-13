@@ -91,6 +91,23 @@ ssh mhp-gateway mhp-gw stop R-2611-0042
 - The scientist can change their mind in plain words: pass it on with `message`. A request outside
   the approved charter cannot be granted by the run; it will say so.
 
+## Hearing about runs, and getting results home
+
+A background watcher on this machine keeps one connection to the gateway (`mhp-gw watch`), so news
+arrives even when no agent is open. Offer to install it once, after pairing:
+
+```bash
+mhp agent watch --install-service
+mhp agent inbox                      # unread news: questions, plans to approve, runs started and ended
+```
+
+When the scientist asks about the lab or a run, read `mhp agent inbox` first. A question marked as
+needing the lab means someone has to go there; say so plainly. When a run ends, the watcher copies
+its results into `~/openmhp-runs/<run id>/`, checks every file against the run's manifest, and sends
+`mhp-gw ack <run id>`; the gateway then deletes its copy. Results nobody fetched are deleted 7 days
+after the run ended. Without the watcher, bring them home yourself with rsync (below) and then
+`ssh mhp-gateway mhp-gw ack <run id>`.
+
 ## Handing over skills, scripts and data
 
 Use rsync. The trailing slashes matter: `<folder>/` copies the folder's contents.

@@ -46,6 +46,8 @@ VERBS = {
     "message": "message <run id> <text, or on stdin>: tell the running agent something",
     "answer": "answer <run id> <question id> <text, or on stdin>: answer the run's question",
     "stop": "stop <run id>: stop now; the agent cleans up as the charter says",
+    "watch": "watch [--since <ts>] [--for <s>]: news from all your runs, one JSON line each, as it happens",
+    "ack": "ack <run id>: your machine received the results and checked them; the gateway may delete its copy",
     "help": "this list",
 }
 WAIT_S = 60                                    # how long a request waits for the supervisor before saying "pending"
@@ -265,6 +267,59 @@ class Shell:
                                    since=max([since] + [e["ts"] for e in events]),
                                    open_questions=meta.get("open_questions") or {})
             time.sleep(0.5)
+
+    NEWS = ("question", "answer", "charter_proposed", "charter_revised", "state", "report", "finish", "results_ready",
+            "results_deleted")
+
+    def verb_watch(self, args) -> int:
+        """Stream news from every run of this scientist as JSON lines until the connection drops. A heartbeat line
+        every 30 s lets the far end notice a dead link; `since` makes a reconnect lose nothing."""
+        import time
+        opts = dict(zip(args[0::2], args[1::2]))
+        try:
+            since = float(opts.get("--since", 0))
+            until = time.time() + float(opts["--for"]) if "--for" in opts else None
+        except ValueError:
+            return self.refuse("--since and --for take numbers")
+        base = S.folder(self.scientist, self.root) / "runs"
+        offsets: dict[Path, int] = {}
+        beat = time.time()
+        try:
+            while until is None or time.time() < until:
+                fresh = []
+                for log in sorted(base.glob("*/events.jsonl")) if base.is_dir() else []:
+                    try:
+                        with open(log, "rb") as f:
+                            f.seek(offsets.get(log, 0))
+                            chunk = f.read()
+                            offsets[log] = f.tell()
+                    except OSError:
+                        continue
+                    for line in chunk.decode("utf-8", errors="replace").splitlines():
+                        try:
+                            ev = json.loads(line)
+                        except ValueError:
+                            continue
+                        if ev.get("ts", 0) > since and ev.get("kind") in self.NEWS:
+                            fresh.append(ev)
+                for ev in sorted(fresh, key=lambda e: e["ts"]):
+                    self.out.write(json.dumps(ev, default=str) + "\n")
+                    since = max(since, ev["ts"])
+                if fresh:
+                    self.out.flush()
+                if time.time() - beat > 30:
+                    self.out.write(json.dumps({"kind": "heartbeat", "ts": since, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}) + "\n")
+                    self.out.flush()
+                    beat = time.time()
+                time.sleep(0.5)
+        except (BrokenPipeError, OSError):
+            return OK
+        return OK
+
+    def verb_ack(self, args) -> int:
+        if len(args) != 1:
+            return self.refuse("ack needs one run ID")
+        return self.request(args[0], {"kind": "ack"})
 
     def verb_show(self, args) -> int:
         if len(args) != 1:
