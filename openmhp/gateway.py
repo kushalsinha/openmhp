@@ -69,6 +69,7 @@ def save(state: dict) -> None:
     STATE.write_text(json.dumps(state, indent=1), encoding="utf-8")
     try:
         os.chmod(STATE, 0o600)
+        os.chmod(GW_DIR, 0o700)                   # tokens and the TLS key: this account only, never a scientist's run
     except OSError:
         pass
 
@@ -619,6 +620,21 @@ def pair_agent(name: str | None = None) -> int:
     if state is None:
         say("no gateway on this machine yet. Run `mhp gateway init` first.")
         return 1
+    ssh = state.get("ssh") or {}
+    if ssh.get("mode") == "users":                 # each scientist gets their own Linux user before their machine joins
+        from . import scientists as S, ssh_access as SA
+        if not name:
+            say("this gateway gives every scientist their own Linux user: name them, e.g.  sudo mhp gateway pair-agent alice")
+            return 2
+        try:
+            sci = S.check_name(name.lower())
+            for step in SA.apply_system_user(sci, ssh):
+                say(f"  {step}")
+        except (ValueError, PermissionError, RuntimeError) as e:
+            say(str(e))
+            return 1
+        name = sci
+        say(f"scientist '{sci}': Linux user {SA.login_for(sci, ssh)}, folder {S.folder(sci, Path(ssh['lab_root']))}", "")
     code = new_code()
     entry = {"expires": time.time() + AGENT_CODE_TTL_S, "kind": "agent"}
     if name:
@@ -795,9 +811,10 @@ def ssh_setup(words: list[str]) -> int:
         return 1
     opts = dict(w.split("=", 1) for w in words if "=" in w)
     flags = {w for w in words if "=" not in w}
-    unknown = flags - {"users", "single", "apply"} | set(opts) - {"login", "port", "host", "host-key"}
+    unknown = flags - {"users", "single", "apply"} | set(opts) - {"login", "port", "host", "host-key", "root"}
     if unknown:
-        say(f"unknown: {', '.join(sorted(unknown))}. Usage: mhp gateway ssh [users] [login=NAME] [port=N] [host=NAME] [host-key=FILE] [apply]")
+        say(f"unknown: {', '.join(sorted(unknown))}. Usage: mhp gateway ssh [users] [login=NAME] [port=N] [host=NAME] "
+            "[host-key=FILE] [root=DIR] [apply]")
         return 2
     service_user = os.environ.get("SUDO_USER") or getpass.getuser()
     hk = SA.host_key(opts.get("host-key"))
@@ -805,15 +822,21 @@ def ssh_setup(words: list[str]) -> int:
         say("cannot read this machine's SSH host key (is the OpenSSH server installed?). Give one with host-key=<file.pub>.")
         return 1
     old = state.get("ssh") or {}
-    cfg = {"mode": "users" if "users" in flags else ("single" if "single" in flags else old.get("mode", "single")),
+    mode = "users" if "users" in flags else ("single" if "single" in flags else old.get("mode", "single"))
+    # users mode: scientists' users must reach the lab root, so it lives outside this gateway's private folder
+    lab_root = Path(opts.get("root") or old.get("lab_root") or ("/srv/openmhp" if mode == "users" else S.lab_root())).resolve()
+    cfg = {"mode": mode,
            "login": opts.get("login") or old.get("login") or service_user,
            "port": int(opts.get("port") or old.get("port") or 22),
            "host": opts.get("host") or old.get("host") or state["server_name"],
-           "host_key": hk, "lab_root": str(S.lab_root().resolve()), "python": sys.executable,
+           "host_key": hk, "lab_root": str(lab_root), "python": sys.executable,
            "service_user": service_user, "group": old.get("group", "mhp-scientists"), "openmhp_home": str(HOME.resolve())}
     state["ssh"] = cfg
     save(state)
-    S.lab_root().mkdir(parents=True, exist_ok=True)
+    try:
+        lab_root.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        say(f"cannot create {lab_root} as {getpass.getuser()}: run `sudo mkdir -p {lab_root} && sudo chown {service_user} {lab_root}` once.")
     say(f"scientists' machines will use SSH to {cfg['host']}:{cfg['port']} ({cfg['mode']} mode"
         + (f", account {cfg['login']}" if cfg["mode"] == "single" else ", one Linux user per scientist") + ")",
         f"their folders: {cfg['lab_root']}/scientists/", "")

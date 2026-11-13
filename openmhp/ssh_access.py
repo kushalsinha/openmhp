@@ -119,6 +119,69 @@ def helper_script(cfg: dict) -> str:
     ])
 
 
+def system_user_plan(name: str, cfg: dict, *, user_exists=None, group_exists=None, service_group: str | None = None) -> list[list[str]]:
+    """The commands that give scientist `name` their own Linux user owning their folder (users mode).
+    Pure, so it is tested anywhere; `apply_system_user` runs it as root on the gateway.
+
+    The folder is owned by mhp-<name> with the gateway service's group, mode 2770: the scientist and the
+    gateway read and write it, other scientists cannot enter it. The run-ID counter at the lab root is
+    shared with the scientists' group, since `mhp-gw open` runs as the scientist."""
+    import grp
+    import pwd
+
+    def _user_exists(u):
+        try:
+            pwd.getpwnam(u)
+            return True
+        except KeyError:
+            return False
+
+    def _group_exists(g):
+        try:
+            grp.getgrnam(g)
+            return True
+        except KeyError:
+            return False
+
+    user_exists = user_exists or _user_exists
+    group_exists = group_exists or _group_exists
+    if service_group is None:
+        service_group = grp.getgrgid(pwd.getpwnam(cfg["service_user"]).pw_gid).gr_name
+    user, group = login_for(name, {**cfg, "mode": "users"}), cfg.get("group", "mhp-scientists")
+    root = Path(cfg["lab_root"])
+    home = S.folder(name, root)
+    plan: list[list[str]] = []
+    if not group_exists(group):
+        plan.append(["groupadd", group])
+    if not user_exists(user):
+        plan.append(["useradd", "--home-dir", str(home), "--no-create-home", "--shell", "/bin/sh", "--gid", group,
+                     "--comment", f"OpenMHP scientist {name}", user])
+        plan.append(["usermod", "-p", "*", user])           # no password, but not locked: key logins still work
+    plan += [["chown", "-R", f"{user}:{service_group}", str(home)],
+             ["chmod", "2770", str(home)],
+             ["chmod", "0755", str(root), str(root / "scientists")]]
+    for f in ("run-ids.json", "run-ids.lock"):
+        plan += [["touch", str(root / f)], ["chgrp", group, str(root / f)], ["chmod", "0664", str(root / f)]]
+    return plan
+
+
+def apply_system_user(name: str, cfg: dict) -> list[str]:
+    """Run system_user_plan as root. Returns what was done; raises with the commands to run when not root."""
+    import subprocess
+    S.create(name, root=Path(cfg["lab_root"]))
+    plan = system_user_plan(name, cfg)
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        raise PermissionError("creating a scientist's Linux user needs root. Run this with sudo, or run these once:\n  "
+                              + "\n  ".join(" ".join(shlex.quote(c) for c in cmd) for cmd in plan))
+    done = []
+    for cmd in plan:
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(f"{' '.join(cmd)} failed: {(r.stderr or r.stdout).strip()[:300]}")
+        done.append(" ".join(cmd))
+    return done
+
+
 def main(argv=None) -> int:
     """`python -m openmhp.ssh_access keys <user>`: what the helper runs. Prints nothing on any error, which
     sshd reads as "no keys", so a fault here locks scientists out rather than letting anyone in."""

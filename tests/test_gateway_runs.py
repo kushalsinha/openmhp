@@ -197,6 +197,28 @@ def test_ssh_keys_come_only_from_profiles_and_are_bound_to_mhp_gw():
     assert out.getvalue() == ""
 
 
+def test_each_scientist_can_get_their_own_linux_user():
+    if os.name == "nt":
+        print("skip: Linux users are a gateway (Linux) feature")
+        return
+    from openmhp import ssh_access as SA
+    cfg = {"mode": "users", "lab_root": str(S.lab_root()), "service_user": "openmhp", "group": "mhp-scientists"}
+    plan = SA.system_user_plan("ivy", cfg, user_exists=lambda u: False, group_exists=lambda g: False, service_group="openmhp")
+    cmds = [" ".join(c) for c in plan]
+    home = str(S.folder("ivy"))
+    assert cmds[0] == "groupadd mhp-scientists"
+    assert cmds[1].startswith("useradd --home-dir " + home) and cmds[1].endswith(" mhp-ivy") and "--shell /bin/sh" in cmds[1]
+    assert "usermod -p * mhp-ivy" in cmds                            # not locked, so key logins work
+    assert f"chown -R mhp-ivy:openmhp {home}" in cmds and f"chmod 2770 {home}" in cmds
+    assert any(c.endswith("run-ids.json") and c.startswith("chgrp mhp-scientists") for c in cmds)
+    again = SA.system_user_plan("ivy", cfg, user_exists=lambda u: True, group_exists=lambda g: True, service_group="openmhp")
+    assert not any(c[0] in ("useradd", "groupadd", "usermod") for c in again)   # running it twice only fixes ownership
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        with raises(PermissionError) as e:
+            SA.apply_system_user("ivy", {**cfg, "service_user": os.environ.get("USER") or "root"})
+        assert "sudo" in str(e.value) and "useradd" in str(e.value)
+
+
 FAKE_SSH = """#!{python}
 # Stands in for ssh: skips ssh's options, finds the host, and hands the rest to mhp-gw as sshd's forced command would.
 import os, sys
