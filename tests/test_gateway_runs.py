@@ -92,6 +92,129 @@ def test_mhp_gw_answers_only_its_verbs_for_one_scientist():
     assert G.main([]) == G.REFUSED and G.main(["--scientist", "Not Valid"]) == G.REFUSED
 
 
+def copy(scientist, command):
+    """A file copy as sshd hands it over: returns (exit code, the program and arguments that would run, answer)."""
+    from openmhp.gw_shell import Shell
+    ran, out, err = [], io.StringIO(), io.StringIO()
+    cwd = os.getcwd()
+    try:
+        code = Shell(scientist, out=out, err=err, env={"SSH_ORIGINAL_COMMAND": command},
+                     execvp=lambda prog, argv: ran.append((prog, argv, os.getcwd()))).run()
+    finally:
+        os.chdir(cwd)
+    if out.getvalue():                         # a verb answered on stdout
+        return code, (ran[0] if ran else None), json.loads(out.getvalue())
+    return code, (ran[0] if ran else None), ({"ok": False, "error": err.getvalue()} if err.getvalue() else None)
+
+
+def test_file_copies_stay_inside_the_scientists_own_run_folders():
+    from openmhp import gw_shell as G
+    S.create("dave")
+    rid = S.open_run("dave")["id"]
+    home = S.folder("dave").resolve()
+
+    # copies in: rsync and classic scp, into in/ only, run from the scientist's folder, links that point outside ignored
+    code, ran, _ = copy("dave", f"rsync --server -logDtpre.iLsfxCIvu --partial . runs/{rid}/in/")
+    assert code == G.OK and ran[0] == "rsync" and Path(ran[2]).resolve() == home
+    assert ran[1] == ["rsync", "--server", "-logDtpre.iLsfxCIvu", "--partial", "--safe-links", ".", f"runs/{rid}/in/"]
+    code, ran, _ = copy("dave", f"scp -r -t -- runs/{rid}/in/bo-skill")
+    assert code == G.OK and ran[1] == ["scp", "-r", "-t", "--", f"runs/{rid}/in/bo-skill"]
+    code, ran, _ = copy("dave", f"rsync --server -vlogDtpre.iLsfxCIvu . ~/runs/{rid}/in/")      # ~/ is the folder
+    assert code == G.OK and ran[1][-1] == f"runs/{rid}/in/"
+    code, ran, _ = copy("dave", f"rsync --server -g -l -o -p -D -r -t --dirs . runs/{rid}/in/bo/")   # macOS openrsync's shape
+    assert code == G.OK and ran[1][-1] == f"runs/{rid}/in/bo/"
+    if os.name != "nt":
+        code, ran, _ = copy("dave", f"rsync --server -logDtpre.iLsfxCIvu . {home}/runs/{rid}/in/")   # absolute, own folder
+        assert code == G.OK and ran[1][-1] == f"runs/{rid}/in/"
+
+    # copies out: from preview/ and out/ only, never with --safe-links added
+    code, ran, _ = copy("dave", f"rsync --server --sender -logDtpre.iLsfxCIvu . runs/{rid}/out/ runs/{rid}/preview/")
+    assert code == G.OK and "--safe-links" not in ran[1] and ran[1][-2:] == [f"runs/{rid}/out/", f"runs/{rid}/preview/"]
+    code, ran, _ = copy("dave", f"scp -r -f runs/{rid}/out")
+    assert code == G.OK and ran[1] == ["scp", "-r", "-f", "--", f"runs/{rid}/out"]
+
+    # everything else is refused before anything runs
+    alice_run = S.open_run("alice")["id"]
+    refused = [
+        f"rsync --server --sender -logDtpre.iLsfxCIvu . runs/{rid}/in/",         # reading in/ back: not a results folder
+        f"rsync --server -logDtpre.iLsfxCIvu . runs/{rid}/out/",                 # writing into out/
+        f"rsync --server -logDtpre.iLsfxCIvu . runs/{rid}/",                     # the run folder itself
+        f"rsync --server -logDtpre.iLsfxCIvu . runs/{rid}/in/../../../profile.json",
+        "rsync --server -logDtpre.iLsfxCIvu . ../alice/runs/x/in/",
+        "rsync --server --sender -logDtpre.iLsfxCIvu . /etc/passwd",
+        f"rsync --server --remove-source-files -logDtpre.iLsfxCIvu . runs/{rid}/in/",
+        f"rsync --server --log-file=/tmp/x -logDtpre.iLsfxCIvu . runs/{rid}/in/",
+        f"rsync -logDtpre.iLsfxCIvu . runs/{rid}/in/",                           # not as the far end of a copy
+        f"rsync --server -logDtpre.iLsfxCIvu runs/{rid}/in/",                    # no '.' separator
+        f"scp -t runs/{rid}/out/x",
+        f"scp -t runs/{rid}/in/a runs/{rid}/in/b",
+        f"scp -S /bin/sh -t runs/{rid}/in/",
+        f"scp -f /etc/passwd",
+        f"scp -t runs/R-9999-9999/in/",                                          # no such run: not found
+        f"scp -t runs/{alice_run}/in/",                                          # alice's run is not dave's
+        "/usr/lib/openssh/sftp-server",
+        "internal-sftp",
+    ]
+    for cmd in refused:
+        code, ran, ans = copy("dave", cmd)
+        assert ran is None and code in (G.REFUSED, G.NOT_FOUND) and not ans["ok"], (cmd, code, ans)
+        assert ans["error"].startswith("mhp-gw: ") or cmd == "", cmd          # on stderr: the copy's stdout is its protocol
+    assert "-O" in copy("dave", "internal-sftp")[2]["error"]
+    assert "-O" in copy("dave", "")[2]["error"]                                  # an empty command: likely modern scp
+
+
+FAKE_SSH = """#!{python}
+# Stands in for ssh: skips ssh's options, finds the host, and hands the rest to mhp-gw as sshd's forced command would.
+import os, sys
+args, i = sys.argv[1:], 0
+while i < len(args) and args[i].startswith("-"):
+    i += 2 if args[i] in ("-l", "-p", "-i", "-o", "-F", "-J", "-c", "-m", "-b", "-e") else 1
+env = dict(os.environ, SSH_ORIGINAL_COMMAND=" ".join(args[i + 1:]))
+os.execve({python!r}, [{python!r}, "-m", "openmhp.gw_shell", "--scientist", "erin", "--root", {root!r}], env)
+"""
+
+
+def test_real_rsync_and_scp_through_the_forced_command():
+    """The real clients, end to end, with a stand-in for ssh. Skipped where rsync or scp is missing."""
+    import shutil
+    import subprocess
+    if os.name == "nt" or not (shutil.which("rsync") and shutil.which("scp")):
+        print("skip: needs rsync and scp")
+        return
+    work = Path(tempfile.mkdtemp(prefix="gw-copy-"))
+    fake = work / "fakessh"
+    fake.write_text(FAKE_SSH.format(python=sys.executable, root=str(S.lab_root())))
+    fake.chmod(0o755)
+    S.create("erin")
+    rid = S.open_run("erin")["id"]
+    src = work / "bo"
+    src.mkdir()
+    (src / "run.py").write_text("print('next point')\n")
+    os.symlink("/etc/passwd", src / "outside")
+    env = dict(os.environ, PYTHONPATH=os.getcwd())
+    run = lambda *cmd: subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=60)
+
+    r = run("rsync", "-a", "-e", str(fake), f"{src}/", f"gw:runs/{rid}/in/bo/")
+    got = S.run_folder("erin", rid) / "in" / "bo"
+    assert r.returncode == 0 and (got / "run.py").is_file() and not (got / "outside").exists(), r.stderr
+    r = run("scp", "-O", "-r", "-S", str(fake), str(src / "run.py"), f"gw:runs/{rid}/in/again.py")
+    assert r.returncode == 0 and (S.run_folder("erin", rid) / "in" / "again.py").is_file(), r.stderr
+
+    (S.run_folder("erin", rid) / "out" / "summary.csv").write_text("cell,retention\n1,0.94\n")
+    back = work / "back"
+    r = run("rsync", "-a", "-e", str(fake), f"gw:runs/{rid}/out/", f"{back}/")
+    assert r.returncode == 0 and (back / "summary.csv").is_file(), r.stderr
+    r = run("scp", "-O", "-r", "-S", str(fake), f"gw:runs/{rid}/out", str(work / "back2"))
+    assert r.returncode == 0 and (work / "back2" / "summary.csv").is_file(), r.stderr
+
+    r = run("rsync", "-a", "-e", str(fake), f"{src}/", f"gw:runs/{rid}/out/")
+    assert r.returncode != 0 and "files can only be copied into" in r.stderr
+    r = run("scp", "-O", "-S", str(fake), str(src / "run.py"), "gw:profile.json")
+    assert r.returncode != 0 and "files can only be copied into" in r.stderr
+    r = run("scp", "-S", str(fake), str(src / "run.py"), f"gw:runs/{rid}/in/x.py")          # modern scp: SFTP
+    assert r.returncode != 0 and ("-O" in r.stderr or not (S.run_folder("erin", rid) / "in" / "x.py").exists())
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
