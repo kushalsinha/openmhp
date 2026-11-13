@@ -219,6 +219,16 @@ def test_each_scientist_can_get_their_own_linux_user():
         assert "sudo" in str(e.value) and "useradd" in str(e.value)
 
 
+def test_the_bundled_skill_teaches_every_verb_and_rsync():
+    from openmhp import gw_shell as G
+    text = (Path("openmhp") / "skills" / "openmhp-lab-gateway" / "SKILL.md").read_text(encoding="utf-8")
+    head = text.split("---")[1]
+    assert "name: openmhp-lab-gateway" in head and "description:" in head
+    for verb in G.VERBS:
+        assert f"mhp-gw {verb}" in text, verb
+    assert "rsync -a" in text and "show_to_scientist" in text and "mhp-gateway" in text
+
+
 FAKE_SSH = """#!{python}
 # Stands in for ssh: skips ssh's options, finds the host, and hands the rest to mhp-gw as sshd's forced command would.
 import os, sys
