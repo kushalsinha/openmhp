@@ -206,6 +206,45 @@ def test_mcp_surface():
     assert "run/finish" in log["contents"][0]["text"]
 
 
+def test_update_notice_reaches_the_agent_once():
+    """A newer release on PyPI is passed to the agent in the server instructions and once on a tool result,
+    with the upgrade command for this install. Offline, current, pre-release or opted out: nothing is said."""
+    from openmhp import __version__, update_check as U
+    assert U.newer("99.0.0") and not U.newer(__version__) and not U.newer("99.0.0rc1") and not U.newer(None)
+    assert U.parse("0.10.0") == (0, 10, 0) and U.parse("0.10.0.dev1") is None
+    if U.cache_path().exists():
+        U.cache_path().unlink()
+    assert U.notice() is None                                          # nothing cached yet: nothing said
+
+    def boom():
+        raise OSError("offline")
+    day = U.CHECK_EVERY_S
+    assert U.refresh(fetch=boom, now=10 * day)["latest"] is None and U.notice() is None     # offline lab: quiet
+    calls = []
+    assert U.refresh(fetch=lambda: calls.append(1) or "99.0.0", now=10 * day + 60)["latest"] is None and not calls  # < 1 day
+    assert U.refresh(fetch=lambda: "99.0.0", now=11 * day + 1)["latest"] == "99.0.0"
+    assert U.refresh(fetch=boom, now=13 * day)["latest"] == "99.0.0"                       # a failed check keeps what it knew
+    n = U.notice()
+    assert "99.0.0" in n and __version__ in n and ("openmhp-cli@latest update" in n or "pip install -U" in n)
+
+    b = fresh_bridge()
+    init = b.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})["result"]
+    assert "OpenMHP 99.0.0 is available" in init["instructions"]
+    call = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "mhp_lab", "arguments": {"op": "status"}}}
+    first = b.handle({**call, "id": 2})["result"]["content"]
+    second = b.handle({**call, "id": 3})["result"]["content"]
+    assert len(first) == 2 and "99.0.0" in first[1]["text"] and len(second) == 1   # once per session
+    json.loads(first[0]["text"])                                                   # the tool's own answer is untouched
+
+    os.environ["OPENMHP_NO_UPDATE_CHECK"] = "1"
+    try:
+        assert U.notice() is None and "99.0.0" not in fresh_bridge().handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})["result"]["instructions"]
+    finally:
+        del os.environ["OPENMHP_NO_UPDATE_CHECK"]
+        U.cache_path().unlink()
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

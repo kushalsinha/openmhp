@@ -17,6 +17,13 @@ Harness config, if you prefer to add it by hand:
 ```
 
 Other commands: `npx openmhp-cli scan [host...]`, `add <target>`, `list`, `remove <id>`,
-`validate <folder>`, `device <folder> --http 18921`, `update`.
+`validate <folder>`, `device <folder> --http 18921`.
+
+To update, run the command below, then restart your agent. It upgrades the runtime and the
+skills. The OpenMHP server tells your agent when a new version is out.
+
+```bash
+npx -y openmhp-cli@latest update
+```
 
 Requires Node 18+ and Python 3.10+. Everything is kept in `~/.openmhp`.

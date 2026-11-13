@@ -7,7 +7,8 @@
  *   npx openmhp-cli scan [host...]  find MHP devices on the network
  *   npx openmhp-cli add <target>    add a device (http://host:port or a device package folder)
  *   npx openmhp-cli demo            add two simulated instruments to try things without hardware
- *   npx openmhp-cli list | remove <id> | validate <folder> | device <folder> [--http PORT] | update
+ *   npx openmhp-cli update          upgrade the runtime and the skills (use openmhp-cli@latest to get a new launcher too)
+ *   npx openmhp-cli list | remove <id> | validate <folder> | device <folder> [--http PORT]
  *
  * Everything lives in ~/.openmhp (venv, fleet.json, devices/). The Python package
  * does the work; this launcher only makes sure it exists. Logs go to stderr because
@@ -21,8 +22,23 @@ const { spawn } = require("child_process");
 const { HOME, log, ensureRuntime, run, tool } = require("../lib/runtime");
 const { nodeSetup } = require("../lib/node_setup");
 
+function installedVersion() {
+  const r = require("child_process").spawnSync(tool("python"), ["-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
+function update() {
+  const before = installedVersion();
+  ensureRuntime({ upgrade: true });
+  log("refreshing Agent Skills in the harnesses found on this machine");
+  run("mhp", ["skills", "install"]);
+  const after = installedVersion();
+  log(before && before !== after ? `updated ${before} -> ${after}` : `OpenMHP ${after} is current`);
+  log("restart your agent (or reconnect the openmhp MCP server) so it loads the new version.");
+}
+
 function setup() {
-  ensureRuntime();
+  ensureRuntime({ upgrade: true });     // rerunning setup on an old install upgrades it instead of keeping it
   log("installing Agent Skills into the harnesses found on this machine");
   run("mhp", ["skills", "install"]);
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
@@ -60,7 +76,7 @@ function main() {
       return;
     case "setup": return setup();
     case "node": return nodeSetup(rest).catch((e) => { log(String(e)); process.exit(1); });
-    case "update": return ensureRuntime({ upgrade: true });
+    case "update": case "upgrade": return update();
     case "scan": case "add": case "remove": case "list": case "demo":
       ensureRuntime(); process.exit(run("mhp", ["lab", cmd, ...rest]));
     case "validate": ensureRuntime(); process.exit(run("mhp", ["validate", ...rest]));

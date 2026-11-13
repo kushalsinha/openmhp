@@ -109,6 +109,19 @@ Prefer Python directly? Install the runtime with:
 pip install "openmhp[all]"
 ```
 
+**Updating.** When a new version is out, the OpenMHP server tells your agent once per session,
+along with the command for your install. To update yourself, run one of these and restart the
+agent:
+
+```bash
+npx -y openmhp-cli@latest update                     # installed with npx: upgrades the runtime and the skills
+pip install -U "openmhp[all]" && mhp skills install  # installed with pip
+npx -y openmhp-node@latest setup                     # an instrument PC set up as a node
+```
+
+The check reads PyPI at most once a day and sends nothing but the package name. Set
+`OPENMHP_NO_UPDATE_CHECK=1` to turn it off.
+
 ### 2. Add the simulated lab
 
 ```bash
