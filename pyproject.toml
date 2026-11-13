@@ -20,6 +20,7 @@ Issues = "https://github.com/kushalsinha/openmhp/issues"
 mhp = "openmhp.cli:main"
 mhp-mcp = "openmhp.mcp_bridge:main"
 mhp-validate = "openmhp.validate:main"
+mhp-gw = "openmhp.gw_shell:main"
 
 [build-system]
 requires = ["setuptools>=68"]
