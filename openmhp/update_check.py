@@ -1,6 +1,8 @@
-"""Tell people inside an agent harness that a newer OpenMHP is out.
+"""Tell people that a newer OpenMHP is out: inside an agent harness, on a lab PC running `mhp node`,
+and on the gateway that sees every lab PC.
 
-The MCP server never blocks on this. At start it reads a small cache (~/.openmhp/update-check.json) and,
+Nothing here ever blocks or updates anything by itself (a qualified instrument PC changes software
+under change control, not on its own). The MCP server, node and gateway never block on this. At start it reads a small cache (~/.openmhp/update-check.json) and,
 when that is older than a day, refreshes it on a daemon thread from PyPI's public JSON endpoint. The only
 thing sent is an anonymous GET for the package name. The bridge passes the result to the agent once per
 session, with the command that upgrades this particular install.
@@ -12,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -82,11 +85,64 @@ def refresh_in_background() -> None:
         threading.Thread(target=refresh, name="mhp-update-check", daemon=True).start()
 
 
+def latest_known(*others: str | None) -> str:
+    """The newest release this process knows of: its own version, the cached PyPI answer, and any others
+    (a gateway passes on what it knows, so a lab PC with no internet still learns of a release)."""
+    known = [v for v in (__version__, read_cache().get("latest"), *others) if parse(v or "")]
+    return max(known, key=parse)
+
+
+def watch(on_newer, every_s: float = 3600, stop: threading.Event | None = None) -> threading.Event:
+    """For long-running processes (a node, a gateway): re-check in the background and call on_newer(version)
+    once for each newer release seen. Returns the Event that stops it."""
+    stop = stop or threading.Event()
+
+    def loop():
+        told = None
+        while not stop.is_set():
+            refresh()
+            latest = read_cache().get("latest")
+            if newer(latest) and latest != told:
+                told = latest
+                try:
+                    on_newer(latest)
+                except Exception:                              # noqa: BLE001  a notice must never take a node down
+                    pass
+            stop.wait(every_s)
+    if not disabled():
+        threading.Thread(target=loop, name="mhp-update-watch", daemon=True).start()
+    return stop
+
+
+def installed_by_npx() -> bool:
+    return Path(sys.prefix).resolve() == (home() / "venv").resolve()
+
+
 def upgrade_command() -> str:
     """The command that upgrades THIS install: the npx launcher's venv, or whatever pip put it in."""
-    if Path(sys.prefix).resolve() == (home() / "venv").resolve():
+    if installed_by_npx():
         return "npx -y openmhp-cli@latest update"
     return 'pip install -U "openmhp[all]" && mhp skills install'
+
+
+def _q(x: str | Path) -> str:
+    x = str(x)
+    return f'"{x}"' if " " in x else x
+
+
+def node_upgrade_command(folder: str | Path, as_service: bool, python: str | None = None) -> str:
+    """What the person at a lab PC runs. Reinstalling the service restarts it on the new version. The pip
+    route names the interpreter the node runs on when `pip`/`mhp` on PATH belong to another environment,
+    so the update lands where the node actually runs."""
+    f = str(folder) if str(folder).startswith("<") else _q(Path(folder).expanduser().resolve())
+    exe = Path(python or sys.executable)
+    if exe.resolve().parent == (home() / "venv" / ("Scripts" if os.name == "nt" else "bin")).resolve():
+        return f"npx -y openmhp-cli@latest node {f}"
+    on_path = all((w := shutil.which(t)) and Path(w).resolve().parent == exe.resolve().parent for t in ("pip", "mhp"))
+    pip, mhp = ("pip", "mhp") if on_path else (f"{_q(exe)} -m pip", f"{_q(exe)} -m openmhp.cli")
+    if as_service:
+        return f'{pip} install -U "openmhp[node]" && {mhp} node {f} --install-service'
+    return f'{pip} install -U "openmhp[node]", then start `{mhp} node {f}` again'
 
 
 def notice() -> str | None:

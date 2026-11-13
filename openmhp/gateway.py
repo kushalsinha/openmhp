@@ -8,7 +8,7 @@ command either finishes the job or prints the one thing to do next.
     mhp gateway pair                  print a one-time code for a lab PC:  mhp node <dir> --join <this url> <code>
     mhp gateway pair-agent [name]     print a one-time code for an agent machine:  mhp agent --join <this url> <code>
     mhp gateway add-agent <name>      let one agent machine through by hand; prints the token to paste there
-    mhp gateway status | check        what is connected, and what to fix
+    mhp gateway status | check        what is connected, which lab PCs run an old OpenMHP, and what to fix
 
 Agent face (bearer = agent token):  POST /agent/join (code, no token)    GET /    GET /<node>/<device>/mhp.json    POST /<node>/<device>/rpc
                                     GET /<node>/<device>/events (SSE)         /directory/{rpc,mhp.json}
@@ -40,6 +40,8 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import __version__
+from . import update_check as U
 from .directory import Directory
 
 HOME = Path(os.environ.get("OPENMHP_HOME", "~/.openmhp")).expanduser()
@@ -137,6 +139,8 @@ class Node:
         self.last_seen = 0.0                      # any call from the node (for status display)
         self.last_poll = 0.0                      # when its last /relay/next ended
         self.polling = 0                          # /relay/next calls in progress; a live node always has one
+        self.version: str | None = None           # the node's OpenMHP; None = 0.10.0 or older, which never said
+        self.upgrade: str | None = None           # the command its owner runs to update it, as the node worked it out
         self.lock = threading.Lock()
 
     @property
@@ -256,6 +260,7 @@ class Gateway:
 
     def register(self, node: Node, body: dict) -> None:
         node.last_poll = time.time()              # registering counts as alive until the first poll arrives
+        node.version, node.upgrade = body.get("openmhp"), body.get("upgrade")
         seen = set()
         for d in body.get("devices", []):
             did = d["id"]
@@ -321,16 +326,34 @@ class Gateway:
         node.queue.put({"rid": rid, "device": device, "kind": kind, "client": client, "trusted": True, "body": body})
         try:
             if slot["event"].wait(timeout):
-                return slot["reply"]
+                code, reply = slot["reply"]
+                note = self.outdated_note(node) if kind == "rpc" and (body or {}).get("method") == "device/describe" else None
+                if note and isinstance(reply, dict) and isinstance(reply.get("result"), dict):
+                    reply = {**reply, "result": {**reply["result"], "notice": note}}
+                return code, reply
             return 504, {"error": f"node '{node.name}' did not answer within {int(timeout)}s; the request is dropped and will not "
                          "be re-sent. If it was an action, check jobs/status before repeating it."}
         finally:
             node.inflight.pop(rid, None)
 
+    def outdated(self, node: Node) -> bool:
+        return node.version is None or U.newer(U.latest_known(), node.version)
+
+    def outdated_note(self, node: Node) -> str | None:
+        """Said to an agent reading a device's description, so the person it works for hears it in passing."""
+        if not self.outdated(node):
+            return None
+        have = f"OpenMHP {node.version}" if node.version else "OpenMHP 0.10.0 or older"
+        return (f"This instrument is served by lab PC '{node.name}', which runs {have}; {U.latest_known()} is out. "
+                "Mention once to the user that whoever looks after that PC can update it"
+                + (f" with: {node.upgrade}" if node.upgrade else " (the gateway's `mhp gateway status` lists the command)")
+                + ". It keeps working as it is; do not hold up the task for this.")
+
     def status_doc(self) -> dict:
         self.refresh()
-        return {"gateway": self.state["server_name"], "nodes": {
-            name: {"online": n.online, "last_seen": n.last_seen,
+        return {"gateway": self.state["server_name"], "openmhp": __version__, "latest": U.latest_known(), "nodes": {
+            name: {"online": n.online, "last_seen": n.last_seen, "openmhp": n.version, "upgrade": n.upgrade,
+                   "outdated": self.outdated(n),
                    "devices": {d: {"state": v.get("state"), "url": agent_url(self.state, f"{name}/{d}")} for d, v in n.devices.items()}}
             for name, n in self.nodes.items()} | {
             name: {"online": False, "last_seen": 0, "devices": {}} for name in self.state.get("nodes", {}) if name not in self.nodes}}
@@ -379,7 +402,7 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
                     return
                 if parts[1:] == ["register"]:
                     gw.register(node, self._body())
-                    return self._json(200, {"ok": True, "name": node.name})
+                    return self._json(200, {"ok": True, "name": node.name, "latest": U.latest_known()})
                 if parts[1:] == ["reply"]:
                     gw.reply(node, self._body())
                     return self._json(200, {"ok": True})
@@ -506,6 +529,8 @@ def serve(host: str | None = None, port: int | None = None) -> int:
     say(f"MHP gateway '{state['server_name']}' listening on https://{host}:{port}",
         f"  lab PCs join with:   mhp node <devices folder> --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair`>",
         f"  agent machines join: mhp agent --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair-agent`>", "  Ctrl-C to stop")
+    U.watch(lambda v: say(f"OpenMHP {v} is out (this gateway runs {__version__}). `mhp gateway status` lists the lab PCs "
+                          f"that are behind. To update the gateway itself: pip install -U openmhp, then restart `mhp gateway serve`."))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -645,23 +670,43 @@ def _live() -> dict | None:
         return None
 
 
+NODE_UPGRADE_GENERIC = ('npx -y openmhp-cli@latest node <devices folder>   (or: pip install -U "openmhp[node]" && '
+                        'mhp node <devices folder> --install-service)')     # for a node too old to say its own
+
+
 def status() -> int:
     state = load()
     if state is None:
         say("no gateway on this machine. Run `mhp gateway init` to make one.")
         return 1
     live = _live()
-    say(f"gateway {agent_url(state)}   ({'running' if live else 'NOT running: mhp gateway serve'})", f"settings: {STATE}",
-        f"certificate: {'self-signed, ' if state.get('self_signed') else ''}{state['cert']}", "")
+    U.refresh()                                            # at most once a day; quiet when offline
+    latest = U.latest_known((live or {}).get("latest"))
+    say(f"gateway {agent_url(state)}   ({'running' if live else 'NOT running: mhp gateway serve'})   OpenMHP {__version__}",
+        f"settings: {STATE}", f"certificate: {'self-signed, ' if state.get('self_signed') else ''}{state['cert']}", "")
+    if U.newer(latest):
+        say(f"OpenMHP {latest} is out. Update this gateway with:  pip install -U openmhp   then restart `mhp gateway serve`.", "")
+    behind = []
     if not state["nodes"]:
         say("lab PCs: none joined yet. `mhp gateway pair`, then run the printed line on the lab PC.")
     for name in sorted(state["nodes"]):
         n = (live or {}).get("nodes", {}).get(name, {})
         when = n.get("last_seen") or 0
         flag = "online" if n.get("online") else (f"offline, last seen {int(time.time() - when)}s ago" if when else "offline")
-        say(f"lab PC '{name}': {flag}")
+        ver = ""
+        if n.get("online") or n.get("openmhp"):
+            v = n.get("openmhp")
+            old = v is None or U.newer(latest, v)
+            ver = f", OpenMHP {v or '0.10.0 or older'}" + (f"  BEHIND ({latest} is out)" if old else "")
+            if old:
+                behind.append((name, n.get("upgrade")))
+        say(f"lab PC '{name}': {flag}{ver}")
         for did, d in sorted(n.get("devices", {}).items()):
             say(f"    {d['url']:62s} {d.get('state') or ''}")
+    if behind:
+        say("", f"{len(behind)} lab PC(s) run an older OpenMHP. They keep working; update each when convenient. On that PC run:")
+        for name, cmd in behind:
+            say(f"  {name}:  {cmd or NODE_UPGRADE_GENERIC}")
     say("", "agents allowed through: " + (", ".join(sorted(set(state["agents"].values()))) or "none yet (mhp gateway pair-agent)"))
     say("", f"network requirement: lab PCs and agent machines must reach {state['server_name']}:{state.get('listen', 443)}. Nothing inbound to the lab.")
     return 0

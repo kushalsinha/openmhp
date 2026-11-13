@@ -167,6 +167,40 @@ def test_relay_end_to_end():
     res = d.call("directory/search", {"query": "thermocycler"})["results"]
     assert res and res[0]["target"].startswith(f"{base}/bench/") and res[0]["state"] not in (None, "offline")
 
+    # ---- versions: the node says which OpenMHP it runs; the gateway flags lab PCs that are behind, tells the
+    #      node (which may have no internet), and tells an agent reading the description. Nothing updates itself.
+    from openmhp import __version__, update_check as U
+    ci_off = os.environ.pop("OPENMHP_NO_UPDATE_CHECK", None)
+    try:
+        doc = gw.status_doc()["nodes"]["bench"]
+        assert doc["openmhp"] == __version__ and doc["outdated"] is False
+        assert "notice" not in a.describe("summary")
+        node.upgrade = "npx -y openmhp-cli@latest node C:/lab/devices"
+        U.cache_path().write_text(json.dumps({"checked": time.time(), "latest": "99.0.0"}))   # PyPI has a newer one
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out):
+            node.register()
+            node.register()                                    # said once, not at every reconnect
+        assert out.getvalue().count("OpenMHP 99.0.0 is out") == 1 and node.upgrade in out.getvalue()
+        doc = gw.status_doc()
+        assert doc["latest"] == "99.0.0" and doc["nodes"]["bench"]["outdated"] and doc["nodes"]["bench"]["upgrade"] == node.upgrade
+        note = a.describe("summary")["notice"]
+        assert "'bench'" in note and __version__ in note and "99.0.0" in note and node.upgrade in note
+        out = io.StringIO()
+        with contextlib.redirect_stderr(out):
+            assert G.status() == 0
+        assert "BEHIND (99.0.0 is out)" in out.getvalue() and f"bench:  {node.upgrade}" in out.getvalue()
+        gw.nodes["bench"].version = None                       # a node from 0.10.0 or older never said
+        assert "0.10.0 or older" in a.describe("summary")["notice"]
+        U.cache_path().unlink()
+        node.register()
+        assert gw.status_doc()["nodes"]["bench"]["outdated"] is False and "notice" not in a.describe("summary")
+    finally:
+        if U.cache_path().exists():
+            U.cache_path().unlink()
+        if ci_off is not None:
+            os.environ["OPENMHP_NO_UPDATE_CHECK"] = ci_off
+
     # ---- an agent machine pairs with a code (SPEC 9.2): nothing to paste, the certificate is pinned
     from openmhp import agent as AG
     from openmhp.client import HttpDevice

@@ -33,6 +33,8 @@ jobs:
         # bash on every OS stops at the first failing script; Windows' default shell, pwsh,
         # would report only the exit code of the last one
         shell: bash
+        env:
+          OPENMHP_NO_UPDATE_CHECK: "1"     # no PyPI calls from CI; the tests that need the check turn it on themselves
         run: |
           python tests/test_adapters.py
           python tests/test_runs.py

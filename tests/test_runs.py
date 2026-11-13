@@ -210,6 +210,7 @@ def test_update_notice_reaches_the_agent_once():
     """A newer release on PyPI is passed to the agent in the server instructions and once on a tool result,
     with the upgrade command for this install. Offline, current, pre-release or opted out: nothing is said."""
     from openmhp import __version__, update_check as U
+    ci_off = os.environ.pop("OPENMHP_NO_UPDATE_CHECK", None)        # CI turns the check off; this test needs it on
     assert U.newer("99.0.0") and not U.newer(__version__) and not U.newer("99.0.0rc1") and not U.newer(None)
     assert U.parse("0.10.0") == (0, 10, 0) and U.parse("0.10.0.dev1") is None
     if U.cache_path().exists():
@@ -236,6 +237,14 @@ def test_update_notice_reaches_the_agent_once():
     assert len(first) == 2 and "99.0.0" in first[1]["text"] and len(second) == 1   # once per session
     json.loads(first[0]["text"])                                                   # the tool's own answer is untouched
 
+    # a lab PC: the command names the interpreter the node runs on, and reinstalling the service restarts it
+    npx_py = U.home() / "venv" / ("Scripts" if os.name == "nt" else "bin") / "python"
+    assert U.node_upgrade_command("/lab/my devices", True, python=str(npx_py)).startswith("npx -y openmhp-cli@latest node \"")
+    other = U.node_upgrade_command("/lab/devices", True, python=os.path.join(tempfile.gettempdir(), "elsewhere", "bin", "python"))
+    assert "elsewhere" in other and '-m pip install -U "openmhp[node]"' in other and other.endswith("--install-service")
+    assert "start `" in U.node_upgrade_command("/lab/devices", False, python=os.path.join(tempfile.gettempdir(), "x", "python"))
+    assert U.node_upgrade_command("<devices folder>", True).count("<devices folder>") == 1
+
     os.environ["OPENMHP_NO_UPDATE_CHECK"] = "1"
     try:
         assert U.notice() is None and "99.0.0" not in fresh_bridge().handle(
@@ -243,6 +252,8 @@ def test_update_notice_reaches_the_agent_once():
     finally:
         del os.environ["OPENMHP_NO_UPDATE_CHECK"]
         U.cache_path().unlink()
+        if ci_off is not None:
+            os.environ["OPENMHP_NO_UPDATE_CHECK"] = ci_off
 
 
 if __name__ == "__main__":

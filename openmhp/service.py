@@ -21,12 +21,26 @@ lab bench PC is exactly the kind of machine where a stack trace helps no one.
 """
 from __future__ import annotations
 
+import json
+import os
 import platform
 import subprocess
 import sys
 from pathlib import Path
 
 LABEL = "openmhp-node"
+
+
+def record_path() -> Path:
+    """Which Python and folder the installed service runs, so status can say how to update THAT install."""
+    return Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp")).expanduser() / "node-service.json"
+
+
+def installed_record() -> dict | None:
+    try:
+        return json.loads(record_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def _command(packages_dir: str | Path, http_base: int) -> list[str]:
@@ -209,6 +223,9 @@ def install(packages_dir: str | Path, http_base: int, dry_run: bool = False) -> 
         elif system == "Windows":
             result["note"] = "will start at the next login. To start it now too, run the file it just wrote."
         result["command"] = " ".join(_command(packages_dir, http_base))
+        record_path().parent.mkdir(parents=True, exist_ok=True)
+        record_path().write_text(json.dumps({"python": sys.executable, "folder": str(Path(packages_dir).resolve()),
+                                             "http": http_base}), encoding="utf-8")
     except OSError as e:
         result["ok"] = False
         result["error"] = f"{type(e).__name__}: {e}"
@@ -228,6 +245,8 @@ def uninstall() -> dict:
             result["steps"].append("launchctl unload")
         if path.is_file():
             path.unlink()
+        if record_path().is_file():
+            record_path().unlink()
             result["steps"].append(f"removed {path}")
         else:
             result["steps"].append(f"nothing installed at {path}")
