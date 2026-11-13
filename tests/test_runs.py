@@ -72,7 +72,11 @@ def test_background_run_and_data():
     assert csv.startswith("setpoint,measured_mean") and "40," in csv
     out = b.call_tool("mhp_data", {"op": "read", "run": "latest", "path": "stdout.txt"})["text"]
     assert "measured" in out
-    log = b.call_tool("mhp_data", {"op": "log", "since": 0})["events"]
+    for _ in range(100):                                       # the state flips to done before run/finish is logged
+        log = b.call_tool("mhp_data", {"op": "log", "since": 0})["events"]
+        if any(e["kind"] == "run/finish" and e["run"] == rid for e in log):
+            break
+        time.sleep(0.1)
     assert any(e["kind"] == "run/finish" and e["run"] == rid for e in log)
     try:
         b.call_tool("mhp_data", {"op": "read", "run": rid, "path": "../../fleet.json"}); assert False

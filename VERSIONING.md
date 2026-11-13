@@ -2,7 +2,7 @@
 
 OpenMHP is two things that version separately: the **protocol** (`SPEC.md`, reported by every
 device as `mhp` at `initialize` and in `device/describe`) and the **reference implementation**
-(the `openmhp` Python package, `openmhp-cli` and `openmhp-node`).
+(the `openmhp` Python package and the `openmhp-cli` launcher).
 
 ## How versions are numbered
 
@@ -50,7 +50,7 @@ Nothing is removed without passing through deprecation first:
 Pin the implementation (`openmhp==X.Y.Z`) and the protocol revision your device reports. A
 conformance report (`mhp conformance <target>`) is evidence about **one device at one protocol
 revision**, so re-run it after changing either. Nothing in the runtime auto-updates a
-deployment; `npx openmhp-node` resolves the latest published launcher at install time, so pin
+deployment; `npx openmhp-cli` resolves the latest published launcher at install time, so pin
 it too if your deployment is qualified.
 
 ## Where changes are announced

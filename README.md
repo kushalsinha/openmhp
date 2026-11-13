@@ -12,7 +12,6 @@ robots, and industrial equipment. MCP connects an agent to a software tool for a
 response. OpenMHP extends that model for physical work that may run for minutes, hours, or days.
 
 [![npm](https://img.shields.io/npm/v/openmhp-cli?label=openmhp-cli&color=3FB59A)](https://www.npmjs.com/package/openmhp-cli)
-[![npm](https://img.shields.io/npm/v/openmhp-node?label=openmhp-node&color=3FB59A)](https://www.npmjs.com/package/openmhp-node)
 [![PyPI](https://img.shields.io/pypi/v/openmhp?label=openmhp&color=3FB59A)](https://pypi.org/project/openmhp/)
 [![license](https://img.shields.io/badge/license-Apache%202.0-1f1f1f.svg)](LICENSE)
 [![docs](https://img.shields.io/badge/docs-openmhp.com-2B8F78)](https://openmhp.com)
@@ -327,7 +326,7 @@ Onboard my IKA hotplate. I have the manual and can confirm its limits and stop p
 To serve packages from the bench computer attached to the instruments:
 
 ```bash
-npx openmhp-node setup
+npx openmhp-cli node
 ```
 
 Or use Python directly. The person at the bench knows which instrument they are standing next
@@ -382,10 +381,11 @@ mhp node add waters-empower-hplc          # fetch, configure, pair with the gate
 mhp node --join https://gw.office ab12-cd34 --install-service   # or, for packages already in the folder
 ```
 
-`npx openmhp-node setup` does the same through a prompt, for a PC that already has Node. Neither
-is required: everything `openmhp-node` does is `mhp node`. Packages are downloaded when you add
-one, not shipped in the wheel, so a package merged to `main` can be added before the next release,
-and `pip install -U openmhp` is what refreshes the list `mhp node add` shows.
+`npx openmhp-cli node` does the same through a prompt, for a PC that already has Node; it needs a
+folder that already holds a package, so run `npx openmhp-cli mhp node add` first to see the
+supported instruments and fetch one. Packages are downloaded when you add one, not shipped in the
+wheel, so a package merged to `main` can be added before the next release, and
+`pip install -U openmhp` is what refreshes the list `mhp node add` shows.
 
 ### Instruments behind the lab firewall
 

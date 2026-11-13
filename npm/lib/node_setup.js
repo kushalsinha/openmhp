@@ -1,7 +1,6 @@
-/* The interactive flow behind `npx openmhp-cli node` and `npx openmhp-node setup`: turn the
- * computer it runs on into a lightweight OpenMHP node that keeps serving its instruments in
- * the background, across reboots. Shared so openmhp-node (a thin, separately-named package for
- * a lab bench PC that will never run an agent itself) doesn't duplicate any of this.
+/* The interactive flow behind `npx openmhp-cli node`: turn the computer it runs on into a
+ * lightweight OpenMHP node that keeps serving its instruments in the background, across reboots.
+ * A lab bench PC that will never run an agent itself is the intended user.
  */
 "use strict";
 const fs = require("fs");
@@ -38,8 +37,9 @@ async function nodeSetup(rest) {
   const existing = fs.readdirSync(folder).filter((n) => fs.existsSync(path.join(folder, n, "DEVICE.md")));
   if (existing.length === 0) {
     log(`no device packages in ${folder} yet.`);
-    log("Add one first: point your agent at this machine and say \"onboard my <instrument>\",");
-    log(`or copy/pull a package folder (with a DEVICE.md) into ${folder}, then run this again.`);
+    log("Add one first: `npx openmhp-cli mhp node add` lists the supported instruments, and");
+    log("`npx openmhp-cli mhp node add <name>` fetches one. Or point your agent at this machine and say");
+    log(`"onboard my <instrument>", or copy a package folder (with a DEVICE.md) into ${folder}; then run this again.`);
     process.exit(1);
   }
   log(`found ${existing.length} package(s): ${existing.join(", ")}`);
