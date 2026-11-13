@@ -27,6 +27,8 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from . import __version__
+from . import update_check as U
 from .transport import dispatch
 
 HOME = Path(os.environ.get("OPENMHP_HOME", "~/.openmhp")).expanduser()
@@ -100,6 +102,8 @@ class RelayClient:
         self.stop = threading.Event()
         self.connected = False
         self.last_error: str | None = None
+        self.upgrade: str | None = None          # the update command for this PC, shown on the gateway's status
+        self._told: str | None = None
         self._subs = []
 
     # ---- http ------------------------------------------------------------------------------
@@ -111,7 +115,13 @@ class RelayClient:
             return json.loads(r.read() or b"{}")
 
     def register(self) -> None:
-        self._call("/relay/register", {"name": self.cfg["name"], "devices": device_payload(self.drivers)})
+        ans = self._call("/relay/register", {"name": self.cfg["name"], "devices": device_payload(self.drivers),
+                                             "openmhp": __version__, "upgrade": self.upgrade})
+        latest = ans.get("latest")          # the gateway passes on the newest release it knows: this PC may have no internet
+        if not U.disabled() and U.newer(latest) and latest != self._told:
+            self._told = latest
+            say(f"relay: OpenMHP {latest} is out; this PC runs {__version__}. The instruments keep working. "
+                + (f"To update:  {self.upgrade}" if self.upgrade else "See `mhp gateway status` on the gateway."))
 
     # ---- threads ---------------------------------------------------------------------------
     def start(self) -> None:

@@ -48,8 +48,8 @@ async function nodeSetup(rest) {
   if (code === 0) {
     log("");
     log("this computer now serves its instruments in the background, across reboots.");
-    log(`add more packages to ${folder} any time; restart the service to pick them up:`);
-    log(`  mhp node --uninstall-service && npx openmhp-cli node ${folder}`);
+    log(`add more packages to ${folder} any time, or update OpenMHP; this restarts the service on them:`);
+    log(`  npx -y openmhp-cli@latest node ${folder}`);
     log("from the lab's main computer (or this one), find it with: mhp_lab op='scan', or say \"find the instruments on my network\".");
   }
   process.exit(code);

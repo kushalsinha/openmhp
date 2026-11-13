@@ -34,6 +34,7 @@ import secrets
 import uuid
 
 from . import __version__
+from .update_check import notice as update_notice, refresh_in_background
 from .client import (Lab, PackageChanged, RemoteError, _inprocess, _remote, drop_inprocess,
                      package_fingerprint, package_folder, pin_package)
 from .directory import Directory
@@ -347,6 +348,7 @@ class Bridge:
         self.send_notification = None     # set by the stdio loop: callable(method, params)
         from .runs import HOME
         self.home = home or (fleet.path.parent if fleet is not None else HOME)
+        self._update_told = False
         self.log = RunLog(self.home)
         self._updates: dict[str, list[dict]] = {}          # device -> recent pushed events (ring buffer)
         self._run_devices: dict[str, set[str]] = {}         # run id -> devices it has touched
@@ -986,7 +988,7 @@ class Bridge:
             return self._ok(mid, {"protocolVersion": requested if requested in SUPPORTED_MCP_VERSIONS else SUPPORTED_MCP_VERSIONS[0],
                                   "capabilities": {"tools": {}, "resources": {}, "prompts": {}, "logging": {}},
                                   "serverInfo": {"name": "openmhp-bridge", "version": __version__},
-                                  "instructions": INSTRUCTIONS})
+                                  "instructions": INSTRUCTIONS + (f"\n- {n}" if (n := update_notice()) else "")})
         if m == "prompts/list":
             return self._ok(mid, {"prompts": [{"name": n, "description": d} for n, (d, _) in PROMPTS.items()]})
         if m == "prompts/get":
@@ -1024,7 +1026,11 @@ class Bridge:
         if m == "tools/call":
             try:
                 res = self.call_tool(p["name"], p.get("arguments") or {})
-                return self._ok(mid, {"content": [{"type": "text", "text": json.dumps(res, indent=1, default=str)}]})
+                content = [{"type": "text", "text": json.dumps(res, indent=1, default=str)}]
+                if not self._update_told and (n := update_notice()):
+                    self._update_told = True           # once per session: the agent relays it, then gets on with the work
+                    content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
+                return self._ok(mid, {"content": content})
             except RemoteError as e:
                 txt = json.dumps({"mhpError": {"code": e.code, "message": e.message,
                                                "data": e.data, "ts": getattr(e, "ts", None)}}, default=str)
@@ -1228,6 +1234,7 @@ def main(argv=None):
             directory = connect(joined["directory"], "directory")
             print(f"MHP bridge: directory {joined['directory']} (gateway joined as '{joined['name']}')", file=sys.stderr)
     bridge = Bridge(targets, directory, fleet, scripts=scripts)
+    refresh_in_background()              # never blocks; a newer release is mentioned to the agent once per session
     if not bridge.scripts:
         print("MHP bridge: running no scripts; mhp_run is not offered and recipes are read-only", file=sys.stderr)
     if http_port is not None:

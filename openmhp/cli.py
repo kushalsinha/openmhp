@@ -121,6 +121,13 @@ def main(argv=None):
                 return 1
             state = "running" if r["running"] else ("stopped" if r["running"] is False else "unknown")
             print(f"installed at {r['path']}: {state}" + (f" ({r['note']})" if r.get("note") else ""), file=sys.stderr)
+            from . import __version__, update_check as U
+            rec = svc.installed_record() or {}             # services installed before 0.10.1 left no record
+            U.refresh()                                    # at most once a day; quiet when offline
+            latest = U.latest_known()
+            cmd = U.node_upgrade_command(rec.get("folder") or a.verb or "<devices folder>", as_service=True, python=rec.get("python"))
+            print(f"OpenMHP {__version__} here" + (f"; {latest} is out. The instruments keep working. To update:  {cmd}"
+                                                    if U.newer(latest) else " (current)"), file=sys.stderr)
             return 0
 
         base = a.http or 18900
@@ -135,7 +142,9 @@ def main(argv=None):
                      + "   (`mhp node add` alone lists them)")
 
         if a.install_service or a.dry_run_service:
-            r = svc.install(root, base, dry_run=a.dry_run_service)
+            # already installed: reinstall AND restart, so an update or new packages take effect now
+            again = not a.dry_run_service and svc.status()["installed"]
+            r = svc.restart(root, base) if again else svc.install(root, base, dry_run=a.dry_run_service)
             print(f"--- {r['path']} ---", file=sys.stderr)
             print(r["content"], file=sys.stderr)
             for step in r.get("steps", []):
@@ -198,9 +207,17 @@ def main(argv=None):
                 print(f"\nCOULD NOT JOIN THE GATEWAY: {e}\n  (the instruments are still served locally; fix the above and run the --join command again)", file=sys.stderr)
         elif not a.no_relay:
             relay_cfg = R.load_node_config()
+        from . import __version__, update_check as U
+        rec = svc.installed_record() or {}               # is THIS process the installed service?
+        as_service = rec.get("folder") == str(root.resolve()) and rec.get("python") == sys.executable
+        upgrade = U.node_upgrade_command(root, as_service=as_service)
         relay_client = R.RelayClient(relay_cfg, drivers) if relay_cfg and drivers else None
         if relay_client:
+            relay_client.upgrade = upgrade
             relay_client.start()
+        # this PC's own check, for a node with internet; a node without it hears from the gateway instead
+        U.watch(lambda v: print(f"OpenMHP {v} is out; this PC runs {__version__}. The instruments keep working. "
+                                f"To update:  {upgrade}", file=sys.stderr))
 
         from .discovery import _local_ip
         on_lan = not is_loopback(host)
