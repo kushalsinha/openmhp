@@ -459,6 +459,11 @@ The SSH server runs `mhp-gw` for every scientist's key, so the only things a mac
 its verbs and copies into a run's `in/` and out of its `preview/` and `out/`. The bundled
 `openmhp-lab-gateway` skill teaches an agent these commands.
 
+The same channel carries whole experiments: a scientist's request in plain English, a planner on the
+gateway that rehearses and proposes a charter, approval, a supervised agent session that runs the loop
+within that charter, and the results back home. `examples/gateway_closed_loop/` runs it end to end on
+a simulated chromatograph.
+
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of
 contact behavior, and keep the manufacturer's safety systems in place. OpenMHP is currently an
