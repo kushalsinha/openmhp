@@ -180,3 +180,34 @@ class RunGate:
             data["charter"] = "ask_scientist"
             return {**reply, "error": {**err, "data": data}}
         return reply
+
+
+class PlanGate:
+    """A planning token: the planner may look at every instrument behind the gateway and rehearse, but nothing
+    it sends moves anything. Reads and dry runs pass; real writes, actions and leases are refused."""
+
+    PLAN_READS = READS - {"session/acquire", "session/renew", "session/release", "jobs/cancel", "jobs/pause",
+                          "jobs/resume", "methods/save"}
+
+    def __init__(self, run_id: str, owner: str):
+        self.run, self.owner = run_id, owner
+        self.identity = f"{owner}/plan-{run_id}"
+        self.planning = True
+
+    def allows_device(self, path: str) -> bool:
+        return True
+
+    def check(self, path: str, msg: dict):
+        mid, method = msg.get("id"), msg.get("method", "")
+        params = dict(msg.get("params") or {})
+        params.pop("approved", None)
+        if method in self.PLAN_READS:
+            return {**msg, "params": params}, None, None
+        if method in ("settings/write", "actions/invoke") and params.get("dryRun") is True:
+            return {**msg, "params": params}, None, None
+        why = ("planning only rehearses: send it with dryRun: true" if method in ("settings/write", "actions/invoke")
+               else f"{method} is not something a planner does")
+        return None, RunGate._error(mid, FORBIDDEN, why, charter="planning"), None
+
+    def translate(self, reply: dict) -> dict:
+        return reply

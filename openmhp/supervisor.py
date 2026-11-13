@@ -178,6 +178,35 @@ How to work:
 """
 
 
+PLAN_RULES = """You are the planner for run {run} of scientist {owner}, on an OpenMHP lab gateway.
+
+The scientist's request is in request.md. Whatever they handed over (skills, scripts, data, a requirements
+file) is in ../in/; their skills are also installed for you. Your job is to turn the request into a charter
+they can approve, and to show them what the run will do and what its data will look like. Nothing you send
+moves an instrument: you can search, describe and read every instrument behind the gateway, and rehearse
+with dry runs (mhp_run plan=true, or dryRun: true). Real actions are refused until the scientist approves.
+
+1. Read request.md and ../in/. Find the instruments that fit (mhp_find, mhp_describe). Ask the scientist
+   (ask_scientist) for what only they can say: ranges, how many experiments, consumables and amounts, who
+   assembles or loads samples, the deadline. Ask a few questions at once rather than one at a time.
+2. Rehearse the first batch or first loop as a dry run (mhp_run plan=true). Note durations and any refusal.
+3. Write an expected-data preview into preview/: sample data in the real file formats, made from simulated or
+   synthetic values that respect the instruments' descriptors, run through the scientist's own analysis when
+   they gave one, with a plot if it helps, and preview/README.md saying exactly how it was made. Where you
+   cannot make sample data, describe the data's shape (files, columns, units, how many) instead.
+4. Call propose_charter with the charter (JSON, format below) and a few lines of notes for the scientist:
+   what will happen, how long it takes, what they must do in the lab, what the preview shows. Keep the envelope
+   as tight as the request allows: only the actions and settings needed, with the ranges the scientist gave.
+   Put actions that need a person (opening doors, loading samples) under always_ask, or under
+   standing_approvals only when the scientist said so.
+
+If the scientist sends changes after you proposed, revise and propose again.
+
+Charter format (the gateway enforces the structured part; the instruments are "node/device" paths from mhp_find):
+{charter_doc}
+"""
+
+
 class RunCtl:
     def __init__(self, record: RunRecord):
         self.record = record
@@ -243,6 +272,9 @@ class Supervisor:
             (pub / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
         if rec.state in ("open", "planning"):
             rec.to("waiting_approval", "charter ready for the scientist", charter_digest=d, harness=harness)
+        elif rec.state == "waiting_approval":
+            rec.set(charter_digest=d, harness=harness)
+            rec.event("charter_revised", digest=d)
         else:
             rec.set(charter_digest=d, harness=harness)
         return d
@@ -263,7 +295,7 @@ class Supervisor:
         with open(self.runs_dir / run_id / "approvals.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps({"at": now(), "by": by, "digest": digest}) + "\n")
         self.gw.issue_run_token(charter)
-        rec.to("queued", f"approved by {by}")
+        rec.to("queued", f"approved by {by}", phase="run")
         got = self.gw.allocate(run_id)
         if got["state"] == "allocated":
             self._start(run_id)
@@ -279,11 +311,101 @@ class Supervisor:
                 "Connect this machine within 7 days of the end, or the results are deleted.")
 
     # ---- starting the agent ------------------------------------------------------------------
-    def _token(self, run_id: str) -> str:
+    def _token(self, run_id: str, kind: str = "run") -> str:
         for t, e in self.gw.state.get("run_tokens", {}).items():
-            if e["run"] == run_id:
+            if e["run"] == run_id and e.get("kind", "run") == kind:
                 return t
-        raise LookupError(f"run {run_id} has no token")
+        raise LookupError(f"run {run_id} has no {kind} token")
+
+    # ---- planning ----------------------------------------------------------------------------
+    def request(self, run_id: str, owner: str, text: str, harness: str = "claude-code") -> dict:
+        """The scientist's request in plain English: start a planner for it."""
+        if harness not in self.adapters:
+            raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
+        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env():
+            raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
+        rec = self.record(run_id, owner)
+        if rec.state != "open":
+            raise ValueError(f"run {run_id} is {rec.state}; a request starts an open run (open a new one with mhp-gw open)")
+        if not text.strip():
+            raise ValueError("the request is empty")
+        (self.runs_dir / run_id).mkdir(parents=True, exist_ok=True)
+        (self.runs_dir / run_id / "request.md").write_text(text, encoding="utf-8")
+        rec.to("planning", "request received", harness=harness, phase="plan")
+        self.prepare_plan(run_id, text)
+        self.wake(run_id, "plan", "A new request is in request.md. Plan it as your instructions say.")
+        return {"run": run_id, "state": rec.state, "note": "a planner is working on it; mhp-gw wait shows its questions "
+                "and, when ready, the charter to approve"}
+
+    def prepare_plan(self, run_id: str, text: str) -> Path:
+        from .gateway import agent_url
+        from .harness import install_skills
+        from . import charter as C
+        rec = self.record(run_id)
+        pub = rec.public_folder()
+        plan = pub / "plan"
+        (plan / "preview").mkdir(parents=True, exist_ok=True)
+        (plan / "request.md").write_text(text, encoding="utf-8")
+        install_skills(pub / "in", plan)
+        token = self.gw.issue_plan_token(run_id, rec.owner)
+        cert, gateway = self.public_cert(), agent_url(self.gw.state).rstrip("/")
+        common = {"SSL_CERT_FILE": str(cert), "OPENMHP_NO_UPDATE_CHECK": "1"}
+        mcp = {"mcpServers": {
+            "openmhp": {"command": _sys.executable, "args": ["-m", "openmhp.mcp_bridge", "--directory", gateway + "/directory/"],
+                        "env": {**common, "OPENMHP_DEVICE_TOKEN": token, "OPENMHP_RUN_SCOPE": "1",
+                                "OPENMHP_HOME": str(plan / ".openmhp")}},
+            "run": {"command": _sys.executable, "args": ["-m", "openmhp.run_tools"],
+                    "env": {**common, "OPENMHP_RUN_TOKEN": token, "OPENMHP_GATEWAY": gateway, "OPENMHP_RUN_MODE": "plan"}}}}
+        (plan / ".mcp-run.json").write_text(json.dumps(mcp, indent=1), encoding="utf-8")
+        os.chmod(plan / ".mcp-run.json", 0o600)
+        (plan / ".run-instructions.md").write_text(PLAN_RULES.format(run=run_id, owner=rec.owner, charter_doc=C.__doc__),
+                                                   encoding="utf-8")
+        return plan
+
+    def ensure_env(self, run_id: str) -> Path | None:
+        """A Python environment for the run, built once from every requirements.txt the scientist handed over, at
+        planning time, so nothing installs while instruments are held. None when they gave no requirements."""
+        import subprocess
+        rec = self.record(run_id)
+        pub = rec.public_folder()
+        reqs = sorted((pub / "in").rglob("requirements.txt")) if (pub / "in").is_dir() else []
+        if not reqs:
+            return None
+        env = pub / ".venv"
+        if (env / ".ready").is_file():
+            return env
+        bindir = env / ("Scripts" if os.name == "nt" else "bin")
+        steps = [[_sys.executable, "-m", "venv", str(env)]] + \
+                [[str(bindir / "python"), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "-r", str(r)] for r in reqs]
+        for cmd in steps:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            if r.returncode != 0:
+                rec.event("env_failed", command=" ".join(cmd[-2:]), error=(r.stderr or r.stdout)[-1500:])
+                raise RuntimeError(f"could not build the run's Python environment: {(r.stderr or r.stdout)[-500:]}")
+        (env / ".ready").write_text(now(), encoding="utf-8")
+        rec.event("env_built", requirements=[str(r.relative_to(pub)) for r in reqs])
+        return env
+
+    def propose_from_planner(self, run_id: str, charter, notes: str = "") -> dict:
+        rec = self.record(run_id)
+        if rec.doc.get("phase") != "plan":
+            raise ValueError(f"run {run_id} is not being planned")
+        if not isinstance(charter, dict):
+            raise ValueError("propose_charter needs the charter as a JSON object")
+        charter = {**charter, "run": run_id, "owner": rec.owner, "version": charter.get("version", 1)}
+        missing = [d for d in (charter.get("instruments") or {}).values()
+                   if isinstance(d, str) and (d.split("/")[0] not in self.gw.nodes or d.split("/")[-1] not in self.gw.nodes[d.split("/")[0]].devices)]
+        if missing:
+            raise ValueError("not behind this gateway: " + ", ".join(missing) + " (use the node/device paths mhp_find gives)")
+        d = self.propose(run_id, rec.owner, charter, harness=rec.doc.get("harness", "claude-code"))
+        pub = rec.public_folder()
+        if (pub / "plan" / "preview").is_dir():
+            _shutil.copytree(pub / "plan" / "preview", pub / "preview", dirs_exist_ok=True)
+        (pub / "plan-notes.md").write_text(notes, encoding="utf-8")
+        rec.set(phase="approval")
+        rec.event("charter_proposed", digest=d, notes=notes[:4000],
+                  preview=sorted(p.name for p in (pub / "preview").iterdir()) if (pub / "preview").is_dir() else [])
+        return {"proposed": True, "digest": d, "note": "the scientist sees it with mhp-gw show; wait for their approval or changes"}
 
     def public_cert(self) -> Path:
         """The gateway's certificate where every scientist's run can read it (the gateway's own folder is private)."""
@@ -359,13 +481,23 @@ class Supervisor:
             rec = c.record
             if rec.state in ENDED:
                 return
+            planning = rec.doc.get("phase") == "plan"
             if rec.state == "waiting_scientist" and not any(t["kind"] in ("answer", "message", "stop") for t in batch):
                 continue                              # waiting on a person: instrument news waits for the answer
-            charter = self.charter(run_id)
+            charter = {} if planning else self.charter(run_id)
             prompt = "\n".join(f"[{t['at']}] {t['kind']}: {t['text']}" for t in batch)
-            work = rec.public_folder() / "work"
+            work = rec.public_folder() / ("plan" if planning else "work")
+            session_key = "plan_session" if planning else "session"
             adapter = self.adapters[rec.doc.get("harness", "claude-code")]
             env = {"OPENMHP_RUN_ID": run_id, **self.llm_env()}
+            try:
+                venv = self.ensure_env(run_id)
+            except RuntimeError as e:
+                venv = None
+                prompt += f"\n[{now()}] environment: {e}. Tell the scientist (ask_scientist) which requirement failed."
+            if venv is not None:
+                bindir = venv / ("Scripts" if os.name == "nt" else "bin")
+                env.update(VIRTUAL_ENV=str(venv), PATH=str(bindir) + os.pathsep + os.environ.get("PATH", ""))
             budget = (charter.get("budgets") or {}).get("agent_usd")
             left = None if budget is None else max(0.0, float(budget) - c.spent_usd)
             if left is not None and left <= 0:
@@ -373,19 +505,19 @@ class Supervisor:
                          tried="", meanwhile="wait", by_supervisor=True)
                 continue
             rec.event("wake", triggers=[t["kind"] for t in batch])
-            result = run_turn(adapter, Turn(prompt=prompt, workdir=work, session=rec.doc.get("session"),
+            result = run_turn(adapter, Turn(prompt=prompt, workdir=work, session=rec.doc.get(session_key),
                                             mcp_config=work / ".mcp-run.json", instructions=work / ".run-instructions.md",
                                             max_budget_usd=left, env=env,
                                             run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
             c.spent_usd += result.cost_usd
-            rec.set(session=result.session or rec.doc.get("session"), spent_usd=round(c.spent_usd, 4))
+            rec.set(**{session_key: result.session or rec.doc.get(session_key)}, spent_usd=round(c.spent_usd, 4))
             rec.event("turn", ok=result.ok, reason=result.reason, cost_usd=result.cost_usd, tokens=result.tokens,
                       said=(result.text or "")[:2000])
             if result.ok:
                 c.failures = 0
             else:
                 c.failures += 1
-                if c.failures >= STUCK_AFTER_FAILED_TURNS and c.record.state == "running":
+                if c.failures >= STUCK_AFTER_FAILED_TURNS and c.record.state in ("running", "planning"):
                     self.ask(run_id, f"The run's agent failed {c.failures} turns in a row ({result.reason}: "
                              f"{(result.text or '')[:300]}). Should it keep trying, or stop?", tried="", meanwhile="wait",
                              by_supervisor=True)
@@ -458,9 +590,11 @@ class Supervisor:
         rec = self.record(run_id)
         if by != rec.owner:
             raise PermissionError("only the run's scientist messages it")
-        if rec.state not in ("running", "waiting_scientist", "queued"):
+        if rec.state not in ("planning", "waiting_approval", "running", "waiting_scientist", "queued"):
             raise ValueError(f"run {run_id} is {rec.state}")
         rec.event("message", by=by, text=text)
+        if rec.state == "waiting_approval":           # changes to a proposed charter: back to the planner
+            rec.to("planning", f"{by} asked for changes", phase="plan")
         self.wake(run_id, "message", f"{by} says: {text}. (If this asks for something outside the charter, the gateway will "
                   "refuse it: tell them it needs a changed charter, through ask_scientist.)")
         return {"run": run_id, "delivered": True}
@@ -519,7 +653,9 @@ class Supervisor:
                 try:
                     body = json.loads(req.read_text(encoding="utf-8"))
                     kind = body.get("kind")
-                    if kind == "approve":
+                    if kind == "request":
+                        ans = self.request(run_id, owner, body.get("text", ""), body.get("harness") or "claude-code")
+                    elif kind == "approve":
                         ans = self.approve(run_id, body.get("digest", ""), owner)
                     elif kind == "message":
                         ans = self.message(run_id, body.get("text", ""), owner)

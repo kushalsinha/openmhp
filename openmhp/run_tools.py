@@ -31,6 +31,12 @@ TOOLS = [
     {"name": "report",
      "description": "A short progress note for the scientist: what was done, what was learned, what is next.",
      "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
+    {"name": "propose_charter",
+     "description": "Planner only: propose the charter for the scientist to approve, with a few lines of notes (what "
+                    "will happen, how long, what they must do in the lab, what the preview shows). Proposing again "
+                    "replaces the earlier proposal.",
+     "inputSchema": {"type": "object", "properties": {"charter": {"type": "object"}, "notes": {"type": "string"}},
+                     "required": ["charter", "notes"]}},
     {"name": "finish",
      "description": "End the run: the objective is met, a stop condition holds, or the budget is spent. Leave the "
                     "instruments in the charter's cleanup state first. Results must already be in the out/ folder.",
@@ -56,6 +62,13 @@ def call(path: str, body: dict) -> dict:
         return {"ok": False, "error": (e.read() or b"").decode(errors="replace")[:500]}
 
 
+def offered() -> tuple:
+    """A planner proposes a charter; a run finishes. Neither gets the other's tool."""
+    if os.environ.get("OPENMHP_RUN_MODE") == "plan":
+        return ("ask_scientist", "report", "propose_charter")
+    return ("ask_scientist", "report", "finish")
+
+
 def handle(msg: dict) -> dict | None:
     mid, method, p = msg.get("id"), msg.get("method"), msg.get("params") or {}
     if method == "initialize":
@@ -65,10 +78,10 @@ def handle(msg: dict) -> dict | None:
     if mid is None:
         return None
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}}
+        return {"jsonrpc": "2.0", "id": mid, "result": {"tools": [t for t in TOOLS if t["name"] in offered()]}}
     if method == "tools/call":
         name, args = p.get("name"), p.get("arguments") or {}
-        if name not in ("ask_scientist", "report", "finish"):
+        if name not in offered():
             return {"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": f"unknown tool {name}"}], "isError": True}}
         ans = call(f"/runs/{name}", args)
         return {"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": json.dumps(ans)}],

@@ -47,6 +47,27 @@ ssh mhp-gateway mhp-gw status R-2611-0042    # one run
 Run `help` first when you are unsure. If it lists verbs this skill does not describe, use them as
 `help` explains.
 
+## Asking the lab for an experiment
+
+The scientist tells you what they need and plan, in plain English. Hand it to the gateway as it is,
+with anything they want used (their skills, scripts, data, a requirements.txt):
+
+```bash
+ssh mhp-gateway mhp-gw open                                            # a new run ID
+rsync -a ~/projects/electrolyte-bo/ mhp-gateway:runs/R-2611-0042/in/electrolyte-bo/
+ssh mhp-gateway mhp-gw request R-2611-0042 --harness claude-code < request.md
+ssh mhp-gateway mhp-gw wait R-2611-0042 --timeout 300                  # blocks until there is news
+ssh mhp-gateway mhp-gw wait R-2611-0042 --since <since from the last wait> --timeout 300
+```
+
+A planner on the gateway works out the experiment with you. It can look at every instrument and
+rehearse, but nothing moves until the scientist approves. `wait` returns its questions
+(`open_questions`), a proposed charter, or a state change; keep calling it with the `since` it gave
+you. Relay each question to the scientist and send their answer with `answer`. When the charter is
+proposed, show them the charter text and the files in the run's `preview/` folder (copy them with
+rsync), and ask whether to approve. If they want changes, pass them on with `message`; the planner
+revises and proposes again.
+
 ## Approving and watching a run
 
 A run starts only when the scientist approves its charter: what the run may do on which instruments,

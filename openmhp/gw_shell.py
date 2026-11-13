@@ -39,6 +39,8 @@ VERBS = {
     "open": "a new run in your folder; copy your skills, scripts and data into its in/ folder with rsync",
     "list": "your runs and their states",
     "status": "status <run id>: one run's state",
+    "request": "request <run id> [--harness claude-code] < request.md: what you need, in plain English; a planner starts",
+    "wait": "wait <run id> [--since <ts>] [--timeout <s>]: block until there is news (a question, a charter, a state change)",
     "show": "show <run id>: the run's charter to approve, its state and any open questions",
     "approve": "approve <run id> --charter-digest <digest>: the scientist approves exactly that charter; the run starts",
     "message": "message <run id> <text, or on stdin>: tell the running agent something",
@@ -222,6 +224,47 @@ class Shell:
             time.sleep(0.2)
         return self.answer(WAITING, run=run_id, pending=body["kind"],
                            note="the gateway has the request but has not acted on it yet; check again with mhp-gw status")
+
+    def verb_request(self, args) -> int:
+        if not args:
+            return self.refuse("request needs a run ID (from mhp-gw open), and the request on stdin")
+        harness = None
+        if len(args) == 3 and args[1] == "--harness":
+            harness = args[2]
+        elif len(args) != 1:
+            return self.refuse("request <run id> [--harness <name>], with the request on stdin")
+        return self.request(args[0], {"kind": "request", "text": self._text([]), "harness": harness})
+
+    def verb_wait(self, args) -> int:
+        import time
+        if not args:
+            return self.refuse("wait needs a run ID")
+        run_id, opts = args[0], dict(zip(args[1::2], args[2::2]))
+        try:
+            since = float(opts.get("--since", 0))
+            timeout = min(float(opts.get("--timeout", 300)), 3600)
+        except ValueError:
+            return self.refuse("--since and --timeout take numbers")
+        self._run(run_id)
+        log = S.run_folder(self.scientist, run_id, self.root) / "events.jsonl"
+        news = {"question", "charter_proposed", "charter_revised", "state", "finish", "report"}
+        end = time.time() + timeout
+        while True:
+            events = []
+            if log.is_file():
+                for line in log.read_text(encoding="utf-8").splitlines():
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        continue
+                    if ev.get("ts", 0) > since and ev.get("kind") in news:
+                        events.append(ev)
+            if events or time.time() >= end:
+                meta = self._run(run_id)
+                return self.answer(OK if events else WAITING, run=run_id, state=meta.get("state"), events=events,
+                                   since=max([since] + [e["ts"] for e in events]),
+                                   open_questions=meta.get("open_questions") or {})
+            time.sleep(0.5)
 
     def verb_show(self, args) -> int:
         if len(args) != 1:

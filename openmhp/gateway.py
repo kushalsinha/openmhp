@@ -212,7 +212,10 @@ class Gateway:
             if tok and hmac.compare_digest(t.encode(), tok.encode()):
                 gate = self.gates.get(t)
                 if gate is None:
-                    from .run_gate import RunGate
+                    from .run_gate import PlanGate, RunGate
+                    if entry.get("kind") == "plan":
+                        gate = self.gates[t] = PlanGate(entry["run"], entry["owner"])
+                        return gate
                     folder = RUNS_DIR / entry["run"]
                     charter = json.loads((folder / "charter.json").read_text(encoding="utf-8"))
                     gate = self.gates[t] = RunGate(charter, folder)
@@ -332,6 +335,14 @@ class Gateway:
                         self._lease_call(gate, path, "session/renew", {"ttl": LEASE_TTL_S})
                 for run_id in list(self.waiting):
                     self._try_allocate(run_id)
+
+    def issue_plan_token(self, run_id: str, owner: str) -> str:
+        """A token for planning one run: every instrument can be read and rehearsed, nothing moves."""
+        self.end_run(run_id)
+        token = "plan_" + secrets.token_urlsafe(24)
+        self.state.setdefault("run_tokens", {})[token] = {"run": run_id, "owner": owner, "kind": "plan", "issued": time.time()}
+        self.persist()
+        return token
 
     def end_run(self, run_id: str) -> None:
         if run_id in self.allocated or run_id in self.waiting:
@@ -594,12 +605,17 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
             if agent is None:
                 return self._json(401, {"error": AGENT_401})
             gate = gw.gate_for(self._auth())               # a run token: only its instruments, only its charter
-            if len(parts) == 2 and parts[0] == "runs" and parts[1] in ("ask_scientist", "report", "finish"):
+            if len(parts) == 2 and parts[0] == "runs" and parts[1] in ("ask_scientist", "report", "finish", "propose_charter"):
                 if gate is None or gw.supervisor is None:
                     return self._json(403, {"ok": False, "error": "only a run's own token, on a supervising gateway"})
+                planning = getattr(gate, "planning", False)
+                if (parts[1] == "finish" and planning) or (parts[1] == "propose_charter" and not planning):
+                    return self._json(403, {"ok": False, "error": f"{parts[1]} is for the " + ("run" if planning else "planner")})
                 b, sv = self._body(), gw.supervisor
                 try:
-                    if parts[1] == "ask_scientist":
+                    if parts[1] == "propose_charter":
+                        ans = sv.propose_from_planner(gate.run, b.get("charter"), str(b.get("notes", "")))
+                    elif parts[1] == "ask_scientist":
                         ans = sv.ask(gate.run, str(b.get("question", "")), tried=str(b.get("tried", "")),
                                      meanwhile=b.get("meanwhile") if b.get("meanwhile") in ("wait", "continue") else "wait",
                                      needs_lab=b.get("needs_lab") is True)
@@ -610,7 +626,7 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
                                         [str(x) for x in (b.get("next_experiments") or [])])
                 except (ValueError, LookupError) as e:
                     return self._json(409, {"ok": False, "error": str(e)})
-                return self._json(200, ans)
+                return self._json(200, {"ok": True, **ans} if "ok" not in ans else ans)
             if parts == ["directory", "rpc"]:
                 from .transport import dispatch
                 msg = self._body()
