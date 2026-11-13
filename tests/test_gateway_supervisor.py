@@ -131,6 +131,42 @@ def test_harness_adapters():
     assert not missing.ok and missing.reason == "not installed"
 
 
+def test_runs_get_the_gateways_llm_key_and_no_other_credential():
+    from openmhp import harness as H
+    keep = {k: os.environ.get(k) for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")}
+    os.environ.update(ANTHROPIC_AUTH_TOKEN="operator-login", ANTHROPIC_API_KEY="operator-key", CLAUDE_CODE_OAUTH_TOKEN="x")
+    try:
+        env = H.run_environment({"ANTHROPIC_API_KEY": "gateway-runs-key", "OPENMHP_RUN_ID": "R-1"})
+        assert env["ANTHROPIC_API_KEY"] == "gateway-runs-key" and "ANTHROPIC_AUTH_TOKEN" not in env
+        assert "CLAUDE_CODE_OAUTH_TOKEN" not in env and env["OPENMHP_RUN_ID"] == "R-1" and env.get("PATH")
+        assert "ANTHROPIC_API_KEY" not in H.run_environment({})
+    finally:
+        for k, v in keep.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    f = Path(tempfile.mkdtemp()) / "llm.env"
+    f.write_text("# runs\nANTHROPIC_API_KEY = sk-test\n\nbad line\n")
+    assert H.llm_env(f) == {"ANTHROPIC_API_KEY": "sk-test"} and H.llm_env(f.with_name("none")) == {}
+
+    # a Claude Code run cannot be proposed on a gateway without a key for runs
+    from openmhp import gateway as G
+
+    class FakeGW:
+        state, allocated, supervisor = {}, {}, None
+    sup = SV.Supervisor(FakeGW(), lab_root=S.lab_root(), runs_dir=Path(tempfile.mkdtemp()) / "runs")
+    S.create("kim")
+    rid = S.open_run("kim")["id"]
+    ch = {"version": 1, "run": rid, "owner": "kim", "objective": "x", "instruments": {"tc": "bench/thermocycler-01"},
+          "envelope": {"tc": {"actions": {}, "settings": {}}}}
+    with raises(ValueError) as e:
+        sup.propose(rid, "kim", ch, harness="claude-code")
+    assert "mhp gateway llm-key" in str(e.value)
+    (sup.runs_dir.parent / "llm.env").write_text("ANTHROPIC_API_KEY=sk-test\n")
+    assert sup.propose(rid, "kim", ch, harness="claude-code").startswith("sha256:")
+
+
 def test_a_run_scoped_bridge_cannot_add_or_scan_instruments():
     from openmhp.fleet import Fleet
     from openmhp.mcp_bridge import Bridge

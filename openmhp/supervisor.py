@@ -201,6 +201,11 @@ class Supervisor:
         self.stop_event = threading.Event()
         gateway.supervisor = self
 
+    def llm_env(self) -> dict:
+        """The gateway's own LLM key for runs (<runs dir>/../llm.env), never the operator's login."""
+        from .harness import llm_env
+        return llm_env(self.runs_dir.parent / "llm.env")
+
     # ---- records -----------------------------------------------------------------------------
     def record(self, run_id: str, owner: str | None = None) -> RunRecord:
         with self.lock:
@@ -226,6 +231,8 @@ class Supervisor:
             raise ValueError("the charter names another run or scientist")
         if harness not in self.adapters:
             raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
+        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env():
+            raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
         rec = self.record(run_id, owner)
         (self.runs_dir / run_id).mkdir(parents=True, exist_ok=True)
         (self.runs_dir / run_id / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
@@ -358,7 +365,7 @@ class Supervisor:
             prompt = "\n".join(f"[{t['at']}] {t['kind']}: {t['text']}" for t in batch)
             work = rec.public_folder() / "work"
             adapter = self.adapters[rec.doc.get("harness", "claude-code")]
-            env = {"OPENMHP_RUN_ID": run_id}
+            env = {"OPENMHP_RUN_ID": run_id, **self.llm_env()}
             budget = (charter.get("budgets") or {}).get("agent_usd")
             left = None if budget is None else max(0.0, float(budget) - c.spent_usd)
             if left is not None and left <= 0:
@@ -473,7 +480,7 @@ class Supervisor:
             r = run_turn(adapter, Turn(prompt=f"[{now()}] stop: {by} stopped the run. Do the charter's cleanup now, write what "
                                        "you have to out/ and notebook.md, and do not start anything new.",
                                        workdir=work, session=rec.doc.get("session"), mcp_config=work / ".mcp-run.json",
-                                       max_turns=15, timeout_s=cleanup_timeout_s, env={"OPENMHP_RUN_ID": run_id},
+                                       max_turns=15, timeout_s=cleanup_timeout_s, env={"OPENMHP_RUN_ID": run_id, **self.llm_env()},
                                        run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
             rec.event("turn", ok=r.ok, reason=r.reason, cost_usd=r.cost_usd, said=(r.text or "")[:2000], cleanup=True)
         self.gw.end_run(run_id)

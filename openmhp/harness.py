@@ -29,6 +29,33 @@ INSTRUMENT_TOOLS = ("mhp_find", "mhp_describe", "mhp_read", "mhp_write", "mhp_in
                     "mhp_run", "mhp_data")
 RUN_TOOLS = ("ask_scientist", "report", "finish")
 FILE_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
+# Credentials a harness might pick up from the gateway's own environment. A run gets exactly the gateway's LLM
+# key for runs (Turn.env) and none of these, so an operator's own login never pays for or answers as a run.
+CREDENTIAL_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL",
+                   "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "AWS_BEARER_TOKEN_BEDROCK",
+                   "OPENAI_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
+
+
+def run_environment(extra: dict) -> dict:
+    """The gateway's environment without any credential, plus what the run is given."""
+    env = {k: v for k, v in os.environ.items() if k not in CREDENTIAL_VARS and not k.startswith("CLAUDE_CODE_SESSION")}
+    env.update(extra)
+    return env
+
+
+def llm_env(path: Path) -> dict:
+    """The gateway's LLM credentials for runs: KEY=VALUE lines in a file only the gateway's account reads
+    (`<gateway>/llm.env`, e.g. ANTHROPIC_API_KEY=...). Empty when there is none."""
+    out = {}
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return out
 
 
 @dataclass
@@ -73,6 +100,7 @@ class Adapter:
 
 class ClaudeCode(Adapter):
     name, program = "claude-code", "claude"
+    needs_llm_key = True                    # runs use the gateway's key (llm.env), never an inherited login
 
     def allowed_tools(self) -> str:
         mcp = [f"mcp__openmhp__{t}" for t in INSTRUMENT_TOOLS] + [f"mcp__run__{t}" for t in RUN_TOOLS]
@@ -159,7 +187,7 @@ def run_turn(adapter: Adapter, turn: Turn) -> TurnResult:
         return TurnResult(ok=False, session=turn.session, reason="not installed",
                           text=f"{adapter.program!r} is not installed on this gateway")
     cmd = adapter.command(turn, session, first)
-    env = {**os.environ, **turn.env}
+    env = run_environment(turn.env)
     if turn.run_as:
         keep = ",".join(sorted(turn.env))
         cmd = ["sudo", "-n", "-u", turn.run_as] + ([f"--preserve-env={keep}"] if keep else []) + cmd
