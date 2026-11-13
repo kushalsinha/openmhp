@@ -86,6 +86,28 @@ If that work exposes a missing protocol concept, ambiguous behavior, or reusable
 improvement, open an issue with the smallest general form of the problem. That is the part that
 belongs in this project.
 
+## Releasing
+
+For maintainers. `openmhp` (PyPI) and `openmhp-cli` (npm) are published by
+`.github/workflows/release.yml` when a version tag is pushed. Nothing else publishes.
+
+1. A PR bumps the version in `pyproject.toml`, `openmhp/__init__.py` and `npm/package.json` to the
+   same number, and merges to `main`.
+2. Tag the merge commit: `git tag -a v0.10.1 -m "openmhp 0.10.1" && git push origin v0.10.1`.
+3. The workflow checks the tag is on `main` and matches all three versions, then publishes PyPI
+   first (the npm launcher installs `openmhp` from it), then npm. Each publish waits for approval
+   from a reviewer of the `release` environment.
+
+The workflow holds no secrets: PyPI and npm each trust this repository, workflow file and
+environment. One-time setup, in the web UIs:
+
+- GitHub → Settings → Environments → `release`, with yourself under Required reviewers.
+- pypi.org → `openmhp` → Publishing → add a GitHub publisher: owner `kushalsinha`, repository
+  `openmhp`, workflow `release.yml`, environment `release`.
+- npmjs.com → `openmhp-cli` → Settings → Trusted Publisher → GitHub Actions, the same four values.
+
+The names must match exactly; a mismatch is refused by the registry, not by the workflow.
+
 ## Conduct
 
 Be direct and kind. Assume the other person is a scientist, engineer, or operator with real

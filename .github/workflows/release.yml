@@ -1,0 +1,77 @@
+name: Release
+
+# Publishes openmhp (PyPI) and openmhp-cli (npm) when a version tag is pushed:
+#
+#   1. a PR bumps the version in pyproject.toml, openmhp/__init__.py and npm/package.json
+#   2. it merges to main
+#   3. someone pushes the tag:  git tag -a v0.10.1 -m "openmhp 0.10.1" && git push origin v0.10.1
+#
+# No secrets. PyPI and npm are both set up as trusted publishers for this repository, workflow
+# file and environment, so GitHub proves who is publishing with a short-lived token. The
+# `release` environment lists the people who must approve each run; nothing is published until
+# they do. See CONTRIBUTING.md ("Releasing") for the one-time setup.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: The tag must point at a commit that is on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: The tag must match all three versions
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"$v\"" pyproject.toml
+          grep -q "__version__ = \"$v\"" openmhp/__init__.py
+          grep -q "\"version\": \"$v\"" npm/package.json
+
+  pypi:
+    needs: check
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write            # trusted publishing: the only thing this job is trusted with
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Build and check
+        run: |
+          pip install build twine
+          python -m build
+          twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+
+  npm:
+    # openmhp-cli installs openmhp from PyPI the first time it runs, so PyPI must have the version first
+    needs: pypi
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Trusted publishing needs npm 11.5.1 or newer
+        run: npm install -g npm@latest
+      - name: Publish
+        working-directory: npm
+        run: npm publish
