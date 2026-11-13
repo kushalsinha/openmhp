@@ -78,6 +78,209 @@ def test_charter_format_digest_and_summary():
         assert words in text, (words, text)
 
 
+# ---- a gateway, a lab PC with three simulated instruments, and a run whose charter covers two ----------
+_LAB = []
+
+
+def lab():
+    """One simulated lab for every test in this file."""
+    if not _LAB:
+        _LAB.append(start_lab())
+    return _LAB[0]
+
+
+def start_lab():
+    import contextlib
+    import io
+    import json
+    import shutil
+    import socket
+    import ssl
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+    from openmhp import gateway as G, relay as R
+    from openmhp.package import load_driver
+    if not shutil.which("openssl"):
+        return None
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        port = so.getsockname()[1]
+    with contextlib.redirect_stderr(io.StringIO()):
+        assert G.init(server_name="127.0.0.1", listen=port) == 0
+        assert G.pair() == 0
+    state = G.load()
+    gw = G.Gateway(state)
+    srv = G.make_server(gw, "127.0.0.1", port)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"https://127.0.0.1:{port}"
+    ctx = ssl.create_default_context(cafile=state["cert"])
+    drivers = {}
+    for folder, sim in (("openmhp/devices/thermocycler-01", False), ("supported-devices/elveflow-ob1", True),
+                        ("openmhp/devices/arm-01", False)):
+        d = load_driver(folder, sim=sim)
+        drivers[d.descriptor["device"]["id"]] = d
+    code = next(iter(G.load()["codes"]))
+    with contextlib.redirect_stderr(io.StringIO()):
+        cfg = R.join(base, code, drivers, name="bench", quiet=True)
+        node = R.RelayClient(cfg, drivers)
+        node.start()
+    end = time.time() + 10
+    while time.time() < end and not all(d in gw.nodes.get("bench", G.Node("x")).devices for d in drivers):
+        time.sleep(0.05)
+
+    def rpc(token, path, method, params=None):
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode()
+        req = urllib.request.Request(f"{base}/{path}/rpc", data=body, method="POST",
+                                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def get(token, path):
+        req = urllib.request.Request(f"{base}/{path}", headers={"Authorization": f"Bearer {token}"})
+        try:
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+    return gw, drivers, rpc, get, node
+
+
+def test_a_run_token_reaches_only_its_charter():
+    import time
+    from openmhp import gateway as G
+    if lab() is None:
+        print("skip: openssl is needed for the gateway's certificate")
+        return
+    gw, drivers, rpc, get, node = lab()
+    ob1 = next(d for d in drivers if "ob1" in d)
+    charter = copy.deepcopy(CHARTER)
+    charter["instruments"] = {"tc": "bench/thermocycler-01", "ob1": f"bench/{ob1}"}
+    with raises(LookupError):
+        gw.issue_run_token({**charter, "instruments": {**charter["instruments"], "x": "bench/nope"},
+                            "envelope": charter["envelope"]})
+    with raises(ValueError):
+        gw.issue_run_token({**charter, "autonomy": "yolo"})
+    tok = gw.issue_run_token(charter)
+    TC = "bench/thermocycler-01"
+
+    # only its instruments: listed, described, reached
+    st, doc = get(tok, "")
+    assert st == 200 and doc["devices"] == sorted([TC, f"bench/{ob1}"])
+    assert get(tok, "bench/arm-01/mhp.json")[0] == 404 and rpc(tok, "bench/arm-01", "signals/read")[0] == 404
+    st, ans = rpc(tok, "directory", "directory/search", {"query": "robot arm plate"})
+    assert st == 200 and all(r["id"] != "bench/arm-01" for r in ans["result"]["results"])
+    assert "result" in rpc(tok, TC, "signals/read")[1]
+
+    # the run acts under the scientist's name and run ID (the thermocycler wants a lease before any write)
+    assert "result" in rpc(tok, TC, "session/acquire", {"ttl": 120})[1]
+    assert drivers["thermocycler-01"].lease == "alice/run-R-2611-0042"
+
+    # settings: inside the envelope passes, beyond the charter is refused though the device would allow it
+    assert "result" in rpc(tok, TC, "settings/write", {"name": "lid_heater", "value": False})[1]
+    assert "result" in rpc(tok, TC, "settings/write", {"name": "target_temperature", "value": 50})[1]
+    err = rpc(tok, TC, "settings/write", {"name": "target_temperature", "value": 105})[1]["error"]
+    assert err["code"] == -32013 and err["data"]["charter"] == "outside" and err["data"]["bounds"] == {"min": 4, "max": 99}
+    assert rpc(tok, f"bench/{ob1}", "settings/write", {"name": "pressure_setpoint_ch1", "value": 500})[1]["error"]["code"] == -32013
+    assert rpc(tok, TC, "sim/fault", {})[1]["error"]["data"]["charter"] == "outside"
+
+    # actions: bounds, then the consumable, then the experiment budget; refusals never reach the device
+    def protocol(cycles, dry=False):
+        p = {"name": "run_protocol", "params": {"steps": [{"temp": 50, "hold_s": 0}], "cycles": cycles}}
+        if dry:
+            p["dryRun"] = True
+        st, ans = rpc(tok, TC, "actions/invoke", p)
+        if "result" in ans and not dry:
+            job = ans["result"].get("job", ans["result"]).get("id")
+            end = time.time() + 30
+            while time.time() < end and rpc(tok, TC, "jobs/status", {"id": job})[1]["result"]["job"]["state"] not in ("done", "failed"):
+                time.sleep(0.05)
+        return ans
+    assert protocol(41)["error"]["data"]["param"] == "cycles"
+    assert "result" in protocol(10, dry=True)                              # a dry run counts for nothing
+    assert "result" in protocol(5)                                         # 0.5 of 1.0 mL
+    e = protocol(6)["error"]                                               # 0.6 more would be 1.1
+    assert e["data"]["charter"] == "consumable" and abs(e["data"]["used"] - 0.5) < 1e-9
+    assert "result" in protocol(4) and "result" in protocol(1)            # 0.9, then 1.0: exactly the limit
+    assert protocol(1)["error"]["data"]["charter"] == "budget"             # three experiments used
+    usage = gw.gate_for(f"Bearer {tok}").usage
+    assert usage["experiments"] == 3 and abs(usage["consumables"]["buffer_ml"] - 1.0) < 1e-9
+
+    # approvals: never taken from the run; a standing approval covers open_lid twice, then the scientist is asked
+    def lid(action, approved=None):
+        p = {"name": action, "params": {}}
+        if approved is not None:
+            p["approved"] = approved
+        return rpc(tok, TC, "actions/invoke", p)[1]
+    def done(ans):
+        assert "result" in ans, ans
+        job = ans["result"].get("job", ans["result"]).get("id")
+        end = time.time() + 30
+        while job and time.time() < end and rpc(tok, TC, "jobs/status", {"id": job})[1]["result"]["job"]["state"] not in ("done", "failed"):
+            time.sleep(0.05)
+    for _ in range(2):
+        done(lid("open_lid"))
+        done(lid("close_lid"))
+    e = lid("open_lid", approved=True)["error"]                            # run's own "approved" is stripped
+    assert e["code"] == -32012 and e["data"]["charter"] == "ask_scientist"
+    e = rpc(tok, f"bench/{ob1}", "actions/invoke", {"name": "vent", "params": {}})[1]["error"]
+    assert e["code"] == -32012 and e["data"]["charter"] == "ask_scientist"            # always_ask: never sent
+    assert rpc(tok, TC, "safety/reset", {})[1]["error"]["data"]["charter"] == "ask_scientist"
+
+    rpc(tok, TC, "session/release", {})
+
+    # usage outlives a gateway restart; ending the run ends the token
+    gw2 = G.Gateway(G.load())
+    assert gw2.gate_for(f"Bearer {tok}").usage["experiments"] == 3
+    gw.end_run("R-2611-0042")
+    assert get(tok, "")[0] == 401
+
+
+def test_runs_get_all_their_instruments_or_wait():
+    import time
+    if lab() is None:
+        print("skip: openssl is needed for the gateway's certificate")
+        return
+    gw, drivers, rpc, get, node = lab()
+    ob1 = next(d for d in drivers if "ob1" in d)
+    TC, OB1, ARM = "bench/thermocycler-01", f"bench/{ob1}", "bench/arm-01"
+    lease = lambda dev: drivers[dev]._lease_holder()
+
+    def charter(run, owner, instruments):
+        return {"version": 1, "run": run, "owner": owner, "objective": "allocation", "instruments": instruments,
+                "envelope": {a: {"actions": {}, "settings": {}} for a in instruments}}
+    a = charter("R-2611-0050", "alice", {"tc": TC, "ob1": OB1})
+    b = charter("R-2611-0051", "bob", {"tc": TC})
+    c = charter("R-2611-0052", "carol", {"arm": ARM, "ob1": OB1})
+    for ch in (a, b, c):
+        gw.issue_run_token(ch)
+
+    assert gw.allocate("R-2611-0050")["state"] == "allocated"
+    assert lease("thermocycler-01") == lease(ob1) == "alice/run-R-2611-0050"
+    got = gw.allocate("R-2611-0051")
+    assert got["state"] == "queued" and got["waiting_for"] == [TC]
+    got = gw.allocate("R-2611-0052")                       # the arm is free but ob1 is not: it takes nothing
+    assert got["state"] == "queued" and got["waiting_for"] == [OB1] and lease("arm-01") is None
+
+    time.sleep(12)                                         # past the thermocycler's 10 s watchdog
+    assert lease("thermocycler-01") == "alice/run-R-2611-0050" and drivers["thermocycler-01"].state != "estop"
+
+    gw.end_run("R-2611-0050")                              # both waiting runs get their instruments now
+    end = time.time() + 15
+    while time.time() < end and not ("R-2611-0051" in gw.allocated and "R-2611-0052" in gw.allocated):
+        time.sleep(0.1)
+    assert lease("thermocycler-01") == "bob/run-R-2611-0051"
+    assert lease("arm-01") == lease(ob1) == "carol/run-R-2611-0052"
+    gw.end_run("R-2611-0051")
+    gw.end_run("R-2611-0052")
+    assert lease("thermocycler-01") is None and lease("arm-01") is None and lease(ob1) is None
+    assert gw.waiting == [] and gw.allocated == {}
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

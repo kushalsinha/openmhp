@@ -48,11 +48,14 @@ from .directory import Directory
 HOME = Path(os.environ.get("OPENMHP_HOME", "~/.openmhp")).expanduser()
 GW_DIR = HOME / "gateway"
 STATE = GW_DIR / "gateway.json"
+RUNS_DIR = GW_DIR / "runs"                # the gateway's own copy of each run's charter and usage; never a run's to edit
 OFFLINE_S = 45            # no /relay/next from a node for this long: offline
 POLL_S = 25               # how long /relay/next may wait before answering empty
 REQUEST_TIMEOUT_S = 120   # default wait for a node's reply; X-MHP-Timeout raises it
 CODE_TTL_S = 15 * 60                  # a lab PC code: typed within minutes by the person at the bench
 AGENT_CODE_TTL_S = 60 * 60            # an agent code: sent in chat, redeemed when the person gets to it
+LEASE_TTL_S = 60                      # a run's leases, renewed by the gateway itself while the run lasts
+LEASE_RENEW_S = 2                     # often enough for any instrument watchdog of a few seconds
 
 
 def say(*lines: str) -> None:
@@ -163,6 +166,11 @@ class Gateway:
         self.node_by_token: dict[str, str] = {}
         self.subs: dict[tuple[str, str], list] = {}
         self.directory = Directory(state_ttl=0.0)      # probes are in-memory lookups: always current
+        self.gates: dict[str, object] = {}             # run token -> RunGate, built on first use
+        self.allocated: dict[str, list[str]] = {}      # run ID -> its instruments, all leased to it
+        self.waiting: list[str] = []                   # run IDs queued for their instruments, first come first served
+        self._alloc_lock = threading.Lock()
+        self._lease_thread: threading.Thread | None = None
         self.lock = threading.Lock()
         self._index_tokens()
 
@@ -186,12 +194,151 @@ class Gateway:
         self.state_mtime = STATE.stat().st_mtime
 
     def agent_for(self, auth: str) -> str | None:
+        """Who is calling: an agent machine's name, or `<scientist>/run-<id>` for a run token."""
         self.refresh()
         tok = auth[7:] if auth.startswith("Bearer ") else ""
         for t, name in self.state.get("agents", {}).items():
             if hmac.compare_digest(t.encode(), tok.encode()):
                 return name
+        gate = self.gate_for(auth)
+        return gate.identity if gate else None
+
+    # ---- runs: a token per run, checked against its charter -----------------------------------
+    def gate_for(self, auth: str):
+        tok = auth[7:] if auth.startswith("Bearer ") else ""
+        for t, entry in self.state.get("run_tokens", {}).items():
+            if tok and hmac.compare_digest(t.encode(), tok.encode()):
+                gate = self.gates.get(t)
+                if gate is None:
+                    from .run_gate import RunGate
+                    folder = RUNS_DIR / entry["run"]
+                    charter = json.loads((folder / "charter.json").read_text(encoding="utf-8"))
+                    gate = self.gates[t] = RunGate(charter, folder)
+                return gate
         return None
+
+    def issue_run_token(self, charter: dict) -> str:
+        """A token for one run, bound to this exact charter. The charter is copied into the gateway's own folder."""
+        from . import charter as C
+        problems = C.problems(charter)
+        if problems:
+            raise ValueError("the charter cannot be enforced: " + "; ".join(problems))
+        missing = [d for d in charter["instruments"].values()
+                   if d.split("/")[0] not in self.nodes or d.split("/")[1] not in self.nodes[d.split("/")[0]].devices]
+        if missing:
+            raise LookupError("not behind this gateway: " + ", ".join(missing))
+        folder = RUNS_DIR / charter["run"]
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
+        self.end_run(charter["run"])
+        token = "run_" + secrets.token_urlsafe(24)
+        self.state.setdefault("run_tokens", {})[token] = {"run": charter["run"], "owner": charter["owner"],
+                                                          "digest": C.digest(charter), "issued": time.time()}
+        self.persist()
+        return token
+
+    # ---- allocation: every instrument of a run at once, or none --------------------------------
+    def _run_entry(self, run_id: str) -> tuple[str, dict] | None:
+        for t, e in self.state.get("run_tokens", {}).items():
+            if e["run"] == run_id:
+                return t, e
+        return None
+
+    def _lease_call(self, gate, path: str, method: str, params: dict) -> dict:
+        node, dev = path.split("/", 1)
+        n = self.nodes.get(node)
+        if n is None:
+            return {"error": {"code": -32030, "message": f"lab PC {node!r} is not connected"}}
+        code, reply = self.relay(n, dev, "rpc", {"jsonrpc": "2.0", "id": "lease", "method": method, "params": params},
+                                 gate.identity, 20)
+        return reply if code == 200 and isinstance(reply, dict) else {"error": {"code": -32030, "message": str(reply)}}
+
+    def allocate(self, run_id: str) -> dict:
+        """Lease every instrument of the run under `<scientist>/run-<id>`, or none. When something is busy the
+        run waits in the queue and the gateway retries; earlier waiting runs that share an instrument go first."""
+        entry = self._run_entry(run_id)
+        if entry is None:
+            raise LookupError(f"no run token for {run_id}")
+        with self._alloc_lock:
+            if run_id in self.allocated:
+                return {"state": "allocated", "instruments": self.allocated[run_id]}
+            if run_id not in self.waiting:
+                self.waiting.append(run_id)
+            got = self._try_allocate(run_id)
+        self._ensure_lease_thread()
+        return got
+
+    def _try_allocate(self, run_id: str) -> dict:
+        entry = self._run_entry(run_id)
+        if entry is None:
+            if run_id in self.waiting:
+                self.waiting.remove(run_id)
+            return {"state": "ended"}
+        gate = self.gate_for("Bearer " + entry[0])
+        mine = list(gate.devices)
+        ahead = set()
+        for other in self.waiting[: self.waiting.index(run_id)]:
+            e = self._run_entry(other)
+            if e:
+                ahead |= set(self.gate_for("Bearer " + e[0]).devices)
+        if ahead & set(mine):
+            return {"state": "queued", "waiting_for": sorted(ahead & set(mine)), "reason": "an earlier run needs them first"}
+        taken, busy = [], {}
+        for path in mine:
+            r = self._lease_call(gate, path, "session/acquire", {"ttl": LEASE_TTL_S})
+            if "error" in r:
+                busy[path] = (r["error"].get("data") or {}).get("holder") or r["error"].get("message")
+                break
+            taken.append(path)
+        if busy:
+            for path in taken:                         # none: give back what was taken, so nobody waits on half a run
+                self._lease_call(gate, path, "session/release", {})
+            return {"state": "queued", "waiting_for": sorted(busy), "held_by": busy}
+        self.waiting.remove(run_id)
+        self.allocated[run_id] = mine
+        return {"state": "allocated", "instruments": mine}
+
+    def release_run(self, run_id: str) -> None:
+        with self._alloc_lock:
+            if run_id in self.waiting:
+                self.waiting.remove(run_id)
+            mine = self.allocated.pop(run_id, None)
+        entry = self._run_entry(run_id)
+        if mine and entry:
+            gate = self.gate_for("Bearer " + entry[0])
+            for path in mine:
+                self._lease_call(gate, path, "session/release", {})
+
+    def _ensure_lease_thread(self) -> None:
+        if self._lease_thread is None or not self._lease_thread.is_alive():
+            self._lease_thread = threading.Thread(target=self._lease_loop, name="mhp-run-leases", daemon=True)
+            self._lease_thread.start()
+
+    def _lease_loop(self) -> None:
+        """Renew the leases of allocated runs (the gateway is always on, so a run's instruments stay held while its
+        agent is idle) and retry waiting runs in order."""
+        while True:
+            time.sleep(LEASE_RENEW_S)
+            with self._alloc_lock:
+                for run_id in list(self.allocated):
+                    entry = self._run_entry(run_id)
+                    if entry is None:
+                        self.allocated.pop(run_id, None)
+                        continue
+                    gate = self.gate_for("Bearer " + entry[0])
+                    for path in self.allocated[run_id]:
+                        self._lease_call(gate, path, "session/renew", {"ttl": LEASE_TTL_S})
+                for run_id in list(self.waiting):
+                    self._try_allocate(run_id)
+
+    def end_run(self, run_id: str) -> None:
+        if run_id in self.allocated or run_id in self.waiting:
+            self.release_run(run_id)
+        toks = self.state.setdefault("run_tokens", {})
+        for t in [t for t, e in toks.items() if e["run"] == run_id]:
+            del toks[t]
+            self.gates.pop(t, None)
+        self.persist()
 
     def node_for(self, auth: str) -> Node | None:
         self.refresh()
@@ -439,16 +586,31 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
             agent = gw.agent_for(self._auth())
             if agent is None:
                 return self._json(401, {"error": AGENT_401})
+            gate = gw.gate_for(self._auth())               # a run token: only its instruments, only its charter
             if parts == ["directory", "rpc"]:
                 from .transport import dispatch
                 msg = self._body()
-                return self._json(200, dispatch(gw.directory, msg, agent, trusted=True) or {})
+                ans = dispatch(gw.directory, msg, agent, trusted=True) or {}
+                if gate and isinstance((ans.get("result") or {}).get("results"), list):
+                    ans["result"]["results"] = [r for r in ans["result"]["results"] if gate.allows_device(r.get("id", ""))]
+                return self._json(200, ans)
             if len(parts) == 3 and parts[2] == "rpc":
                 node = gw.nodes.get(parts[0])
-                if node is None or parts[1] not in node.devices:
+                if node is None or parts[1] not in node.devices or (gate and not gate.allows_device(f"{parts[0]}/{parts[1]}")):
                     return self._json(404, {"error": f"no device {parts[0]}/{parts[1]} behind this gateway"})
                 timeout = float(self.headers.get("X-MHP-Timeout", REQUEST_TIMEOUT_S))
-                return self._json(*gw.relay(node, parts[1], "rpc", self._body(), agent, timeout))
+                msg = self._body()
+                if gate is None:
+                    return self._json(*gw.relay(node, parts[1], "rpc", msg, agent, timeout))
+                send, refusal, commit = gate.check(f"{parts[0]}/{parts[1]}", msg)
+                if refusal is not None:
+                    return self._json(200, refusal)
+                code, reply = gw.relay(node, parts[1], "rpc", send, agent, timeout)
+                if code == 200:
+                    reply = gate.translate(reply)
+                    if commit:
+                        commit(reply)
+                return self._json(code, reply)
             return self._json(404, {"error": "POST /<node>/<device>/rpc or /directory/rpc"})
 
         def do_GET(self):
@@ -465,16 +627,18 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
             agent = gw.agent_for(self._auth())
             if agent is None:
                 return self._json(401, {"error": AGENT_401})
+            gate = gw.gate_for(self._auth())
             if not parts:
                 return self._json(200, {"mhp_gateway": gw.state["server_name"], "directory": agent_url(gw.state, "directory"),
-                                        "devices": sorted(f"{n}/{d}" for n, node in gw.nodes.items() for d in node.devices)})
+                                        "devices": sorted(f"{n}/{d}" for n, node in gw.nodes.items() for d in node.devices
+                                                          if not gate or gate.allows_device(f"{n}/{d}"))})
             if parts == ["directory", "mhp.json"]:
                 return self._json(200, gw.directory.rpc("device/describe", {}, agent))
             if parts == ["directory", "events"]:
                 return self._sse(queue.Queue())
             if len(parts) == 3:
                 node = gw.nodes.get(parts[0])
-                if node is None or parts[1] not in node.devices:
+                if node is None or parts[1] not in node.devices or (gate and not gate.allows_device(f"{parts[0]}/{parts[1]}")):
                     return self._json(404, {"error": f"no device {parts[0]}/{parts[1]} behind this gateway"})
                 if parts[2] == "mhp.json":
                     return self._json(200, node.devices[parts[1]]["nameplate"])
