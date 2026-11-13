@@ -4,6 +4,14 @@
     mhp agent                                        which gateway this machine is paired with, and whether it answers
     mhp agent leave                                  forget the gateway (the operator revokes with `mhp gateway remove-agent`)
 
+When the gateway offers SSH access (`mhp gateway ssh` there), joining also sends this machine's own
+SSH public key (made once, under ~/.openmhp/ssh) and pins the gateway's SSH host key, and adds one
+`Include` line to ~/.ssh/config. From then on, plain commands reach the scientist's folder there:
+
+    ssh mhp-gateway mhp-gw open                       a new run; returns its ID
+    rsync -a ./my-skills/ mhp-gateway:runs/<id>/in/   hand over skills, scripts and data
+    rsync -a mhp-gateway:runs/<id>/out/ ./results/    bring results home
+
 Joining downloads the gateway's certificate, shows its fingerprint, exchanges the code for an agent
 token over POST /agent/join and saves ~/.openmhp/agent.json. From then on the client, `mhp lab` and
 `mhp-mcp` present that token to the gateway's URLs and trust exactly the pinned certificate, so no
@@ -14,7 +22,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import socket
+import subprocess
 import ssl
 import sys
 import time
@@ -26,6 +36,75 @@ from .relay import HOME, fetch_cert, fingerprint, ssl_context
 
 AGENT_FILE = HOME / "agent.json"
 PIN_FILE = HOME / "agent-gateway-pin.pem"
+SSH_DIR = HOME / "ssh"
+SSH_KEY = SSH_DIR / "id_ed25519"
+SSH_CONFIG = SSH_DIR / "config"
+SSH_KNOWN = SSH_DIR / "known_hosts"
+SSH_ALIAS = "mhp-gateway"
+INCLUDE_MARK = "# added by mhp agent --join; removed by mhp agent leave"
+
+
+def user_ssh_config() -> Path:
+    return Path(os.environ.get("OPENMHP_USER_SSH_CONFIG") or Path.home() / ".ssh" / "config")
+
+
+def ensure_ssh_key(name: str) -> str | None:
+    """This machine's key for the gateway, made once. None when there is no ssh-keygen (SSH is then skipped)."""
+    pub = SSH_KEY.with_suffix(".pub")
+    if not pub.is_file():
+        keygen = shutil.which("ssh-keygen")
+        if keygen is None:
+            return None
+        SSH_DIR.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run([keygen, "-q", "-t", "ed25519", "-N", "", "-C", f"openmhp-{name}", "-f", str(SSH_KEY)],
+                           capture_output=True, text=True)
+        if r.returncode != 0 or not pub.is_file():
+            return None
+    return pub.read_text(encoding="utf-8").strip()
+
+
+def write_ssh_access(ssh: dict) -> None:
+    """The host entry for `ssh mhp-gateway`, the pinned host key, and one Include line in ~/.ssh/config."""
+    from .ssh_access import known_hosts_line
+    SSH_DIR.mkdir(parents=True, exist_ok=True)
+    SSH_KNOWN.write_text(known_hosts_line(ssh["host"], int(ssh.get("port", 22)), ssh["host_key"]) + "\n", encoding="utf-8")
+    q = lambda p: '"' + str(p) + '"'
+    SSH_CONFIG.write_text("\n".join([
+        f"Host {SSH_ALIAS}",
+        f"    HostName {ssh['host']}",
+        f"    Port {int(ssh.get('port', 22))}",
+        f"    User {ssh['login']}",
+        f"    IdentityFile {q(SSH_KEY)}",
+        "    IdentitiesOnly yes",
+        f"    UserKnownHostsFile {q(SSH_KNOWN)}",
+        "    StrictHostKeyChecking yes",
+        "    RequestTTY no",
+        "",
+    ]), encoding="utf-8")
+    uc = user_ssh_config()
+    cur = uc.read_text(encoding="utf-8") if uc.is_file() else ""
+    line = f'Include "{SSH_CONFIG}"'
+    if line not in cur:
+        uc.parent.mkdir(parents=True, exist_ok=True)
+        uc.write_text(f"{INCLUDE_MARK}\n{line}\n\n" + cur, encoding="utf-8")      # Include must come before any Host block
+        try:
+            os.chmod(uc, 0o600)
+        except OSError:
+            pass
+
+
+def remove_ssh_access() -> None:
+    uc = user_ssh_config()
+    if uc.is_file():
+        lines = uc.read_text(encoding="utf-8").split("\n")
+        keep = [l for l in lines if l != INCLUDE_MARK and l != f'Include "{SSH_CONFIG}"']
+        if keep != lines:
+            while keep and keep[0] == "":
+                keep.pop(0)
+            uc.write_text("\n".join(keep), encoding="utf-8")
+    for f in (SSH_CONFIG, SSH_KNOWN):
+        if f.is_file():
+            f.unlink()
 
 
 def say(*lines: str) -> None:
@@ -63,8 +142,9 @@ def join(gateway_url: str, code: str, name: str | None = None, *, quiet: bool = 
     if not quiet:
         say(f"gateway certificate fingerprint: {fp}", "  (compare with what `mhp gateway pair-agent` printed; stop if it differs)")
     ctx = ssl_context(str(PIN_FILE))
+    ssh_key = ensure_ssh_key(name)
     req = urllib.request.Request(gateway_url + "/agent/join", method="POST",
-                                 data=json.dumps({"code": code, "name": name}).encode(),
+                                 data=json.dumps({"code": code, "name": name, "ssh_key": ssh_key}).encode(),
                                  headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, context=ctx, timeout=20) as r:
@@ -80,6 +160,13 @@ def join(gateway_url: str, code: str, name: str | None = None, *, quiet: bool = 
     cfg = {"gateway": gateway_url, "directory": ans.get("directory") or gateway_url + "/directory/",
            "token": ans["agent_token"], "name": ans.get("name", name), "pin": str(PIN_FILE),
            "fingerprint": fp, "joined": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    ssh = ans.get("ssh")
+    if ssh and not ssh.get("error"):
+        write_ssh_access(ssh)
+        cfg["ssh"] = {"alias": SSH_ALIAS, "host": ssh["host"], "port": ssh.get("port", 22), "login": ssh["login"],
+                      "scientist": ssh["scientist"]}
+    elif ssh and ssh.get("error"):
+        cfg["ssh_error"] = ssh["error"]
     save_agent_config(cfg)
     return cfg
 
@@ -92,6 +179,7 @@ def leave() -> int:
     AGENT_FILE.unlink()
     if PIN_FILE.is_file():
         PIN_FILE.unlink()
+    remove_ssh_access()
     say(f"forgot gateway {cfg['gateway']} (was '{cfg['name']}'). The operator revokes the token with "
         f"`mhp gateway remove-agent {cfg['name']}`.")
     return 0
@@ -115,6 +203,9 @@ def status() -> int:
         say("not paired with a gateway. Ask the operator for a code (`mhp gateway pair-agent` there), then:",
             "  mhp agent --join https://<gateway> <code>")
         return 1
+    if cfg.get("ssh"):
+        say(f"runs and files over SSH: ssh {SSH_ALIAS} mhp-gw help   (scientist '{cfg['ssh']['scientist']}', "
+            f"{cfg['ssh']['login']}@{cfg['ssh']['host']}:{cfg['ssh']['port']})")
     say(f"gateway {cfg['gateway']}   paired as '{cfg['name']}' on {cfg.get('joined', '?')}",
         f"directory {cfg['directory']}", f"certificate pinned: {cfg.get('fingerprint', '?')}   ({cfg.get('pin')})", f"settings: {AGENT_FILE}")
     token, ctx = access(cfg["gateway"])
@@ -147,6 +238,12 @@ def main(verb: str | None, args: list[str], *, join_args: list[str] | None = Non
         say(f"paired with {cfg['gateway']} as '{cfg['name']}'; saved to {AGENT_FILE}", "",
             "agents on this machine now reach every instrument behind it:  mhp-mcp",
             f"  (or by hand:  mhp {cfg['directory']} find <what you need>)")
+        if cfg.get("ssh"):
+            say("", f"runs and files on the gateway, as scientist '{cfg['ssh']['scientist']}':",
+                f"  ssh {SSH_ALIAS} mhp-gw help",
+                f"  rsync -a <folder>/ {SSH_ALIAS}:runs/<run id>/in/")
+        elif cfg.get("ssh_error"):
+            say("", f"the gateway did not set up SSH for this machine: {cfg['ssh_error']}")
         return 0
     if verb in (None, "status"):
         return status()

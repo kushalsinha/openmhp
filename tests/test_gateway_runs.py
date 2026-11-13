@@ -159,8 +159,42 @@ def test_file_copies_stay_inside_the_scientists_own_run_folders():
         code, ran, ans = copy("dave", cmd)
         assert ran is None and code in (G.REFUSED, G.NOT_FOUND) and not ans["ok"], (cmd, code, ans)
         assert ans["error"].startswith("mhp-gw: ") or cmd == "", cmd          # on stderr: the copy's stdout is its protocol
-    assert "-O" in copy("dave", "internal-sftp")[2]["error"]
-    assert "-O" in copy("dave", "")[2]["error"]                                  # an empty command: likely modern scp
+    assert "rsync -a" in copy("dave", "internal-sftp")[2]["error"]
+    assert "rsync -a" in copy("dave", "")[2]["error"]                            # an empty command: likely modern scp
+
+
+def test_ssh_keys_come_only_from_profiles_and_are_bound_to_mhp_gw():
+    from openmhp import ssh_access as SA
+    key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+    assert SA.check_key(key + " frank@laptop") == key
+    for bad in ('no-pty ' + key, 'command="sh" ' + key, key + "\n" + key, "-----BEGIN OPENSSH PRIVATE KEY-----",
+                "ssh-ed25519 not base64!", ""):
+        with raises(ValueError):
+            SA.check_key(bad)
+    S.create("frank", ssh_key=key)
+    S.create("grace")                                                     # no key yet: never listed
+    single = {"mode": "single", "login": "mhp", "lab_root": str(S.lab_root()), "python": "/opt/py/bin/python"}
+    lines = SA.keys_for("mhp", single)
+    frank = [l for l in lines if l.endswith("openmhp:frank")]
+    assert len(frank) == 1 and not any("openmhp:grace" in l for l in lines)
+    assert frank[0].startswith('command="/opt/py/bin/python -m openmhp.gw_shell --scientist frank --root ')
+    assert ",restrict " + key + " " in frank[0]
+    assert SA.keys_for("root", single) == [] and SA.keys_for("mhp-frank", single) == []
+    users = {**single, "mode": "users"}
+    assert [l.endswith("openmhp:frank") for l in SA.keys_for("mhp-frank", users)] == [True]
+    assert SA.keys_for("mhp", users) == [] and SA.keys_for("mhp-nobody", users) == [] and SA.keys_for("mhp-Bad!", users) == []
+    assert SA.login_for("frank", users) == "mhp-frank" and SA.login_for("frank", single) == "mhp"
+    snip = SA.sshd_snippet(single)
+    assert "Match User mhp" in snip and "AuthorizedKeysFile none" in snip and "PasswordAuthentication no" in snip
+    assert "Match Group mhp-scientists" in SA.sshd_snippet(users)
+    assert SA.known_hosts_line("gw.lab", 22, key) == "gw.lab " + key and SA.known_hosts_line("gw.lab", 2222, key).startswith("[gw.lab]:2222 ")
+    out = io.StringIO()
+    sys.stdout, real = out, sys.stdout
+    try:
+        assert SA.main(["keys", "mhp"]) == 0 and SA.main(["nonsense"]) == 2      # no gateway state here: prints nothing
+    finally:
+        sys.stdout = real
+    assert out.getvalue() == ""
 
 
 FAKE_SSH = """#!{python}
@@ -212,7 +246,7 @@ def test_real_rsync_and_scp_through_the_forced_command():
     r = run("scp", "-O", "-S", str(fake), str(src / "run.py"), "gw:profile.json")
     assert r.returncode != 0 and "files can only be copied into" in r.stderr
     r = run("scp", "-S", str(fake), str(src / "run.py"), f"gw:runs/{rid}/in/x.py")          # modern scp: SFTP
-    assert r.returncode != 0 and ("-O" in r.stderr or not (S.run_folder("erin", rid) / "in" / "x.py").exists())
+    assert r.returncode != 0 and ("rsync -a" in r.stderr or not (S.run_folder("erin", rid) / "in" / "x.py").exists())
 
 
 if __name__ == "__main__":

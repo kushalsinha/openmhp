@@ -14,7 +14,7 @@ so whatever the scientist's agent asks for arrives in SSH_ORIGINAL_COMMAND and i
     rsync -a gw:runs/<run id>/out/ <here>/         copy results out (also preview/)
     scp -O -r <folder> gw:runs/<run id>/in/        the same with scp, in its classic mode
 
-File copies run rsync or scp on the gateway only for paths inside the scientist's own folder: into a
+rsync is the way to copy. File copies run rsync or scp on the gateway only for paths inside the scientist's own folder: into a
 run's in/, out of its preview/ and out/. scp from OpenSSH 9 on speaks SFTP unless given -O, and SFTP
 cannot be limited this way, so it is refused with a hint.
 
@@ -36,15 +36,15 @@ from . import scientists as S
 
 OK, WAITING, REFUSED, NOT_FOUND = 0, 2, 3, 4
 VERBS = {
-    "open": "a new run in your folder; copy your skills, scripts and data into its in/ folder",
+    "open": "a new run in your folder; copy your skills, scripts and data into its in/ folder with rsync",
     "list": "your runs and their states",
     "status": "status <run id>: one run's state",
     "help": "this list",
 }
 
 
-SFTP_HINT = ("this gateway takes file copies by rsync, or by scp in its classic mode: add -O to scp "
-             "(scp -O -r <folder> <gateway>:runs/<run id>/in/)")
+SFTP_HINT = ("copy files with rsync (rsync -a <folder>/ <gateway>:runs/<run id>/in/); scp works only in its "
+             "classic mode, with -O")
 RSYNC_LONG = {"--server", "--sender", "--dirs", "--recursive", "--links", "--times", "--perms", "--owner", "--group",
               "--devices", "--specials", "--hard-links", "--executability", "--omit-dir-times", "--partial", "--delete", "--delete-before", "--delete-during", "--delete-delay",
               "--delete-after", "--numeric-ids", "--safe-links", "--append", "--append-verify", "--inplace",
@@ -170,7 +170,7 @@ class Shell:
     def verb_open(self, args) -> int:
         meta = S.open_run(self.scientist, self.root)
         return self.answer(OK, run=meta["id"], state=meta["state"], upload=f"runs/{meta['id']}/in/",
-                           note="copy your folder into upload, for example: scp -O -r <folder> <gateway>:" + f"runs/{meta['id']}/in/")
+                           note=f"copy your folder into upload with rsync: rsync -a <folder>/ <gateway>:runs/{meta['id']}/in/")
 
     def verb_list(self, args) -> int:
         return self.answer(OK, scientist=self.scientist,
