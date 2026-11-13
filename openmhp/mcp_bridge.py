@@ -340,6 +340,9 @@ class Bridge:
                  scripts: bool | None = None):
         off = os.environ.get("OPENMHP_NO_SCRIPTS", "").strip().lower() not in ("", "0", "false", "no")
         self.scripts = (not off) if scripts is None else bool(scripts)   # --no-scripts: no code from the model runs here
+        # a run on a gateway (OPENMHP_RUN_SCOPE): its instruments come from the gateway, already chosen; it never
+        # scans, adds or onboards devices, so mhp_lab is not offered at all
+        self.run_scope = os.environ.get("OPENMHP_RUN_SCOPE", "").strip().lower() not in ("", "0", "false", "no")
         self.fleet = fleet
         self._onboarding = None
         self._hooked: set[int] = set()
@@ -385,6 +388,8 @@ class Bridge:
                               "script themselves with `mhp` or the SDK, where they are the trusted party.",
                               {"scripts": False})
             return self.run_tool(a)
+        if name == "mhp_lab" and self.run_scope:
+            raise PermissionError("this is a run on a gateway: its instruments are fixed by the approved charter")
         if name == "mhp_lab":
             return self.lab_op(a)
         if name == "mhp_data":
@@ -426,7 +431,8 @@ class Bridge:
     def tools(self) -> list:
         """The tool surface this bridge offers. A bridge that runs no scripts does not offer mhp_run, rather than
         offering it and refusing every call: an absent tool is a capability the model never plans around."""
-        return TOOLS if self.scripts else [t for t in TOOLS if t["name"] != "mhp_run"]
+        hidden = ({"mhp_run"} if not self.scripts else set()) | ({"mhp_lab"} if self.run_scope else set())
+        return [t for t in TOOLS if t["name"] not in hidden]
 
     def _device(self, name: str):
         try:
