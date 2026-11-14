@@ -170,7 +170,7 @@ def test_runs_get_the_gateways_llm_key_and_no_other_credential():
           "envelope": {"tc": {"actions": {}, "settings": {}}}}
     with raises(ValueError) as e:
         sup.propose(rid, "kim", ch, harness="claude-code")
-    assert "mhp gateway llm-key" in str(e.value)
+    assert "mhp gateway llm" in str(e.value)
     (sup.runs_dir.parent / "llm.env").write_text("ANTHROPIC_API_KEY=sk-test\n")
     assert sup.propose(rid, "kim", ch, harness="claude-code").startswith("sha256:")
 

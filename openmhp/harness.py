@@ -33,7 +33,11 @@ FILE_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
 # key for runs (Turn.env) and none of these, so an operator's own login never pays for or answers as a run.
 CREDENTIAL_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL",
                    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "AWS_BEARER_TOKEN_BEDROCK",
-                   "OPENAI_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
+                   "OPENAI_API_KEY", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT",
+                   "CLAUDE_CONFIG_DIR", "ANTHROPIC_MODEL", "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_RESOURCE",
+                   "ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION", "GOOGLE_APPLICATION_CREDENTIALS",
+                   "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE",
+                   "AWS_DEFAULT_PROFILE", "AWS_REGION")
 
 
 def run_environment(extra: dict) -> dict:
@@ -71,6 +75,7 @@ class Turn:
     env: dict = field(default_factory=dict)
     run_as: str | None = None               # a Linux user to run as (sudo -n -u), or None for this one
     timeout_s: float = 3600
+    isolate: bool = True                    # the harness gets a configuration folder of its own (no operator login)
 
 
 @dataclass
@@ -97,10 +102,22 @@ class Adapter:
     def parse(self, stdout: str, stderr: str, code: int, session: str) -> TurnResult:
         raise NotImplementedError
 
+    def isolation(self, workdir: Path) -> dict:
+        """Environment that keeps the harness from finding the gateway operator's own sign-in and settings."""
+        return {}
+
 
 class ClaudeCode(Adapter):
     name, program = "claude-code", "claude"
-    needs_llm_key = True                    # runs use the gateway's key (llm.env), never an inherited login
+    needs_llm_key = True                    # runs use the gateway's sign-in for runs, never an inherited login
+
+    def isolation(self, workdir: Path) -> dict:
+        # Claude Code keeps its login, settings and sessions under CLAUDE_CONFIG_DIR (default ~/.claude). Each run
+        # folder gets its own, so a run finds neither the operator's login nor their settings, and its sessions
+        # (which --resume needs between turns) stay with the run.
+        home = Path(workdir) / ".claude-home"
+        home.mkdir(parents=True, exist_ok=True)
+        return {"CLAUDE_CONFIG_DIR": str(home)}
 
     def allowed_tools(self) -> str:
         mcp = [f"mcp__openmhp__{t}" for t in INSTRUMENT_TOOLS] + [f"mcp__run__{t}" for t in RUN_TOOLS]
@@ -187,9 +204,10 @@ def run_turn(adapter: Adapter, turn: Turn) -> TurnResult:
         return TurnResult(ok=False, session=turn.session, reason="not installed",
                           text=f"{adapter.program!r} is not installed on this gateway")
     cmd = adapter.command(turn, session, first)
-    env = run_environment(turn.env)
+    given = {**turn.env, **(adapter.isolation(turn.workdir) if turn.isolate else {})}
+    env = run_environment(given)
     if turn.run_as:
-        keep = ",".join(sorted(turn.env))
+        keep = ",".join(sorted(given))
         cmd = ["sudo", "-n", "-u", turn.run_as] + ([f"--preserve-env={keep}"] if keep else []) + cmd
     try:
         p = subprocess.run(cmd, cwd=str(turn.workdir), env=env, capture_output=True, text=True, timeout=turn.timeout_s)

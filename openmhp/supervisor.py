@@ -246,9 +246,21 @@ class Supervisor:
         gateway.supervisor = self
 
     def llm_env(self) -> dict:
-        """The gateway's own LLM key for runs (<runs dir>/../llm.env), never the operator's login."""
-        from .harness import llm_env
-        return llm_env(self.runs_dir.parent / "llm.env")
+        """The sign-in for one turn of a run, as the operator chose it (`mhp gateway llm`): short-lived credentials
+        are fetched now. Never the operator's own login. Empty when none is chosen; raises LLMAccessError when the
+        chosen one cannot be had."""
+        from . import llm_access
+        return llm_access.turn_env(self.runs_dir.parent) if self.llm_configured() else {}
+
+    def _llm_env_or_none(self) -> dict:
+        try:
+            return self.llm_env()
+        except Exception:                              # noqa: BLE001  (stopping goes on without a cleanup turn's sign-in)
+            return {}
+
+    def llm_configured(self) -> bool:
+        from . import llm_access
+        return llm_access.configured(self.runs_dir.parent)
 
     # ---- records -----------------------------------------------------------------------------
     def record(self, run_id: str, owner: str | None = None) -> RunRecord:
@@ -275,8 +287,8 @@ class Supervisor:
             raise ValueError("the charter names another run or scientist")
         if harness not in self.adapters:
             raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
-        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env() and not self.local_login:
-            raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
+        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_configured() and not self.local_login:
+            raise ValueError("this gateway has no sign-in for runs yet: its operator chooses one with `mhp gateway llm`")
         rec = self.record(run_id, owner)
         (self.runs_dir / run_id).mkdir(parents=True, exist_ok=True)
         (self.runs_dir / run_id / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
@@ -338,8 +350,8 @@ class Supervisor:
         """The scientist's request in plain English: start a planner for it."""
         if harness not in self.adapters:
             raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
-        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env() and not self.local_login:
-            raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
+        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_configured() and not self.local_login:
+            raise ValueError("this gateway has no sign-in for runs yet: its operator chooses one with `mhp gateway llm`")
         rec = self.record(run_id, owner)
         if rec.state != "open":
             raise ValueError(f"run {run_id} is {rec.state}; a request starts an open run (open a new one with mhp-gw open)")
@@ -508,7 +520,15 @@ class Supervisor:
             work = rec.public_folder() / ("plan" if planning else "work")
             session_key = "plan_session" if planning else "session"
             adapter = self.adapters[rec.doc.get("harness", "claude-code")]
-            env = {"OPENMHP_RUN_ID": run_id, **self.llm_env()}
+            try:
+                env = {"OPENMHP_RUN_ID": run_id, **self.llm_env()}
+            except Exception as e:                      # noqa: BLE001  (LLMAccessError, or a helper gone wrong)
+                rec.event("signin_failed", why=str(e)[:500])
+                if not rec.doc.get("open_questions"):
+                    self.ask(run_id, f"The lab gateway could not sign its agent in to the AI service: {e}. Whoever "
+                             "runs the gateway needs to fix this (`mhp gateway llm test` there shows what is wrong). "
+                             "Answer here once it is fixed, and the run carries on.", meanwhile="wait", by_supervisor=True)
+                continue
             try:
                 venv = self.ensure_env(run_id)
             except RuntimeError as e:
@@ -526,7 +546,7 @@ class Supervisor:
             rec.event("wake", triggers=[t["kind"] for t in batch])
             result = run_turn(adapter, Turn(prompt=prompt, workdir=work, session=rec.doc.get(session_key),
                                             mcp_config=work / ".mcp-run.json", instructions=work / ".run-instructions.md",
-                                            max_budget_usd=left, env=env,
+                                            max_budget_usd=left, env=env, isolate=not self.local_login,
                                             run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
             c.spent_usd += result.cost_usd
             rec.set(**{session_key: result.session or rec.doc.get(session_key)}, spent_usd=round(c.spent_usd, 4))
@@ -683,7 +703,8 @@ class Supervisor:
             r = run_turn(adapter, Turn(prompt=f"[{now()}] stop: {by} stopped the run. Do the charter's cleanup now, write what "
                                        "you have to out/ and notebook.md, and do not start anything new.",
                                        workdir=work, session=rec.doc.get("session"), mcp_config=work / ".mcp-run.json",
-                                       max_turns=15, timeout_s=cleanup_timeout_s, env={"OPENMHP_RUN_ID": run_id, **self.llm_env()},
+                                       max_turns=15, timeout_s=cleanup_timeout_s, env={"OPENMHP_RUN_ID": run_id, **self._llm_env_or_none()},
+                                       isolate=not self.local_login,
                                        run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
             rec.event("turn", ok=r.ok, reason=r.reason, cost_usd=r.cost_usd, said=(r.text or "")[:2000], cleanup=True)
         self.gw.end_run(run_id)

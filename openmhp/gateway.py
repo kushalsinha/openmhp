@@ -10,7 +10,10 @@ command either finishes the job or prints the one thing to do next.
     mhp gateway add-agent <name>      let one agent machine through by hand; prints the token to paste there
     mhp gateway status | check        what is connected, which lab PCs run an old OpenMHP, and what to fix
     mhp gateway ssh [users] [apply]   let scientists' machines run mhp-gw and copy files over SSH (keys arrive at pairing)
-    mhp gateway llm-key               the LLM key runs use (read from stdin; kept in this gateway's own folder)
+    mhp gateway llm                   how runs sign in to their model: what this machine has (API key, Claude
+                                      Team/Enterprise token, Bedrock/Vertex/Foundry with SSO, a company LLM gateway or
+                                      helper), `llm use <method>` to choose, `llm test` to check (see llm_access)
+    mhp gateway llm-key               the same with one plain API key (read from stdin)
 
 Agent face (bearer = agent token):  POST /agent/join (code, no token)    GET /    GET /<node>/<device>/mhp.json    POST /<node>/<device>/rpc
                                     GET /<node>/<device>/events (SSE)         /directory/{rpc,mhp.json}
@@ -1028,7 +1031,9 @@ def llm_key(words: list[str]) -> int:
     lines = [l for l in (path.read_text(encoding="utf-8").splitlines() if path.is_file() else []) if not l.startswith(var + "=")]
     path.write_text("\n".join(lines + [f"{var}={key}"]) + "\n", encoding="utf-8")
     os.chmod(path, 0o600)
-    say(f"saved {var} for runs in {path} (this account only). Agent sessions get it and no other credential.")
+    (GW_DIR / "llm.json").unlink(missing_ok=True)       # a key set this way replaces a method chosen with `llm use`
+    say(f"saved {var} for runs in {path} (this account only). Agent sessions get it and no other credential. "
+        "(`mhp gateway llm` shows every way this machine could sign runs in, including SSO.)")
     return 0
 
 
@@ -1129,5 +1134,8 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
         return ssh_setup(args)
     if verb == "llm-key":
         return llm_key(args)
-    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh, llm-key")
+    if verb == "llm":
+        from .llm_access import main as llm_main
+        return llm_main(GW_DIR, args, say=say)
+    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh, llm, llm-key")
     return 2

@@ -465,7 +465,21 @@ starts, unless someone edited them (`mhp skills status` shows which).
 
 The same channel carries whole experiments: a scientist's request in plain English, a planner on the
 gateway that rehearses and proposes a charter, approval, a supervised agent session that runs the loop
-within that charter, and the results back home. `examples/gateway_closed_loop/` runs it end to end on
+within that charter, and the results back home.
+
+The gateway's agent sessions sign in to their model with whatever the lab's company uses, chosen once
+by the operator:
+
+```bash
+mhp gateway llm                              # what this machine has: API key, Claude Team/Enterprise token,
+                                             # Bedrock, Vertex or Foundry (with SSO), a company LLM gateway or helper
+mhp gateway llm use bedrock profile=lab-sso region=eu-west-1
+mhp gateway llm test                         # checks it as a run would see it, without calling the model
+```
+
+Short-lived credentials (an SSO session, a helper's token) are fetched again before every turn. Runs
+never see the operator's own sign-in: they get only the chosen credentials and a Claude Code
+configuration folder of their own. `examples/gateway_closed_loop/` runs it end to end on
 a simulated chromatograph.
 
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
