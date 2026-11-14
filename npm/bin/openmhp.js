@@ -7,7 +7,7 @@
  *   setup                    install the Python runtime and the skills, register with Claude Code and Codex
  *   update                   upgrade the runtime and the skills
  *   demo                     add two simulated instruments to try things without hardware
- *   mhp agent --join <url> <code>   use a lab gateway (code from `mhp gateway pair-agent` there)
+ *   join <url> <code> --name <you>   use a lab gateway (code from `mhp gateway pair-agent` there)
  *   (no command)             start the MCP server on stdio: what harness configs run
  *   scan [host...] | add <target> | list | remove <id> | validate <folder> | device <folder> [--http PORT]
  *
@@ -69,6 +69,22 @@ function installedVersion() {
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
+// A separate `pip install openmhp` puts its own `mhp` on PATH; this launcher's runtime does not, so a bare
+// `mhp ...` typed afterwards runs that other copy, often an old one. Say so once, at setup.
+function otherMhp() {
+  const r = require("child_process").spawnSync(process.platform === "win32" ? "where" : "which", ["mhp"], { encoding: "utf8" });
+  const found = (r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    .filter((p) => !path.resolve(p).startsWith(path.resolve(HOME)));
+  if (!found.length) return;
+  const v = require("child_process").spawnSync(found[0].replace(/mhp(\.exe)?$/i, process.platform === "win32" ? "python.exe" : "python"),
+    ["-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
+  log("");
+  log(`note: another OpenMHP is on your PATH: ${found[0]}${v.status === 0 ? ` (version ${v.stdout.trim()})` : ""}.`);
+  log("a bare `mhp ...` runs that one, not this install. Run commands through this launcher instead:");
+  log("  npx -y openmhp-cli@latest mhp <args>");
+  log("or remove the other copy (pip uninstall openmhp) or update it (pip install -U openmhp).");
+}
+
 async function update() {
   if (await warnIfOld("update")) process.exit(1);
   const before = installedVersion();
@@ -107,7 +123,8 @@ async function setup() {
   console.error(JSON.stringify({ mcpServers: { openmhp: { command: "npx", args: ["-y", "openmhp-cli"] } } }, null, 2));
   console.error("");
   log("next: open your agent and say \"find the instruments on my network\" or \"onboard my hotplate\".");
-  log("if your lab has a gateway: npx -y openmhp-cli@latest mhp agent --join <gateway url> <code from mhp gateway pair-agent>");
+  log("if your lab has a gateway: npx -y openmhp-cli@latest join <gateway url> <code from mhp gateway pair-agent> --name <your name>");
+  otherMhp();
   log(`lab lives in ${HOME}`);
 }
 
@@ -128,6 +145,10 @@ function main() {
     case "skills": ensureRuntime(); process.exit(run("mhp", ["skills", ...rest]));
     case "device": ensureRuntime(); process.exit(run("mhp", ["serve", `pkg:${path.resolve(rest[0])}`, ...rest.slice(1)]));
     case "mhp": ensureRuntime(); process.exit(run("mhp", rest));
+    case "join":                                       // pair this machine with a lab gateway
+      ensureRuntime();
+      if (rest.length < 2) { log("usage: npx -y openmhp-cli@latest join https://<gateway> <code> --name <your name>"); process.exit(2); }
+      process.exit(run("mhp", ["agent", "--join", rest[0], rest[1], ...rest.slice(2)]));
     case "home": console.log(HOME); return;
     case "-h": case "--help": case "help":
       console.log(fs.readFileSync(__filename, "utf8").split("*/")[0].split("\n").slice(1).map((l) => l.replace(/^(\/\*| \*) ?/, "")).join("\n"));

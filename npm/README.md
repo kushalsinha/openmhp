@@ -26,7 +26,7 @@ If your lab has a gateway, join it once with the code its admin gives you
 (from `mhp gateway pair-agent`):
 
 ```bash
-npx -y openmhp-cli@latest mhp agent --join https://<gateway> <code> --name <your name, e.g. alice>
+npx -y openmhp-cli@latest join https://<gateway> <code> --name <your name, e.g. alice>
 ```
 
 The name becomes your folder on the gateway (unless the admin already chose it when making the code).
@@ -64,4 +64,5 @@ Set `OPENMHP_NO_UPDATE_CHECK=1` to turn the check off.
 
 Other commands: `scan [host...]`, `add <target>`, `list`, `remove <id>`, `validate <folder>`,
 `device <folder> --http 18921`, and `mhp <args>` (the full `mhp` command line). Everything is kept
-in `~/.openmhp`.
+in `~/.openmhp`, and its `mhp` is not put on your PATH: run it as `npx -y openmhp-cli@latest mhp ...`.
+A bare `mhp` belongs to a separate pip install, if there is one.

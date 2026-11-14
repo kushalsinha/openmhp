@@ -866,7 +866,8 @@ def pair_agent(name: str | None = None) -> int:
                       "  mhp gateway pair-agent alice", ""]
     say(f"agent code (1 hour, one machine{', named ' + entry['name'] if name else ''}):  {code}", "",
         "Send it to the person. On their machine, once:", "",
-        join_line, "", *about_name,
+        join_line, join_line.replace("mhp agent --join", "npx -y openmhp-cli@latest join") + "   (if they installed with npx)",
+        "", *about_name,
         f"It will show the gateway certificate fingerprint {fingerprint_of(state['cert'])}; they should stop if it differs.",
         "From then on `mhp-mcp` on that machine reaches every instrument behind this gateway. Nothing to paste.")
     return 0
