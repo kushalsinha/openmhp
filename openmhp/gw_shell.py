@@ -218,10 +218,11 @@ class Shell:
     def request(self, run_id: str, body: dict, say=None) -> int:
         """Leave the request in the run's inbox for the supervisor, and wait for its answer."""
         import time
+        import uuid
         self._run(run_id)
         inbox = S.run_folder(self.scientist, run_id, self.root) / "inbox"
         inbox.mkdir(exist_ok=True)
-        name = f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-{body['kind']}"
+        name = f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-{uuid.uuid4().hex[:8]}-{body['kind']}"   # unique per request"
         tmp = inbox / (name + ".tmp")
         tmp.write_text(json.dumps(body), encoding="utf-8")
         os.replace(tmp, inbox / (name + ".json"))

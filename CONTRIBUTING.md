@@ -59,6 +59,31 @@ python tests/test_inclusion.py
 python tests/test_methods.py
 ```
 
+## Repository guide
+
+| Path | Purpose |
+|---|---|
+| `openmhp/driver.py` | Driver base class, state machine, jobs, safety gates, and notifications |
+| `openmhp/package.py` | Device-package loading and progressive description tiers |
+| `openmhp/mcp_bridge.py` | Fixed MCP tool surface over a lab or directory |
+| `openmhp/client.py` | Python client and multi-device `Lab` API |
+| `openmhp/runs.py` | Plans, background runs, logs, and run artifacts |
+| `openmhp/methods.py` | Versioned instrument methods and project history |
+| `openmhp/adapters/` | OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT, and callable bindings |
+| `openmhp/drivers/` | Declarative drivers with no package code: `serial_ascii`, `scpi_visa`, `modbus`, and `manual` for operator-run instruments |
+| `openmhp/rubric.py` | `mhp rubric`: scores a package against the device-level autonomous-ready procurement criteria |
+| `scripts/build_registry.py` | Refreshes `openmhp/registry.json` and the supported-devices table (classes, twins, rubric scores) |
+| `openmhp/devices/` | Bundled reference devices and simulated twins |
+| `openmhp/recipes/` | Reusable multi-step procedures |
+| `supported-devices/` | Ready-made device packages for specific instruments, each with a simulated twin |
+| `openmhp/gateway.py` | `mhp gateway`: the relay agents reach when lab PCs sit behind a firewall |
+| `openmhp/relay.py` | Node side of the relay: `mhp node --join` dials out and serves through the gateway |
+| `openmhp/supervisor.py` | Gateway runs: the planner, the run's session, and the scientist's questions and approvals |
+| `openmhp/gw_shell.py` | `mhp-gw`: the verbs a scientist's agent sends to the gateway over SSH |
+| `openmhp/node_add.py` | `mhp node add <package>`: puts a ready-made device package on the instrument PC |
+| `openmhp/node_setup.py` | `mhp node setup`: the questions (from `config.schema.json`), `config.json`, the driver's probe, gateway pairing, the service |
+| `tests/` | Simulator and fake-client coverage, plus relay and gateway end-to-end tests |
+
 ## Pull-request expectations
 
 - State the protocol, architecture, interoperability, or correctness problem being solved.

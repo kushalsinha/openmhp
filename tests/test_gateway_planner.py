@@ -152,7 +152,7 @@ def test_from_a_plain_english_request_to_a_finished_run():
     assert "4 to 60" in ans["charter"]
     assert gw_cmd(f"mhp-gw approve {rid} --charter-digest {first_digest}")[0] == GW.REFUSED   # not the one on record
     code, ans = gw_cmd(f"mhp-gw approve {rid} --charter-digest {ans['charter_digest']}")
-    assert code == GW.OK and rid in ans["show_to_scientist"]
+    assert code == GW.OK and rid in ans["show_to_scientist"], ans
 
     # the run works inside the revised charter and finishes
     wait_until(lambda: sup.record(rid).state == "finished", what="the run")
