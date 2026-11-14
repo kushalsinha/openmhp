@@ -456,8 +456,12 @@ rsync -a mhp-gateway:runs/R-2611-0001/out/ ./results/         # bring results ho
 ```
 
 The SSH server runs `mhp-gw` for every scientist's key, so the only things a machine can do are
-its verbs and copies into a run's `in/` and out of its `preview/` and `out/`. The bundled
-`openmhp-lab-gateway` skill teaches an agent these commands.
+its verbs and copies into a run's `in/` and out of its `preview/` and `out/`. The scientist never
+types these: the bundled `openmhp-lab-gateway` skill, installed when the machine pairs, makes their
+agent the go-between. It turns what the scientist says into commands, and every answer from the
+gateway carries a `say` line, the same news in plain English, which the agent passes on. Installed
+skills follow the package: after an upgrade they are replaced the next time an agent or the watcher
+starts, unless someone edited them (`mhp skills status` shows which).
 
 The same channel carries whole experiments: a scientist's request in plain English, a planner on the
 gateway that rehearses and proposes a charter, approval, a supervised agent session that runs the loop

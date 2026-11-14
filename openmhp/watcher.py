@@ -223,6 +223,12 @@ def main(args: list[str]) -> int:
         say(("installed. " + r.get("note", "")) if r["ok"] else f"FAILED: {r.get('error') or 'see above'}")
         return 0 if r["ok"] else 1
     say(f"watching your lab runs through {ALIAS}; news goes to {INBOX}, results to {results_root()}. Ctrl-C to stop.")
+    try:                                   # a long-lived process on the scientist's machine: keep their skills current
+        from .skills_install import notice as skills_notice
+        if n := skills_notice():
+            say(f"skills: {n}")
+    except Exception as e:                 # noqa: BLE001  (never stop watching over a skill copy)
+        say(f"skills: could not check for updates ({e})")
     try:
         Watcher().forever()
     except KeyboardInterrupt:

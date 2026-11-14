@@ -246,6 +246,11 @@ def main(verb: str | None, args: list[str], *, join_args: list[str] | None = Non
                 "  mhp agent watch --install-service")
         elif cfg.get("ssh_error"):
             say("", f"the gateway did not set up SSH for this machine: {cfg['ssh_error']}")
+        from . import skills_install as SK
+        installed = [p for d in (SK.harness_dirs() or [SK.HARNESS_DIRS["Claude Code"]]) for p in SK.install(d)]
+        say("", f"installed the OpenMHP skills for the agents on this machine ({len(installed)} copies), including "
+            "openmhp-lab-gateway, which teaches them to talk to the gateway for you in plain English.",
+            "They load the next time an agent starts; new OpenMHP versions update them by themselves.")
         return 0
     if verb in (None, "status"):
         return status()

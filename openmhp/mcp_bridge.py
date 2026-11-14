@@ -353,6 +353,7 @@ class Bridge:
         self.home = home or (fleet.path.parent if fleet is not None else HOME)
         self._update_told = False
         self._inbox_told = False
+        self._skills_told = False
         self.log = RunLog(self.home)
         self._updates: dict[str, list[dict]] = {}          # device -> recent pushed events (ring buffer)
         self._run_devices: dict[str, set[str]] = {}         # run id -> devices it has touched
@@ -996,7 +997,8 @@ class Bridge:
                                   "capabilities": {"tools": {}, "resources": {}, "prompts": {}, "logging": {}},
                                   "serverInfo": {"name": "openmhp-bridge", "version": __version__},
                                   "instructions": INSTRUCTIONS + (f"\n- {n}" if (n := update_notice()) else "")
-                                  + (f"\n- {n}" if (n := inbox_notice()) else "")})
+                                  + (f"\n- {n}" if (n := inbox_notice()) else "")
+                                  + (f"\n- {n}" if (n := skills_notice()) else "")})
         if m == "prompts/list":
             return self._ok(mid, {"prompts": [{"name": n, "description": d} for n, (d, _) in PROMPTS.items()]})
         if m == "prompts/get":
@@ -1040,6 +1042,9 @@ class Bridge:
                     content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
                 if not self._inbox_told and (n := inbox_notice()):
                     self._inbox_told = True
+                    content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
+                if not self._skills_told and (n := skills_notice()):
+                    self._skills_told = True
                     content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
                 return self._ok(mid, {"content": content})
             except RemoteError as e:
@@ -1200,6 +1205,20 @@ def http_token(home: Path) -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(tok)
     return tok
+
+
+_SKILLS: dict = {}
+
+
+def skills_notice() -> str | None:
+    """Refresh this machine's installed OpenMHP skills once per server start, and say what changed."""
+    if "notice" not in _SKILLS:
+        try:
+            from .skills_install import notice
+            _SKILLS["notice"] = notice()
+        except Exception:                              # noqa: BLE001  (a skill copy never stops the server)
+            _SKILLS["notice"] = None
+    return _SKILLS["notice"]
 
 
 def inbox_notice() -> str | None:

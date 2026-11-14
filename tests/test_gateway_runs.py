@@ -227,6 +227,93 @@ def test_the_bundled_skill_teaches_every_verb_and_rsync():
     for verb in G.VERBS:
         assert f"mhp-gw {verb}" in text, verb
     assert "rsync -a" in text and "show_to_scientist" in text and "mhp-gateway" in text
+    assert "`say`" in text and "plan_notes" in text and "skill.version" in text      # both directions, and staying current
+
+
+def test_every_answer_says_it_in_plain_english():
+    from openmhp import gw_shell as G, gw_words as W
+    S.create("dina")
+    code, ans = gw("dina", "mhp-gw list")
+    assert code == G.OK and ans["say"] == "You have no runs on the lab gateway yet."
+    code, ans = gw("dina", "mhp-gw open")
+    rid = ans["run"]
+    assert rid in ans["say"] and "{" not in ans["say"]
+    code, ans = gw("dina", f"mhp-gw status {rid}")
+    assert ans["say"].startswith(f"Run {rid} is open.")
+    code, ans = gw("dina", "mhp-gw help")
+    assert ans["skill"]["name"] == "openmhp-lab-gateway" and ans["skill"]["version"] and "dina" in ans["say"]
+    # a refusal says why, in words, without the whole verb list; an unknown verb gets the list
+    code, ans = gw("dina", "mhp-gw approve " + rid)
+    assert code == G.REFUSED and ans["say"].startswith("The gateway did not do that:") and "verbs" not in ans
+    code, ans = gw("dina", "mhp-gw frobnicate")
+    assert code == G.REFUSED and "open" in ans["verbs"]
+    # a plan waiting for approval: the planner's notes and the preview come with it
+    d = S.run_folder("dina", rid)
+    (d / "charter.md").write_text("# Charter\n- gc: run run_method\n")
+    (d / "plan-notes.md").write_text("Up to 10 injections; nothing for you to do in the lab.")
+    (d / "preview").mkdir(exist_ok=True)
+    (d / "preview" / "history.csv").write_text("a,b\n")
+    meta = json.loads((d / "meta.json").read_text())
+    (d / "meta.json").write_text(json.dumps({**meta, "state": "waiting_approval", "charter_digest": "sha256:x"}))
+    code, ans = gw("dina", f"mhp-gw show {rid}")
+    assert ans["plan_notes"].startswith("Up to 10") and ans["preview"] == ["history.csv"]
+    assert "approve" in ans["say"] and "Up to 10 injections" in ans["say"] and "history.csv" in ans["say"]
+    # news, one sentence each
+    evs = [{"kind": "question", "run": rid, "id": "q1", "question": "Is one vial enough?", "needs_lab": True},
+           {"kind": "state", "run": rid, "state": "running", "why": "all instruments allocated"},
+           {"kind": "report", "run": rid, "text": "injection 3: Rs 1.66"},
+           {"kind": "finish", "run": rid, "outcome": "objective met", "summary": "Rs 1.56 in 330 s",
+            "next_experiments": ["repeat the best condition"]},
+           {"kind": "wake", "run": rid}]
+    said = W.events(evs)
+    assert "Is one vial enough? Someone needs to go to the lab" in said and f"{rid} is running." in said
+    assert "injection 3" in said and "repeat the best condition" in said and "wake" not in said
+    assert W.event({"kind": "wake"}) is None and W.events([]) == "Nothing new."
+
+
+def test_installed_skills_follow_the_package():
+    from openmhp import skills_install as K
+    home = Path(tempfile.mkdtemp(prefix="skills-"))
+    claude, backups = home / ".claude" / "skills", home / "backups"
+    K.install(claude)
+    rows = {r["name"]: r for r in K.status([claude])}
+    assert rows["openmhp-lab-gateway"]["state"] == "current" and (claude / "openmhp-lab-gateway" / K.MARK).is_file()
+    assert K.refresh([claude], backups) == {"updated": [], "changed": []} and K.notice({"updated": [], "changed": []}) is None
+
+    # an older OpenMHP installed this copy (marker matches its content): a newer package replaces it, keeping a backup
+    gw_skill = claude / "openmhp-lab-gateway"
+    old = (gw_skill / "SKILL.md").read_text().replace('version: "', 'version: "0.0.', 1)
+    (gw_skill / "SKILL.md").write_text(old)
+    mark = json.loads((gw_skill / K.MARK).read_text())
+    (gw_skill / K.MARK).write_text(json.dumps({**mark, "digest": K.digest(gw_skill), "version": "0.0.1"}))
+    assert {r["name"]: r for r in K.status([claude])}["openmhp-lab-gateway"]["state"] == "outdated"
+    got = K.refresh([claude], backups)
+    assert [r["name"] for r in got["updated"]] == ["openmhp-lab-gateway"] and not got["changed"]
+    assert K.digest(gw_skill) == K.digest(K.SKILLS_DIR / "openmhp-lab-gateway")
+    assert "0.0." in (Path(got["updated"][0]["backup"]) / "SKILL.md").read_text()
+    assert "updated" in K.notice(got) and "openmhp-lab-gateway" in K.notice(got)
+
+    # a copy installed before markers existed, older and ours: replaced too
+    op = claude / "openmhp-operate"
+    (op / K.MARK).unlink()
+    (op / "SKILL.md").write_text((op / "SKILL.md").read_text().replace('version: "', 'version: "0.0.', 1))
+    assert {r["name"]: r for r in K.status([claude])}["openmhp-operate"]["state"] == "outdated"
+    K.refresh([claude], backups)
+    assert K.digest(op) == K.digest(K.SKILLS_DIR / "openmhp-operate")
+
+    # someone edited their copy: left alone, and they are told
+    note = claude / "openmhp-onboard-device" / "SKILL.md"
+    note.write_text(note.read_text() + "\nOur lab always uses the blue cable.\n")
+    got = K.refresh([claude], backups)
+    assert not got["updated"] and [r["name"] for r in got["changed"]] == ["openmhp-onboard-device"]
+    assert "blue cable" in note.read_text() and "left" in K.notice(got)
+
+    # never on a machine that turned update checks off (tests, CI), unless the folders are named
+    os.environ["OPENMHP_NO_UPDATE_CHECK"] = "1"
+    try:
+        assert K.refresh() == {"updated": [], "changed": []}
+    finally:
+        os.environ.pop("OPENMHP_NO_UPDATE_CHECK")
 
 
 FAKE_SSH = """#!{python}
