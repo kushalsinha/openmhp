@@ -65,7 +65,7 @@ async function warnIfOld(verb) {
 }
 
 function installedVersion() {
-  const r = require("child_process").spawnSync(tool("python"), ["-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
+  const r = require("child_process").spawnSync(tool("python"), ["-I", "-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
@@ -77,7 +77,7 @@ function otherMhp() {
     .filter((p) => !path.resolve(p).startsWith(path.resolve(HOME)));
   if (!found.length) return;
   const v = require("child_process").spawnSync(found[0].replace(/mhp(\.exe)?$/i, process.platform === "win32" ? "python.exe" : "python"),
-    ["-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
+    ["-I", "-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
   log("");
   log(`note: another OpenMHP is on your PATH: ${found[0]}${v.status === 0 ? ` (version ${v.stdout.trim()})` : ""}.`);
   log("a bare `mhp ...` runs that one, not this install. Run commands through this launcher instead:");

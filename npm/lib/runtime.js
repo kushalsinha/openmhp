@@ -29,8 +29,32 @@ function tool(n) {
   return path.join(BIN, process.platform === "win32" ? n + ".exe" : n);
 }
 
+const LAUNCHER = require("../package.json").version;
+
+function older(a, b) {                      // is version a older than b (x.y.z, any suffix ignored)?
+  const n = (v) => String(v).split("-")[0].split(".").map(Number);
+  const [x, y] = [n(a), n(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
+  return false;
+}
+
+function runtimeVersion() {
+  const r = spawnSync(tool("python"), ["-I", "-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
 function ensureRuntime({ upgrade = false, source = SOURCE } = {}) {
-  if (fs.existsSync(tool("mhp-mcp")) && fs.existsSync(tool("python")) && !upgrade) return;
+  if (fs.existsSync(tool("mhp-mcp")) && fs.existsSync(tool("python")) && !upgrade) {
+    // a runtime older than this launcher (left by an earlier, older setup) lacks commands the launcher's
+    // instructions use, such as `mhp agent --join`: bring it up to date first
+    const have = runtimeVersion();
+    if (have && !older(have, LAUNCHER)) return;
+    const tried = path.join(HOME, ".upgraded-for");          // once per launcher version: a lagging mirror must not
+    try { if (fs.readFileSync(tried, "utf8").trim() === LAUNCHER) return; } catch { /* not tried yet */ }  // slow every run
+    try { fs.writeFileSync(tried, LAUNCHER); } catch { /* read-only home: try every time */ }
+    log(`the runtime in ${VENV} is OpenMHP ${have || "of unknown version"}; this launcher is ${LAUNCHER}. Updating it.`);
+    upgrade = true;
+  }
   const py = findPython();
   if (!py) {
     log("Python 3.10 or newer is required. Install it from https://www.python.org/downloads/ and run this again.");
