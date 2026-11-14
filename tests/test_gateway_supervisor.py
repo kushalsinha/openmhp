@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, ".")
@@ -223,6 +224,32 @@ print(json.dumps({"ok": True, "session": session, "text": "done", "cost_usd": 0.
 """
 
 
+QUIET = """
+import json, os, ssl, sys, urllib.request
+# A run agent that ends its turns without finishing. With 'busy' in the objective it first starts a protocol on
+# the thermocycler and finishes when woken again; otherwise it does nothing at all.
+args = sys.argv[1:]
+session, work, prompt = args[args.index("--session") + 1], args[args.index("--workdir") + 1], args[-1]
+env = json.load(open(os.path.join(work, ".mcp-run.json")))["mcpServers"]["run"]["env"]
+ctx = ssl.create_default_context(cafile=env["SSL_CERT_FILE"]); ctx.check_hostname = False
+def post(path, body):
+    req = urllib.request.Request(env["OPENMHP_GATEWAY"] + path, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Authorization": "Bearer " + env["OPENMHP_RUN_TOKEN"], "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+        return json.loads(r.read())
+charter = json.load(open(os.path.join(work, "..", "charter.json")))
+with open(os.path.join(work, "turns.log"), "a") as f:
+    f.write(prompt.replace("\\n", " | ") + "\\n")
+busy = "busy" in charter["objective"]
+if busy and "] start:" in prompt:
+    post("/bench/thermocycler-01/rpc", {"jsonrpc": "2.0", "id": 1, "method": "actions/invoke", "params": {
+        "name": "run_protocol", "params": {"steps": [{"temp": 40, "hold_s": 2}], "cycles": 2}}})
+elif busy:
+    post("/runs/finish", {"summary": "protocol done", "outcome": "objective met"})
+print(json.dumps({"ok": True, "session": session, "text": "I set things up and will wait.", "cost_usd": 0.0, "tokens": 1}))
+"""
+
+
 def wait_until(pred, timeout=30, what="condition"):
     import time
     end = time.time() + timeout
@@ -320,6 +347,38 @@ def test_supervised_run_from_approval_to_results():
     assert drivers["thermocycler-01"]._lease_holder() is None
     code, ans = gw_cmd(f"mhp-gw message {rid2} hello?")
     assert code == GW.REFUSED and "stopped" in ans["error"]
+
+    # ---- run 3: an agent that goes quiet with nothing running is nudged once, then the scientist is asked ----
+    SV.STALL_GRACE_S = 0.5
+    quiet = agent.parent / "quiet.py"
+    quiet.write_text(QUIET)
+    sup.adapters["quiet"] = H.Command([sys.executable, str(quiet)])
+    rid3 = gw_cmd("mhp-gw open")[1]["run"]
+    c3 = charter(rid3, "hold the block")
+    c3["envelope"]["tc"]["actions"] = {"run_protocol": {}}
+    assert gw_cmd(f"mhp-gw approve {rid3} --charter-digest {sup.propose(rid3, 'alice', c3, harness='quiet')}")[0] == GW.OK
+    wait_until(lambda: sup.record(rid3).state == "waiting_scientist", what="the idle run's question")
+    work3 = S.run_folder("alice", rid3) / "work"
+    turns = (work3 / "turns.log").read_text().splitlines()
+    assert len(turns) == 2 and "] start:" in turns[0] and "] supervisor: Supervisor: your last turn ended" in turns[1]
+    q = next(iter(sup.record(rid3).doc["open_questions"].values()))["question"]
+    assert "has stopped" in q and "I set things up and will wait" in q, q
+    assert [e["action"] for e in sup.record(rid3).events() if e["kind"] == "idle"] == ["nudged", "asked the scientist"]
+    gw_cmd(f"mhp-gw stop {rid3}")
+
+    # ---- run 4: an agent waiting on a running instrument job is not stuck; the finished job wakes it ------
+    rid4 = gw_cmd("mhp-gw open")[1]["run"]
+    c4 = charter(rid4, "run one protocol, busy")
+    c4["envelope"]["tc"]["actions"] = {"run_protocol": {}}
+    assert gw_cmd(f"mhp-gw approve {rid4} --charter-digest {sup.propose(rid4, 'alice', c4, harness='quiet')}")[0] == GW.OK
+    tc = drivers["thermocycler-01"]
+    wait_until(lambda: any(j.snapshot().get("state") not in ("done", "failed", "cancelled") for j in tc.jobs.values()),
+               what="the protocol to start")
+    wait_until(lambda: all(j.snapshot().get("state") in ("done", "failed", "cancelled") for j in tc.jobs.values()),
+               timeout=120, what="the protocol to end")
+    job_done = time.time()
+    wait_until(lambda: sup.record(rid4).state == "finished", timeout=60, what="run 4 to finish")
+    assert all(e["ts"] >= job_done - 0.5 for e in sup.record(rid4).events() if e["kind"] == "idle")   # never while busy
     sup.stop_event.set()
     node.close()
 

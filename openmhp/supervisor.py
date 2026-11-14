@@ -153,6 +153,11 @@ import sys as _sys
 
 WAKE_EVENTS = ("jobs/finished", "safety/estop", "safety/fault", "safety/watchdog", "operator/instruction", "jobs/paused")
 STUCK_AFTER_FAILED_TURNS = 3
+STALL_GRACE_S = 5.0          # after a turn ends with nothing running: time for a job's finished event to arrive
+NUDGE = ("Supervisor: your last turn ended, but nothing is running on your instruments and nothing is waiting "
+         "on the scientist, so nothing will wake you again. Carry on with the next step now; or, if the "
+         "objective is met or a stop condition holds, do the cleanup and call finish; or, if you are stuck, "
+         "call ask_scientist and say what you tried.")
 
 RUN_RULES = """You are the agent for run {run} of scientist {owner}, working on an OpenMHP gateway.
 
@@ -170,8 +175,10 @@ How to work:
   the notebook is how you remember.
 - Put results the scientist should receive in out/ (data, plots, a report), as you go.
 - Call report now and then with a short progress note.
-- Long fixed sequences: write them as a script and run them with mhp_run background=true; you are woken
-  when instrument jobs finish.
+- You are woken when an instrument job of this run finishes, when the scientist answers or writes, and
+  on the charter's scheduled checks. Your tools stop when your turn ends, so do not leave a background
+  mhp_run script to carry on without you: start an instrument job and end your turn, and you are woken
+  when it finishes. A turn that ends with nothing running and nothing asked is followed up by the gateway.
 - When the objective is met, a stop condition holds, or the budget is spent: do the cleanup the charter
   describes, then call finish with a summary and suggested next experiments.
 
@@ -198,6 +205,9 @@ with dry runs (mhp_run plan=true, or dryRun: true). Real actions are refused unt
 4. Call propose_charter with the charter (JSON, format below) and a few lines of notes for the scientist:
    what will happen, how long it takes, what they must do in the lab, what the preview shows. Keep the envelope
    as tight as the request allows: only the actions and settings needed, with the ranges the scientist gave.
+   Bound every limit they gave, including one inside a structured parameter, by its path (for example
+   "oven_program[].ramp_c_min" for the ramp of every oven step); mhp_describe shows each parameter's shape.
+   A limit you cannot express this way goes in your notes, so the scientist knows the gateway does not enforce it.
    Put actions that need a person (opening doors, loading samples) under always_ask, or under
    standing_approvals only when the scientist said so.
 
@@ -217,6 +227,7 @@ class RunCtl:
         self.spent_usd = 0.0
         self.question_seq = 0
         self.last_report = time.time()
+        self.nudged = False          # woken once already for ending a turn with nothing running
 
 
 class Supervisor:
@@ -529,12 +540,55 @@ class Supervisor:
                     # so what it said goes to the scientist as a question rather than into a log nobody reads
                     self.ask(run_id, "The planner stopped without proposing a charter. It said:\n"
                              + (result.text or "(nothing)")[:1500], meanwhile="wait", by_supervisor=True)
+                elif rec.state == "running":
+                    self._follow_up_idle(run_id, c, result.text or "")
             else:
                 c.failures += 1
                 if c.failures >= STUCK_AFTER_FAILED_TURNS and c.record.state in ("running", "planning"):
                     self.ask(run_id, f"The run's agent failed {c.failures} turns in a row ({result.reason}: "
                              f"{(result.text or '')[:300]}). Should it keep trying, or stop?", tried="", meanwhile="wait",
                              by_supervisor=True)
+
+    def busy(self, run_id: str) -> bool:
+        """Is any job still going on the run's instruments? A finished job wakes the run, so while one is going
+        the run is waiting, not stuck. An instrument that cannot be asked counts as busy: no false alarm."""
+        from .driver import TERMINAL
+        entry = self.gw._run_entry(run_id)
+        if entry is None:
+            return False
+        gate = self.gw.gate_for("Bearer " + entry[0])
+        for path in self.gw.allocated.get(run_id, []):
+            r = self.gw._lease_call(gate, path, "jobs/list", {})
+            if "error" in r:
+                return True
+            if any(j.get("state") not in TERMINAL for j in (r.get("result") or {}).get("jobs", [])):
+                return True
+        return False
+
+    def _follow_up_idle(self, run_id: str, c: "RunCtl", said: str) -> None:
+        """A running agent ended its turn. If nothing will wake it (no job going, no question open, nothing
+        queued), wake it once with a nudge; if it ends the next turn idle too, ask the scientist."""
+        def idle() -> bool:
+            rec = self.record(run_id)
+            return (rec.state == "running" and not rec.doc.get("open_questions") and c.triggers.empty()
+                    and not self.busy(run_id))
+        if not idle():
+            c.nudged = False
+            return
+        self.stop_event.wait(STALL_GRACE_S)               # a job that just finished: its event may be on its way
+        if self.stop_event.is_set() or not idle():
+            c.nudged = False
+            return
+        if not c.nudged:
+            c.nudged = True
+            self.record(run_id).event("idle", action="nudged")
+            self.wake(run_id, "supervisor", NUDGE)
+            return
+        c.nudged = False
+        self.record(run_id).event("idle", action="asked the scientist")
+        self.ask(run_id, "The run's agent has stopped: nothing is running on its instruments and it did not finish "
+                 "or ask anything, even after a reminder. It last said:\n" + (said or "(nothing)")[:1500]
+                 + "\nShould it carry on (say how), or stop?", meanwhile="wait", by_supervisor=True)
 
     def on_device_event(self, path: str, event: dict) -> None:
         """Called by the gateway for every event a lab PC pushes."""
