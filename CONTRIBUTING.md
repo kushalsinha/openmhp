@@ -94,11 +94,11 @@ For maintainers. `openmhp` (PyPI) and `openmhp-cli` (npm) are published by
 1. A PR bumps the version in `pyproject.toml`, `openmhp/__init__.py` and `npm/package.json` to the
    same number, and merges to `main`.
 2. Tag the merge commit: `git tag -a v0.11.0 -m "openmhp 0.11.0" && git push origin v0.11.0`.
-3. The workflow checks the tag is on `main` and matches all three versions, then publishes PyPI
-   first (the npm launcher installs `openmhp` from it), then stages npm. Each job waits for approval
-   from a reviewer of the `release` environment.
-4. npm does not let CI publish directly. The npm job runs `npm stage publish`; approve the staged
-   version on npmjs.com (package → Staged versions, or `npx npm@latest stage list` and
+3. The workflow checks the tag is on `main` and matches all three versions, then publishes PyPI and
+   stages npm side by side. Both wait on the `release` environment together, so one approval from
+   its reviewer starts both.
+4. npm does not let CI publish directly. The npm job runs `npm stage publish`; once the PyPI job has
+   succeeded (the launcher installs `openmhp` from PyPI), approve the staged version on npmjs.com (package → Staged versions, or `npx npm@latest stage list` and
    `stage approve`), which asks for 2FA.
 
 The workflow holds no secrets: PyPI and npm each trust this repository, workflow file and

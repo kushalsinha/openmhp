@@ -354,6 +354,8 @@ def test_supervised_run_from_approval_to_results():
     assert code == GW.OK and ans["run"] == rid and "7 days" in ans["show_to_scientist"] and "go to the lab" in ans["show_to_scientist"]
 
     wait_until(lambda: sup.record(rid).state == "waiting_scientist", what="the agent's question")
+    # the agent asks during its turn, so the run waits on the scientist before the turn itself is recorded
+    wait_until(lambda: any(e["kind"] == "turn" for e in sup.record(rid).events()), what="the agent's turn to end")
     turn = next(e for e in sup.record(rid).events() if e["kind"] == "turn")
     assert turn["ok"] is True and turn["cost_usd"] == 0.02
     assert drivers["thermocycler-01"]._lease_holder() == f"alice/run-{rid}"
