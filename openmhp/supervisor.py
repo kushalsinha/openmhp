@@ -1,0 +1,818 @@
+"""The gateway's supervisor for runs: plain code that owns a run's state, its record, its instruments and
+its agent session, and never decides science.
+
+This module starts with the run record. The authoritative state and event log live in the gateway's own
+folder (`<gateway>/runs/<id>/`), where a run cannot edit them. A copy is mirrored into the scientist's run
+folder (`meta.json`, `events.jsonl`) for them and their agent to read.
+
+    open -> planning -> waiting_approval -> queued -> running <-> waiting_scientist -> finished
+                                                         |                               stopped
+                                                         +-> interrupted (gateway restart)  failed
+"""
+from __future__ import annotations
+
+import json
+import os
+import threading
+import time
+from pathlib import Path
+
+from . import scientists as S
+
+TRANSITIONS = {
+    "open": {"planning", "waiting_approval", "stopped"},
+    "planning": {"waiting_approval", "stopped", "failed"},
+    "waiting_approval": {"planning", "queued", "running", "stopped"},
+    "queued": {"running", "stopped", "failed"},
+    "running": {"waiting_scientist", "finished", "stopped", "failed", "interrupted"},
+    "waiting_scientist": {"running", "finished", "stopped", "failed", "interrupted"},
+    "interrupted": {"queued", "running", "stopped"},
+    "finished": set(), "stopped": set(), "failed": set(),
+}
+ENDED = {"finished", "stopped", "failed"}
+KEEP_RESULTS_S = 7 * 24 * 3600            # results stay on the gateway this long after a run ends, unless received sooner
+LIVE = {"queued", "running", "waiting_scientist"}
+
+
+def now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+class RunRecord:
+    """One run's state and events, kept by the gateway and mirrored to the scientist's folder."""
+
+    def __init__(self, private: Path, run_id: str, owner: str, lab_root: Path | None = None):
+        self.private, self.id, self.owner, self.lab_root = Path(private), S.check_run_id(run_id), S.check_name(owner), lab_root
+        self.lock = threading.RLock()
+        self.private.mkdir(parents=True, exist_ok=True)
+        self.doc = self._load() or {"id": self.id, "owner": self.owner, "state": "open", "created": now(), "history": []}
+
+    # ---- files -----------------------------------------------------------------------------
+    def _load(self) -> dict | None:
+        try:
+            return json.loads((self.private / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def _write(self, path: Path, obj: dict) -> None:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(obj, indent=1, default=str), encoding="utf-8")
+        os.replace(tmp, path)
+
+    def public_folder(self) -> Path:
+        return S.run_folder(self.owner, self.id, self.lab_root)
+
+    def _mirror(self, event: dict | None = None) -> None:
+        """What the scientist sees. Never read back: the gateway's copy is the truth."""
+        d = self.public_folder()
+        if not d.is_dir():
+            return
+        meta = {k: v for k, v in self.doc.items() if k != "history"}
+        meta["updated"] = now()
+        try:
+            self._write(d / "meta.json", meta)
+            if event is not None:
+                with open(d / "events.jsonl", "a", encoding="utf-8") as f:
+                    f.write(json.dumps(event, default=str) + "\n")
+        except OSError:
+            pass                                    # the scientist's folder is a view; the record stands without it
+
+    # ---- state -----------------------------------------------------------------------------
+    @property
+    def state(self) -> str:
+        return self.doc["state"]
+
+    def set(self, **fields) -> None:
+        """Facts about the run that are not a state change: its charter digest, harness, session, step."""
+        with self.lock:
+            self.doc.update(fields)
+            self._write(self.private / "state.json", self.doc)
+            self._mirror()
+
+    def to(self, state: str, why: str = "", **fields) -> dict:
+        with self.lock:
+            cur = self.doc["state"]
+            if state not in TRANSITIONS.get(cur, set()):
+                raise ValueError(f"run {self.id} cannot go from {cur} to {state}")
+            self.doc["state"] = state
+            self.doc.update(fields)
+            self.doc["history"].append({"state": state, "at": now(), "why": why})
+            self._write(self.private / "state.json", self.doc)
+        return self.event("state", state=state, previous=cur, why=why)
+
+    def event(self, kind: str, **fields) -> dict:
+        ev = {"at": now(), "ts": time.time(), "run": self.id, "kind": kind, **fields}
+        with self.lock:
+            with open(self.private / "events.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(ev, default=str) + "\n")
+            self._mirror(ev)
+        return ev
+
+    def events(self, since: float = 0.0) -> list[dict]:
+        try:
+            lines = (self.private / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        out = []
+        for line in lines:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("ts", 0) > since:
+                out.append(ev)
+        return out
+
+
+def recover(runs_dir: Path, lab_root: Path | None = None) -> list[str]:
+    """After a gateway restart: live runs lost their leases and their session, and the bench may have moved.
+    Mark them interrupted; nothing resumes on its own."""
+    out = []
+    if not Path(runs_dir).is_dir():
+        return out
+    for d in sorted(Path(runs_dir).iterdir()):
+        try:
+            doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if doc.get("state") in LIVE:
+            rec = RunRecord(d, doc["id"], doc["owner"], lab_root)
+            rec.to("interrupted", "the gateway restarted; leases lapsed and instrument watchdogs acted. Check the bench "
+                   "before resuming.")
+            out.append(doc["id"])
+    return out
+
+
+# ================================================================================================
+# The supervisor: starts a run's agent when the scientist approves, wakes it when something needs a
+# decision, carries questions and answers, stops and ends runs. It runs inside `mhp gateway serve`.
+# ================================================================================================
+import queue as _queue
+import shutil as _shutil
+import sys as _sys
+
+WAKE_EVENTS = ("jobs/finished", "safety/estop", "safety/fault", "safety/watchdog", "operator/instruction", "jobs/paused")
+STUCK_AFTER_FAILED_TURNS = 3
+STALL_GRACE_S = 5.0          # after a turn ends with nothing running: time for a job's finished event to arrive
+NUDGE = ("Supervisor: your last turn ended, but nothing is running on your instruments and nothing is waiting "
+         "on the scientist, so nothing will wake you again. Carry on with the next step now; or, if the "
+         "objective is met or a stop condition holds, do the cleanup and call finish; or, if you are stuck, "
+         "call ask_scientist and say what you tried.")
+
+RUN_RULES = """You are the agent for run {run} of scientist {owner}, working on an OpenMHP gateway.
+
+The charter below is what {owner} approved. The gateway enforces its structured part on every instrument
+call: anything outside it is refused, and some actions come back as "ask the scientist". Do not try to
+work around a refusal. When you need a decision outside the charter, a judgement on a strange result,
+or someone in the lab, call ask_scientist and say what you tried.
+
+How to work:
+- Your instruments are reached through the openmhp tools (mhp_find, mhp_describe, mhp_read, mhp_invoke,
+  mhp_job, mhp_run ...). Rehearse multi-step work with mhp_run plan=true before running it.
+- The scientist's skills, scripts and data are in this folder (copied from what they handed over). Use them
+  for analysis and for choosing the next experiment.
+- Keep notebook.md up to date: what you did, what you learned, what you plan next. You are woken many times;
+  the notebook is how you remember.
+- Put results the scientist should receive in out/ (data, plots, a report), as you go.
+- Call report now and then with a short progress note.
+- You are woken when an instrument job of this run finishes, when the scientist answers or writes, and
+  on the charter's scheduled checks. Your tools stop when your turn ends, so do not leave a background
+  mhp_run script to carry on without you: start an instrument job and end your turn, and you are woken
+  when it finishes. A turn that ends with nothing running and nothing asked is followed up by the gateway.
+- When the objective is met, a stop condition holds, or the budget is spent: do the cleanup the charter
+  describes, then call finish with a summary and suggested next experiments.
+
+{summary}
+"""
+
+
+PLAN_RULES = """You are the planner for run {run} of scientist {owner}, on an OpenMHP lab gateway.
+
+The scientist's request is in request.md. Whatever they handed over (skills, scripts, data, a requirements
+file) is in ../in/; their skills are also installed for you. Your job is to turn the request into a charter
+they can approve, and to show them what the run will do and what its data will look like. Nothing you send
+moves an instrument: you can search, describe and read every instrument behind the gateway, and rehearse
+with dry runs (mhp_run plan=true, or dryRun: true). Real actions are refused until the scientist approves.
+
+1. Read request.md and ../in/. Find the instruments that fit (mhp_find, mhp_describe). Ask the scientist
+   (ask_scientist) for what only they can say: ranges, how many experiments, consumables and amounts, who
+   assembles or loads samples, the deadline. Ask a few questions at once rather than one at a time.
+2. Rehearse the first batch or first loop as a dry run (mhp_run plan=true). Note durations and any refusal.
+3. Write an expected-data preview into preview/: sample data in the real file formats, made from simulated or
+   synthetic values that respect the instruments' descriptors, run through the scientist's own analysis when
+   they gave one, with a plot if it helps, and preview/README.md saying exactly how it was made. Where you
+   cannot make sample data, describe the data's shape (files, columns, units, how many) instead.
+4. Call propose_charter with the charter (JSON, format below) and a few lines of notes for the scientist:
+   what will happen, how long it takes, what they must do in the lab, what the preview shows. Keep the envelope
+   as tight as the request allows: only the actions and settings needed, with the ranges the scientist gave.
+   Bound every limit they gave, including one inside a structured parameter, by its path (for example
+   "oven_program[].ramp_c_min" for the ramp of every oven step); mhp_describe shows each parameter's shape.
+   A limit you cannot express this way goes in your notes, so the scientist knows the gateway does not enforce it.
+   Put actions that need a person (opening doors, loading samples) under always_ask, or under
+   standing_approvals only when the scientist said so.
+
+If the scientist sends changes after you proposed, revise and propose again.
+
+Charter format (the gateway enforces the structured part; the instruments are "node/device" paths from mhp_find):
+{charter_doc}
+"""
+
+
+class RunCtl:
+    def __init__(self, record: RunRecord):
+        self.record = record
+        self.triggers: _queue.Queue = _queue.Queue()
+        self.thread: threading.Thread | None = None
+        self.failures = 0
+        self.spent_usd = 0.0
+        self.question_seq = 0
+        self.last_report = time.time()
+        self.nudged = False          # woken once already for ending a turn with nothing running
+
+
+class Supervisor:
+    def __init__(self, gateway, *, lab_root: Path, runs_dir: Path, adapters: dict | None = None,
+                 run_as_users: bool = False, poll_s: float = 0.5, local_login: bool = False):
+        from .harness import ADAPTERS
+        self.gw, self.lab_root, self.runs_dir = gateway, Path(lab_root), Path(runs_dir)
+        self.adapters = adapters if adapters is not None else ADAPTERS
+        self.run_as_users, self.poll_s = run_as_users, poll_s
+        # a single-machine trial only: harnesses use this machine's own sign-in (e.g. Claude Code's keychain login)
+        # instead of a key in llm.env. Credential variables are still stripped from every run's environment.
+        self.local_login = local_login
+        self.ctl: dict[str, RunCtl] = {}
+        self.lock = threading.RLock()
+        self.stop_event = threading.Event()
+        gateway.supervisor = self
+
+    def llm_env(self) -> dict:
+        """The gateway's own LLM key for runs (<runs dir>/../llm.env), never the operator's login."""
+        from .harness import llm_env
+        return llm_env(self.runs_dir.parent / "llm.env")
+
+    # ---- records -----------------------------------------------------------------------------
+    def record(self, run_id: str, owner: str | None = None) -> RunRecord:
+        with self.lock:
+            c = self.ctl.get(run_id)
+            if c is None:
+                if owner is None:
+                    doc = json.loads((self.runs_dir / run_id / "state.json").read_text(encoding="utf-8"))
+                    owner = doc["owner"]
+                c = self.ctl[run_id] = RunCtl(RunRecord(self.runs_dir / run_id, run_id, owner, self.lab_root))
+            return c.record
+
+    def charter(self, run_id: str) -> dict:
+        return json.loads((self.runs_dir / run_id / "charter.json").read_text(encoding="utf-8"))
+
+    # ---- proposal and approval ---------------------------------------------------------------
+    def propose(self, run_id: str, owner: str, charter: dict, harness: str = "claude-code") -> str:
+        """A charter for the scientist to approve (written by the planner). Returns its digest."""
+        from . import charter as C
+        problems = C.problems(charter)
+        if problems:
+            raise ValueError("; ".join(problems))
+        if charter.get("run") != run_id or charter.get("owner") != owner:
+            raise ValueError("the charter names another run or scientist")
+        if harness not in self.adapters:
+            raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
+        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env() and not self.local_login:
+            raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
+        rec = self.record(run_id, owner)
+        (self.runs_dir / run_id).mkdir(parents=True, exist_ok=True)
+        (self.runs_dir / run_id / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
+        d = C.digest(charter)
+        pub = rec.public_folder()
+        if pub.is_dir():
+            (pub / "charter.md").write_text(C.summary(charter), encoding="utf-8")
+            (pub / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
+        if rec.state in ("open", "planning"):
+            rec.to("waiting_approval", "charter ready for the scientist", charter_digest=d, harness=harness)
+            rec.event("charter_proposed", digest=d)
+        elif rec.state == "waiting_approval":
+            rec.set(charter_digest=d, harness=harness)
+            rec.event("charter_revised", digest=d)
+        else:
+            rec.set(charter_digest=d, harness=harness)
+        return d
+
+    def approve(self, run_id: str, digest: str, by: str) -> dict:
+        from . import charter as C
+        rec = self.record(run_id)
+        if rec.state != "waiting_approval":
+            raise ValueError(f"run {run_id} is {rec.state}, not waiting for approval")
+        if by != rec.owner:
+            raise PermissionError("only the scientist who owns the run approves it")
+        charter = self.charter(run_id)
+        if C.digest(charter) != digest:
+            raise ValueError("that is not the charter on record (it changed, or the digest is wrong): look again with "
+                             "`mhp-gw show` and approve what it shows")
+        charter.update(approved_by=by, approved_at=now())
+        (self.runs_dir / run_id / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
+        with open(self.runs_dir / run_id / "approvals.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"at": now(), "by": by, "digest": digest}) + "\n")
+        self.gw.issue_run_token(charter)
+        rec.to("queued", f"approved by {by}", phase="run")
+        got = self.gw.allocate(run_id)
+        if got["state"] == "allocated":
+            self._start(run_id)
+        else:
+            rec.event("waiting_for_instruments", detail=got)
+        return {"run": run_id, "state": rec.state, "show_to_scientist": self.start_message(run_id)}
+
+    @staticmethod
+    def start_message(run_id: str) -> str:
+        return (f"Run {run_id} has started. Physical experiments can get stuck. Please keep watching this conversation "
+                "and your desktop notifications for questions, or for requests that may need you to go to the lab. When "
+                "the run ends, its results stay on the gateway for 7 days, or until your machine downloads them. "
+                "Connect this machine within 7 days of the end, or the results are deleted.")
+
+    # ---- starting the agent ------------------------------------------------------------------
+    def _token(self, run_id: str, kind: str = "run") -> str:
+        for t, e in self.gw.state.get("run_tokens", {}).items():
+            if e["run"] == run_id and e.get("kind", "run") == kind:
+                return t
+        raise LookupError(f"run {run_id} has no {kind} token")
+
+    # ---- planning ----------------------------------------------------------------------------
+    def request(self, run_id: str, owner: str, text: str, harness: str = "claude-code") -> dict:
+        """The scientist's request in plain English: start a planner for it."""
+        if harness not in self.adapters:
+            raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
+        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env() and not self.local_login:
+            raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
+        rec = self.record(run_id, owner)
+        if rec.state != "open":
+            raise ValueError(f"run {run_id} is {rec.state}; a request starts an open run (open a new one with mhp-gw open)")
+        if not text.strip():
+            raise ValueError("the request is empty")
+        (self.runs_dir / run_id).mkdir(parents=True, exist_ok=True)
+        (self.runs_dir / run_id / "request.md").write_text(text, encoding="utf-8")
+        rec.to("planning", "request received", harness=harness, phase="plan")
+        self.prepare_plan(run_id, text)
+        self.wake(run_id, "plan", "A new request is in request.md. Plan it as your instructions say.")
+        return {"run": run_id, "state": rec.state, "note": "a planner is working on it; mhp-gw wait shows its questions "
+                "and, when ready, the charter to approve"}
+
+    def prepare_plan(self, run_id: str, text: str) -> Path:
+        from .gateway import agent_url
+        from .harness import install_skills
+        from . import charter as C
+        rec = self.record(run_id)
+        pub = rec.public_folder()
+        plan = pub / "plan"
+        (plan / "preview").mkdir(parents=True, exist_ok=True)
+        (plan / "request.md").write_text(text, encoding="utf-8")
+        install_skills(pub / "in", plan)
+        token = self.gw.issue_plan_token(run_id, rec.owner)
+        cert, gateway = self.public_cert(), agent_url(self.gw.state).rstrip("/")
+        common = {"SSL_CERT_FILE": str(cert), "OPENMHP_NO_UPDATE_CHECK": "1"}
+        mcp = {"mcpServers": {
+            "openmhp": {"command": _sys.executable, "args": ["-m", "openmhp.mcp_bridge", "--directory", gateway + "/directory/"],
+                        "env": {**common, "OPENMHP_DEVICE_TOKEN": token, "OPENMHP_RUN_SCOPE": "1",
+                                "OPENMHP_HOME": str(plan / ".openmhp")}},
+            "run": {"command": _sys.executable, "args": ["-m", "openmhp.run_tools"],
+                    "env": {**common, "OPENMHP_RUN_TOKEN": token, "OPENMHP_GATEWAY": gateway, "OPENMHP_RUN_MODE": "plan"}}}}
+        (plan / ".mcp-run.json").write_text(json.dumps(mcp, indent=1), encoding="utf-8")
+        os.chmod(plan / ".mcp-run.json", 0o600)
+        (plan / ".run-instructions.md").write_text(PLAN_RULES.format(run=run_id, owner=rec.owner, charter_doc=C.__doc__),
+                                                   encoding="utf-8")
+        return plan
+
+    def ensure_env(self, run_id: str) -> Path | None:
+        """A Python environment for the run, built once from every requirements.txt the scientist handed over, at
+        planning time, so nothing installs while instruments are held. None when they gave no requirements."""
+        import subprocess
+        rec = self.record(run_id)
+        pub = rec.public_folder()
+        reqs = sorted((pub / "in").rglob("requirements.txt")) if (pub / "in").is_dir() else []
+        if not reqs:
+            return None
+        env = pub / ".venv"
+        if (env / ".ready").is_file():
+            return env
+        bindir = env / ("Scripts" if os.name == "nt" else "bin")
+        steps = [[_sys.executable, "-m", "venv", str(env)]] + \
+                [[str(bindir / "python"), "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "-r", str(r)] for r in reqs]
+        for cmd in steps:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            if r.returncode != 0:
+                rec.event("env_failed", command=" ".join(cmd[-2:]), error=(r.stderr or r.stdout)[-1500:])
+                raise RuntimeError(f"could not build the run's Python environment: {(r.stderr or r.stdout)[-500:]}")
+        (env / ".ready").write_text(now(), encoding="utf-8")
+        rec.event("env_built", requirements=[str(r.relative_to(pub)) for r in reqs])
+        return env
+
+    def propose_from_planner(self, run_id: str, charter, notes: str = "") -> dict:
+        rec = self.record(run_id)
+        if rec.doc.get("phase") != "plan":
+            raise ValueError(f"run {run_id} is not being planned")
+        if not isinstance(charter, dict):
+            raise ValueError("propose_charter needs the charter as a JSON object")
+        charter = {**charter, "run": run_id, "owner": rec.owner, "version": charter.get("version", 1)}
+        missing = [d for d in (charter.get("instruments") or {}).values()
+                   if isinstance(d, str) and (d.split("/")[0] not in self.gw.nodes or d.split("/")[-1] not in self.gw.nodes[d.split("/")[0]].devices)]
+        if missing:
+            raise ValueError("not behind this gateway: " + ", ".join(missing) + " (use the node/device paths mhp_find gives)")
+        d = self.propose(run_id, rec.owner, charter, harness=rec.doc.get("harness", "claude-code"))
+        pub = rec.public_folder()
+        if (pub / "plan" / "preview").is_dir():
+            _shutil.copytree(pub / "plan" / "preview", pub / "preview", dirs_exist_ok=True)
+        (pub / "plan-notes.md").write_text(notes, encoding="utf-8")
+        rec.set(phase="approval")
+        rec.event("plan_notes", digest=d, notes=notes[:4000],
+                  preview=sorted(p.name for p in (pub / "preview").iterdir()) if (pub / "preview").is_dir() else [])
+        return {"proposed": True, "digest": d, "note": "the scientist sees it with mhp-gw show; wait for their approval or changes"}
+
+    def public_cert(self) -> Path:
+        """The gateway's certificate where every scientist's run can read it (the gateway's own folder is private)."""
+        dest = self.lab_root / "gateway-cert.pem"
+        src = Path(self.gw.state["cert"])
+        if not dest.is_file() or dest.read_bytes() != src.read_bytes():
+            self.lab_root.mkdir(parents=True, exist_ok=True)
+            _shutil.copyfile(src, dest)
+            os.chmod(dest, 0o644)
+        return dest
+
+    def prepare(self, run_id: str) -> dict:
+        """The run's working folder: the scientist's files, their skills where the harness finds them, the MCP
+        servers holding the run token, and the instructions. Everything the session needs, nothing else."""
+        from . import charter as C
+        from .gateway import agent_url
+        from .harness import install_skills
+        rec = self.record(run_id)
+        pub = rec.public_folder()
+        work = pub / "work"
+        if not work.exists():
+            _shutil.copytree(pub / "in", work, symlinks=False)
+        (work / "out").mkdir(exist_ok=True)
+        skills = install_skills(pub / "in", work)
+        token, cert, gateway = self._token(run_id), self.public_cert(), agent_url(self.gw.state).rstrip("/")
+        common = {"SSL_CERT_FILE": str(cert), "OPENMHP_NO_UPDATE_CHECK": "1"}
+        mcp = {"mcpServers": {
+            "openmhp": {"command": _sys.executable, "args": ["-m", "openmhp.mcp_bridge", "--directory", gateway + "/directory/"],
+                        "env": {**common, "OPENMHP_DEVICE_TOKEN": token, "OPENMHP_RUN_SCOPE": "1",
+                                "OPENMHP_HOME": str(work / ".openmhp")}},
+            "run": {"command": _sys.executable, "args": ["-m", "openmhp.run_tools"],
+                    "env": {**common, "OPENMHP_RUN_TOKEN": token, "OPENMHP_GATEWAY": gateway}}}}
+        (work / ".mcp-run.json").write_text(json.dumps(mcp, indent=1), encoding="utf-8")
+        os.chmod(work / ".mcp-run.json", 0o600)
+        charter = self.charter(run_id)
+        (work / ".run-instructions.md").write_text(RUN_RULES.format(run=run_id, owner=rec.owner, summary=C.summary(charter)),
+                                                   encoding="utf-8")
+        if not (work / "notebook.md").exists():
+            (work / "notebook.md").write_text(f"# Lab notebook for {run_id}\n\n", encoding="utf-8")
+        rec.event("prepared", skills=skills)
+        return {"work": work, "token": token, "gateway": gateway, "cert": cert}
+
+    def _start(self, run_id: str) -> None:
+        rec = self.record(run_id)
+        with self.lock:                                 # approval and the tick may both see the instruments come free
+            if rec.state != "queued":
+                return
+            self.prepare(run_id)
+            rec.to("running", "all instruments allocated")
+        self.wake(run_id, "start", "The run has started. Read the charter in your instructions and notebook.md, plan, "
+                  "rehearse, then begin.")
+
+    # ---- wake-ups ----------------------------------------------------------------------------
+    def wake(self, run_id: str, kind: str, text: str) -> None:
+        c = self.ctl.get(run_id) or (self.record(run_id) and self.ctl[run_id])
+        c.triggers.put({"kind": kind, "text": text, "at": now()})
+        with self.lock:
+            if c.thread is None or not c.thread.is_alive():
+                c.thread = threading.Thread(target=self._worker, args=(run_id,), name=f"mhp-run-{run_id}", daemon=True)
+                c.thread.start()
+
+    def _worker(self, run_id: str) -> None:
+        from .harness import Turn, run_turn
+        c = self.ctl[run_id]
+        while not self.stop_event.is_set():
+            try:
+                first = c.triggers.get(timeout=0.2)
+            except _queue.Empty:
+                return
+            batch = [first]
+            while True:
+                try:
+                    batch.append(c.triggers.get_nowait())
+                except _queue.Empty:
+                    break
+            rec = c.record
+            if rec.state in ENDED:
+                return
+            planning = rec.doc.get("phase") == "plan"
+            if rec.state == "waiting_scientist" and not any(t["kind"] in ("answer", "message", "stop") for t in batch):
+                continue                              # waiting on a person: instrument news waits for the answer
+            charter = {} if planning else self.charter(run_id)
+            prompt = "\n".join(f"[{t['at']}] {t['kind']}: {t['text']}" for t in batch)
+            work = rec.public_folder() / ("plan" if planning else "work")
+            session_key = "plan_session" if planning else "session"
+            adapter = self.adapters[rec.doc.get("harness", "claude-code")]
+            env = {"OPENMHP_RUN_ID": run_id, **self.llm_env()}
+            try:
+                venv = self.ensure_env(run_id)
+            except RuntimeError as e:
+                venv = None
+                prompt += f"\n[{now()}] environment: {e}. Tell the scientist (ask_scientist) which requirement failed."
+            if venv is not None:
+                bindir = venv / ("Scripts" if os.name == "nt" else "bin")
+                env.update(VIRTUAL_ENV=str(venv), PATH=str(bindir) + os.pathsep + os.environ.get("PATH", ""))
+            budget = (charter.get("budgets") or {}).get("agent_usd")
+            left = None if budget is None else max(0.0, float(budget) - c.spent_usd)
+            if left is not None and left <= 0:
+                self.ask(run_id, "The agent budget for this run is spent. Raise it, or should the run stop?",
+                         tried="", meanwhile="wait", by_supervisor=True)
+                continue
+            rec.event("wake", triggers=[t["kind"] for t in batch])
+            result = run_turn(adapter, Turn(prompt=prompt, workdir=work, session=rec.doc.get(session_key),
+                                            mcp_config=work / ".mcp-run.json", instructions=work / ".run-instructions.md",
+                                            max_budget_usd=left, env=env,
+                                            run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
+            c.spent_usd += result.cost_usd
+            rec.set(**{session_key: result.session or rec.doc.get(session_key)}, spent_usd=round(c.spent_usd, 4))
+            rec.event("turn", ok=result.ok, reason=result.reason, cost_usd=result.cost_usd, tokens=result.tokens,
+                      said=(result.text or "")[:2000])
+            if result.ok:
+                c.failures = 0
+                rec = self.record(run_id)
+                if rec.state == "planning" and not rec.doc.get("open_questions") and c.triggers.empty():
+                    # the planner ended its turn with nothing proposed and nothing asked: nothing would ever wake it,
+                    # so what it said goes to the scientist as a question rather than into a log nobody reads
+                    self.ask(run_id, "The planner stopped without proposing a charter. It said:\n"
+                             + (result.text or "(nothing)")[:1500], meanwhile="wait", by_supervisor=True)
+                elif rec.state == "running":
+                    self._follow_up_idle(run_id, c, result.text or "")
+            else:
+                c.failures += 1
+                if c.failures >= STUCK_AFTER_FAILED_TURNS and c.record.state in ("running", "planning"):
+                    self.ask(run_id, f"The run's agent failed {c.failures} turns in a row ({result.reason}: "
+                             f"{(result.text or '')[:300]}). Should it keep trying, or stop?", tried="", meanwhile="wait",
+                             by_supervisor=True)
+
+    def busy(self, run_id: str) -> bool:
+        """Is any job still going on the run's instruments? A finished job wakes the run, so while one is going
+        the run is waiting, not stuck. An instrument that cannot be asked counts as busy: no false alarm."""
+        from .driver import TERMINAL
+        entry = self.gw._run_entry(run_id)
+        if entry is None:
+            return False
+        gate = self.gw.gate_for("Bearer " + entry[0])
+        for path in self.gw.allocated.get(run_id, []):
+            r = self.gw._lease_call(gate, path, "jobs/list", {})
+            if "error" in r:
+                return True
+            if any(j.get("state") not in TERMINAL for j in (r.get("result") or {}).get("jobs", [])):
+                return True
+        return False
+
+    def _follow_up_idle(self, run_id: str, c: "RunCtl", said: str) -> None:
+        """A running agent ended its turn. If nothing will wake it (no job going, no question open, nothing
+        queued), wake it once with a nudge; if it ends the next turn idle too, ask the scientist."""
+        def idle() -> bool:
+            rec = self.record(run_id)
+            return (rec.state == "running" and not rec.doc.get("open_questions") and c.triggers.empty()
+                    and not self.busy(run_id))
+        if not idle():
+            c.nudged = False
+            return
+        self.stop_event.wait(STALL_GRACE_S)               # a job that just finished: its event may be on its way
+        if self.stop_event.is_set() or not idle():
+            c.nudged = False
+            return
+        if not c.nudged:
+            c.nudged = True
+            self.record(run_id).event("idle", action="nudged")
+            self.wake(run_id, "supervisor", NUDGE)
+            return
+        c.nudged = False
+        self.record(run_id).event("idle", action="asked the scientist")
+        self.ask(run_id, "The run's agent has stopped: nothing is running on its instruments and it did not finish "
+                 "or ask anything, even after a reminder. It last said:\n" + (said or "(nothing)")[:1500]
+                 + "\nShould it carry on (say how), or stop?", meanwhile="wait", by_supervisor=True)
+
+    def on_device_event(self, path: str, event: dict) -> None:
+        """Called by the gateway for every event a lab PC pushes."""
+        method = (event or {}).get("method", "").replace("notifications/", "")
+        if method not in WAKE_EVENTS:
+            return
+        for run_id, devices in list(self.gw.allocated.items()):
+            if path in devices:
+                rec = self.record(run_id)
+                if rec.state in ("running", "waiting_scientist"):
+                    self.wake(run_id, "instrument", f"{path}: {method} {json.dumps(event.get('params') or {})[:600]}")
+
+    # ---- the run agent's tools ---------------------------------------------------------------
+    def ask(self, run_id: str, question: str, *, tried: str = "", meanwhile: str = "wait", needs_lab: bool = False,
+            by_supervisor: bool = False) -> dict:
+        c = self.ctl.get(run_id) or (self.record(run_id) and self.ctl[run_id])
+        c.question_seq += 1
+        qid = f"q{c.question_seq}"
+        ev = c.record.event("question", id=qid, question=question, tried=tried, meanwhile=meanwhile, needs_lab=needs_lab,
+                            by="supervisor" if by_supervisor else "agent")
+        open_q = dict(c.record.doc.get("open_questions") or {})
+        open_q[qid] = {"question": question, "needs_lab": needs_lab, "asked": ev["at"]}
+        c.record.set(open_questions=open_q)
+        if meanwhile == "wait" and c.record.state == "running":
+            c.record.to("waiting_scientist", f"asked {qid}")
+        return {"ok": True, "question": qid, "note": "the scientist's answer will come as a later turn"}
+
+    def answer(self, run_id: str, qid: str, text: str, by: str) -> dict:
+        rec = self.record(run_id)
+        if by != rec.owner:
+            raise PermissionError("only the run's scientist answers its questions")
+        open_q = dict(rec.doc.get("open_questions") or {})
+        if qid not in open_q:
+            raise LookupError(f"no open question {qid} on run {run_id}")
+        q = open_q.pop(qid)
+        rec.set(open_questions=open_q)
+        rec.event("answer", id=qid, by=by, text=text)
+        if rec.state == "waiting_scientist" and not open_q:
+            rec.to("running", f"{by} answered {qid}")
+        self.wake(run_id, "answer", f"{by} answered your question {qid} ({q['question'][:200]}): {text}")
+        return {"run": run_id, "answered": qid, "state": rec.state}
+
+    def report(self, run_id: str, text: str) -> dict:
+        self.record(run_id).event("report", text=text)
+        return {"ok": True}
+
+    def finish(self, run_id: str, summary: str, outcome: str, next_experiments: list | None = None) -> dict:
+        rec = self.record(run_id)
+        pub = rec.public_folder()
+        out = pub / "out"
+        lines = [f"# Run {run_id}: {outcome}", "", summary, ""]
+        if next_experiments:
+            lines += ["## Suggested next experiments", ""] + [f"- {x}" for x in next_experiments] + [""]
+        work = pub / "work"
+        if (work / "out").is_dir():
+            _shutil.copytree(work / "out", out, dirs_exist_ok=True)
+        if (work / "notebook.md").is_file():
+            _shutil.copyfile(work / "notebook.md", out / "notebook.md")
+        (out / "report.md").write_text("\n".join(lines), encoding="utf-8")
+        rec.event("finish", outcome=outcome, summary=summary, next_experiments=next_experiments or [])
+        self.gw.end_run(run_id)
+        rec.to("finished", outcome, ended=now(), ended_ts=time.time())
+        self.results_ready(run_id)
+        return {"ok": True, "state": "finished"}
+
+    # ---- the scientist's requests ------------------------------------------------------------
+    def message(self, run_id: str, text: str, by: str) -> dict:
+        rec = self.record(run_id)
+        if by != rec.owner:
+            raise PermissionError("only the run's scientist messages it")
+        if rec.state not in ("planning", "waiting_approval", "running", "waiting_scientist", "queued"):
+            raise ValueError(f"run {run_id} is {rec.state}")
+        rec.event("message", by=by, text=text)
+        if rec.state == "waiting_approval":           # changes to a proposed charter: back to the planner
+            rec.to("planning", f"{by} asked for changes", phase="plan")
+        self.wake(run_id, "message", f"{by} says: {text}. (If this asks for something outside the charter, the gateway will "
+                  "refuse it: tell them it needs a changed charter, through ask_scientist.)")
+        return {"run": run_id, "delivered": True}
+
+    def stop(self, run_id: str, by: str, cleanup_timeout_s: float = 600) -> dict:
+        """Stop now: the agent gets one turn to clean up as the charter says, then the instruments are released."""
+        from .harness import Turn, run_turn
+        rec = self.record(run_id)
+        if by != rec.owner and by != "supervisor":
+            raise PermissionError("only the run's scientist stops it")
+        if rec.state in ENDED:
+            return {"run": run_id, "state": rec.state}
+        rec.event("stop", by=by)
+        if rec.state in ("running", "waiting_scientist") and rec.doc.get("session"):
+            work = rec.public_folder() / "work"
+            adapter = self.adapters[rec.doc.get("harness", "claude-code")]
+            r = run_turn(adapter, Turn(prompt=f"[{now()}] stop: {by} stopped the run. Do the charter's cleanup now, write what "
+                                       "you have to out/ and notebook.md, and do not start anything new.",
+                                       workdir=work, session=rec.doc.get("session"), mcp_config=work / ".mcp-run.json",
+                                       max_turns=15, timeout_s=cleanup_timeout_s, env={"OPENMHP_RUN_ID": run_id, **self.llm_env()},
+                                       run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
+            rec.event("turn", ok=r.ok, reason=r.reason, cost_usd=r.cost_usd, said=(r.text or "")[:2000], cleanup=True)
+        self.gw.end_run(run_id)
+        pub = rec.public_folder()
+        if (pub / "work" / "out").is_dir():
+            _shutil.copytree(pub / "work" / "out", pub / "out", dirs_exist_ok=True)
+        rec.to("stopped", f"stopped by {by}", ended=now(), ended_ts=time.time())
+        self.results_ready(run_id)
+        return {"run": run_id, "state": "stopped"}
+
+    # ---- results: a manifest, received by the scientist's machine, then deleted here ----------
+    def results_ready(self, run_id: str) -> dict:
+        import hashlib
+        rec = self.record(run_id)
+        out = rec.public_folder() / "out"
+        out.mkdir(parents=True, exist_ok=True)
+        lines = []
+        for f in sorted(p for p in out.rglob("*") if p.is_file() and p.name != "manifest.sha256"):
+            lines.append(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(out).as_posix()}")
+        (out / "manifest.sha256").write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        days = KEEP_RESULTS_S // 86400
+        rec.event("results_ready", files=len(lines), keep_days=days,
+                  pull=f"rsync -a mhp-gateway:runs/{run_id}/out/ <here>/   then: mhp-gw ack {run_id}")
+        return {"files": len(lines)}
+
+    def ack(self, run_id: str, by: str) -> dict:
+        rec = self.record(run_id)
+        if by != rec.owner:
+            raise PermissionError("only the run's scientist acknowledges its results")
+        if rec.state not in ENDED:
+            raise ValueError(f"run {run_id} is {rec.state}; results are acknowledged after it ends")
+        rec.set(acked=now(), acked_ts=time.time())
+        rec.event("results_received", by=by)
+        return {"run": run_id, "acknowledged": True, "note": "the gateway deletes its copy of the results"}
+
+    def purge(self, run_id: str, why: str) -> None:
+        """Delete a run's files from the scientist's folder on the gateway; the record (meta, events) stays."""
+        rec = self.record(run_id)
+        pub = rec.public_folder()
+        failed = []
+        for child in sorted(pub.iterdir()) if pub.is_dir() else []:
+            if child.name in ("meta.json", "events.jsonl", "inbox"):   # the record, and replies mhp-gw is still to read
+                continue
+            try:
+                _shutil.rmtree(child) if child.is_dir() and not child.is_symlink() else child.unlink()
+            except OSError as e:
+                failed.append(f"{child.name}: {e}")
+        rec.set(purged=now())
+        rec.event("results_deleted", why=why, **({"could_not_delete": failed} if failed else {}))
+
+    def retention(self, now_ts: float | None = None) -> list[str]:
+        t = time.time() if now_ts is None else now_ts
+        done = []
+        for d in sorted(self.runs_dir.iterdir()) if self.runs_dir.is_dir() else []:
+            try:
+                doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if doc.get("state") not in ENDED or doc.get("purged"):
+                continue
+            if doc.get("acked_ts"):
+                self.purge(doc["id"], "the scientist's machine received the results")
+                done.append(doc["id"])
+            elif doc.get("ended_ts") and t - doc["ended_ts"] > KEEP_RESULTS_S:
+                self.purge(doc["id"], f"kept {KEEP_RESULTS_S // 86400} days after the run ended; not received")
+                done.append(doc["id"])
+        return done
+
+    # ---- the loop ----------------------------------------------------------------------------
+    def tick(self) -> None:
+        """Start runs whose instruments came free, act on requests the scientists dropped in their inboxes, and
+        wake runs that are due a scheduled check."""
+        for run_id in list(self.gw.allocated):
+            rec = self.record(run_id) if (self.runs_dir / run_id / "state.json").is_file() else None
+            if rec is not None and rec.state == "queued":
+                self._start(run_id)
+        self.process_inboxes()
+        self.retention()
+        for run_id, c in list(self.ctl.items()):
+            if c.record.state != "running":
+                continue
+            every = ((self.charter(run_id).get("reporting") or {}).get("every_hours"))
+            if every and time.time() - c.last_report > float(every) * 3600:
+                c.last_report = time.time()
+                self.wake(run_id, "scheduled", "Scheduled check: look at the instruments and your notebook, then report.")
+
+    def process_inboxes(self) -> None:
+        base = self.lab_root / "scientists"
+        if not base.is_dir():
+            return
+        for inbox in sorted(base.glob("*/runs/*/inbox")):
+            owner, run_id = inbox.parent.parent.parent.name, inbox.parent.name
+            for req in sorted(inbox.glob("*.json")):
+                if req.name.endswith(".done.json"):
+                    continue
+                try:
+                    body = json.loads(req.read_text(encoding="utf-8"))
+                    kind = body.get("kind")
+                    if kind == "request":
+                        ans = self.request(run_id, owner, body.get("text", ""), body.get("harness") or "claude-code")
+                    elif kind == "approve":
+                        ans = self.approve(run_id, body.get("digest", ""), owner)
+                    elif kind == "message":
+                        ans = self.message(run_id, body.get("text", ""), owner)
+                    elif kind == "answer":
+                        ans = self.answer(run_id, body.get("question", ""), body.get("text", ""), owner)
+                    elif kind == "stop":
+                        ans = self.stop(run_id, owner)
+                    elif kind == "ack":
+                        ans = self.ack(run_id, owner)
+                    else:
+                        raise ValueError(f"unknown request {kind!r}")
+                    result = {"ok": True, **ans}
+                except (ValueError, LookupError, PermissionError, OSError) as e:
+                    result = {"ok": False, "error": str(e), "not_found": isinstance(e, LookupError)}
+                done = req.with_name(req.stem + ".done.json")
+                done.write_text(json.dumps(result, default=str), encoding="utf-8")
+                req.unlink()
+
+    def loop(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                self.tick()
+            except Exception as e:                       # noqa: BLE001  a bad request must not stop supervision
+                print(f"supervisor: {type(e).__name__}: {e}", file=_sys.stderr)
+            self.stop_event.wait(self.poll_s)
+
+    def start(self) -> threading.Thread:
+        recover(self.runs_dir, self.lab_root)
+        t = threading.Thread(target=self.loop, name="mhp-supervisor", daemon=True)
+        t.start()
+        return t

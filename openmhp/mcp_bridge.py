@@ -340,6 +340,9 @@ class Bridge:
                  scripts: bool | None = None):
         off = os.environ.get("OPENMHP_NO_SCRIPTS", "").strip().lower() not in ("", "0", "false", "no")
         self.scripts = (not off) if scripts is None else bool(scripts)   # --no-scripts: no code from the model runs here
+        # a run on a gateway (OPENMHP_RUN_SCOPE): its instruments come from the gateway, already chosen; it never
+        # scans, adds or onboards devices, so mhp_lab is not offered at all
+        self.run_scope = os.environ.get("OPENMHP_RUN_SCOPE", "").strip().lower() not in ("", "0", "false", "no")
         self.fleet = fleet
         self._onboarding = None
         self._hooked: set[int] = set()
@@ -349,6 +352,8 @@ class Bridge:
         from .runs import HOME
         self.home = home or (fleet.path.parent if fleet is not None else HOME)
         self._update_told = False
+        self._inbox_told = False
+        self._skills_told = False
         self.log = RunLog(self.home)
         self._updates: dict[str, list[dict]] = {}          # device -> recent pushed events (ring buffer)
         self._run_devices: dict[str, set[str]] = {}         # run id -> devices it has touched
@@ -385,6 +390,8 @@ class Bridge:
                               "script themselves with `mhp` or the SDK, where they are the trusted party.",
                               {"scripts": False})
             return self.run_tool(a)
+        if name == "mhp_lab" and self.run_scope:
+            raise PermissionError("this is a run on a gateway: its instruments are fixed by the approved charter")
         if name == "mhp_lab":
             return self.lab_op(a)
         if name == "mhp_data":
@@ -426,7 +433,8 @@ class Bridge:
     def tools(self) -> list:
         """The tool surface this bridge offers. A bridge that runs no scripts does not offer mhp_run, rather than
         offering it and refusing every call: an absent tool is a capability the model never plans around."""
-        return TOOLS if self.scripts else [t for t in TOOLS if t["name"] != "mhp_run"]
+        hidden = ({"mhp_run"} if not self.scripts else set()) | ({"mhp_lab"} if self.run_scope else set())
+        return [t for t in TOOLS if t["name"] not in hidden]
 
     def _device(self, name: str):
         try:
@@ -988,7 +996,9 @@ class Bridge:
             return self._ok(mid, {"protocolVersion": requested if requested in SUPPORTED_MCP_VERSIONS else SUPPORTED_MCP_VERSIONS[0],
                                   "capabilities": {"tools": {}, "resources": {}, "prompts": {}, "logging": {}},
                                   "serverInfo": {"name": "openmhp-bridge", "version": __version__},
-                                  "instructions": INSTRUCTIONS + (f"\n- {n}" if (n := update_notice()) else "")})
+                                  "instructions": INSTRUCTIONS + (f"\n- {n}" if (n := update_notice()) else "")
+                                  + (f"\n- {n}" if (n := inbox_notice()) else "")
+                                  + (f"\n- {n}" if (n := skills_notice()) else "")})
         if m == "prompts/list":
             return self._ok(mid, {"prompts": [{"name": n, "description": d} for n, (d, _) in PROMPTS.items()]})
         if m == "prompts/get":
@@ -1029,6 +1039,12 @@ class Bridge:
                 content = [{"type": "text", "text": json.dumps(res, indent=1, default=str)}]
                 if not self._update_told and (n := update_notice()):
                     self._update_told = True           # once per session: the agent relays it, then gets on with the work
+                    content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
+                if not self._inbox_told and (n := inbox_notice()):
+                    self._inbox_told = True
+                    content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
+                if not self._skills_told and (n := skills_notice()):
+                    self._skills_told = True
                     content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
                 return self._ok(mid, {"content": content})
             except RemoteError as e:
@@ -1189,6 +1205,35 @@ def http_token(home: Path) -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(tok)
     return tok
+
+
+_SKILLS: dict = {}
+
+
+def skills_notice() -> str | None:
+    """Refresh this machine's installed OpenMHP skills once per server start, and say what changed."""
+    if "notice" not in _SKILLS:
+        try:
+            from .skills_install import notice
+            _SKILLS["notice"] = notice()
+        except Exception:                              # noqa: BLE001  (a skill copy never stops the server)
+            _SKILLS["notice"] = None
+    return _SKILLS["notice"]
+
+
+def inbox_notice() -> str | None:
+    """Unread news from the lab gateway (questions from runs, plans to approve, results), told to the agent once."""
+    try:
+        from .watcher import unread
+        items = unread()
+    except Exception:                                  # noqa: BLE001
+        return None
+    if not items:
+        return None
+    lab = sum(1 for i in items if i.get("needs_lab"))
+    return (f"The lab gateway has {len(items)} unread message(s) for the user" + (f", {lab} needing someone in the lab" if lab else "")
+            + ": questions from their runs, plans to approve, or results. Tell the user, and read them with "
+              "`mhp agent inbox` (the openmhp-lab-gateway skill says how to answer).")
 
 
 def main(argv=None):

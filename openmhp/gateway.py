@@ -10,6 +10,7 @@ command either finishes the job or prints the one thing to do next.
     mhp gateway add-agent <name>      let one agent machine through by hand; prints the token to paste there
     mhp gateway status | check        what is connected, which lab PCs run an old OpenMHP, and what to fix
     mhp gateway ssh [users] [apply]   let scientists' machines run mhp-gw and copy files over SSH (keys arrive at pairing)
+    mhp gateway llm-key               the LLM key runs use (read from stdin; kept in this gateway's own folder)
 
 Agent face (bearer = agent token):  POST /agent/join (code, no token)    GET /    GET /<node>/<device>/mhp.json    POST /<node>/<device>/rpc
                                     GET /<node>/<device>/events (SSE)         /directory/{rpc,mhp.json}
@@ -48,11 +49,14 @@ from .directory import Directory
 HOME = Path(os.environ.get("OPENMHP_HOME", "~/.openmhp")).expanduser()
 GW_DIR = HOME / "gateway"
 STATE = GW_DIR / "gateway.json"
+RUNS_DIR = GW_DIR / "runs"                # the gateway's own copy of each run's charter and usage; never a run's to edit
 OFFLINE_S = 45            # no /relay/next from a node for this long: offline
 POLL_S = 25               # how long /relay/next may wait before answering empty
 REQUEST_TIMEOUT_S = 120   # default wait for a node's reply; X-MHP-Timeout raises it
 CODE_TTL_S = 15 * 60                  # a lab PC code: typed within minutes by the person at the bench
 AGENT_CODE_TTL_S = 60 * 60            # an agent code: sent in chat, redeemed when the person gets to it
+LEASE_TTL_S = 60                      # a run's leases, renewed by the gateway itself while the run lasts
+LEASE_RENEW_S = 2                     # often enough for any instrument watchdog of a few seconds
 
 
 def say(*lines: str) -> None:
@@ -163,6 +167,12 @@ class Gateway:
         self.node_by_token: dict[str, str] = {}
         self.subs: dict[tuple[str, str], list] = {}
         self.directory = Directory(state_ttl=0.0)      # probes are in-memory lookups: always current
+        self.gates: dict[str, object] = {}             # run token -> RunGate, built on first use
+        self.allocated: dict[str, list[str]] = {}      # run ID -> its instruments, all leased to it
+        self.waiting: list[str] = []                   # run IDs queued for their instruments, first come first served
+        self._alloc_lock = threading.Lock()
+        self._lease_thread: threading.Thread | None = None
+        self.supervisor = None                         # set by Supervisor(...): wakes runs on their instruments' events
         self.lock = threading.Lock()
         self._index_tokens()
 
@@ -186,12 +196,162 @@ class Gateway:
         self.state_mtime = STATE.stat().st_mtime
 
     def agent_for(self, auth: str) -> str | None:
+        """Who is calling: an agent machine's name, or `<scientist>/run-<id>` for a run token."""
         self.refresh()
         tok = auth[7:] if auth.startswith("Bearer ") else ""
         for t, name in self.state.get("agents", {}).items():
             if hmac.compare_digest(t.encode(), tok.encode()):
                 return name
+        gate = self.gate_for(auth)
+        return gate.identity if gate else None
+
+    # ---- runs: a token per run, checked against its charter -----------------------------------
+    def gate_for(self, auth: str):
+        tok = auth[7:] if auth.startswith("Bearer ") else ""
+        for t, entry in self.state.get("run_tokens", {}).items():
+            if tok and hmac.compare_digest(t.encode(), tok.encode()):
+                gate = self.gates.get(t)
+                if gate is None:
+                    from .run_gate import PlanGate, RunGate
+                    if entry.get("kind") == "plan":
+                        gate = self.gates[t] = PlanGate(entry["run"], entry["owner"])
+                        return gate
+                    folder = RUNS_DIR / entry["run"]
+                    charter = json.loads((folder / "charter.json").read_text(encoding="utf-8"))
+                    gate = self.gates[t] = RunGate(charter, folder)
+                return gate
         return None
+
+    def issue_run_token(self, charter: dict) -> str:
+        """A token for one run, bound to this exact charter. The charter is copied into the gateway's own folder."""
+        from . import charter as C
+        problems = C.problems(charter)
+        if problems:
+            raise ValueError("the charter cannot be enforced: " + "; ".join(problems))
+        missing = [d for d in charter["instruments"].values()
+                   if d.split("/")[0] not in self.nodes or d.split("/")[1] not in self.nodes[d.split("/")[0]].devices]
+        if missing:
+            raise LookupError("not behind this gateway: " + ", ".join(missing))
+        folder = RUNS_DIR / charter["run"]
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
+        self.end_run(charter["run"])
+        token = "run_" + secrets.token_urlsafe(24)
+        self.state.setdefault("run_tokens", {})[token] = {"run": charter["run"], "owner": charter["owner"],
+                                                          "digest": C.digest(charter), "issued": time.time()}
+        self.persist()
+        return token
+
+    # ---- allocation: every instrument of a run at once, or none --------------------------------
+    def _run_entry(self, run_id: str) -> tuple[str, dict] | None:
+        for t, e in self.state.get("run_tokens", {}).items():
+            if e["run"] == run_id:
+                return t, e
+        return None
+
+    def _lease_call(self, gate, path: str, method: str, params: dict) -> dict:
+        node, dev = path.split("/", 1)
+        n = self.nodes.get(node)
+        if n is None:
+            return {"error": {"code": -32030, "message": f"lab PC {node!r} is not connected"}}
+        code, reply = self.relay(n, dev, "rpc", {"jsonrpc": "2.0", "id": "lease", "method": method, "params": params},
+                                 gate.identity, 20)
+        return reply if code == 200 and isinstance(reply, dict) else {"error": {"code": -32030, "message": str(reply)}}
+
+    def allocate(self, run_id: str) -> dict:
+        """Lease every instrument of the run under `<scientist>/run-<id>`, or none. When something is busy the
+        run waits in the queue and the gateway retries; earlier waiting runs that share an instrument go first."""
+        entry = self._run_entry(run_id)
+        if entry is None:
+            raise LookupError(f"no run token for {run_id}")
+        with self._alloc_lock:
+            if run_id in self.allocated:
+                return {"state": "allocated", "instruments": self.allocated[run_id]}
+            if run_id not in self.waiting:
+                self.waiting.append(run_id)
+            got = self._try_allocate(run_id)
+        self._ensure_lease_thread()
+        return got
+
+    def _try_allocate(self, run_id: str) -> dict:
+        entry = self._run_entry(run_id)
+        if entry is None:
+            if run_id in self.waiting:
+                self.waiting.remove(run_id)
+            return {"state": "ended"}
+        gate = self.gate_for("Bearer " + entry[0])
+        mine = list(gate.devices)
+        ahead = set()
+        for other in self.waiting[: self.waiting.index(run_id)]:
+            e = self._run_entry(other)
+            if e:
+                ahead |= set(self.gate_for("Bearer " + e[0]).devices)
+        if ahead & set(mine):
+            return {"state": "queued", "waiting_for": sorted(ahead & set(mine)), "reason": "an earlier run needs them first"}
+        taken, busy = [], {}
+        for path in mine:
+            r = self._lease_call(gate, path, "session/acquire", {"ttl": LEASE_TTL_S})
+            if "error" in r:
+                busy[path] = (r["error"].get("data") or {}).get("holder") or r["error"].get("message")
+                break
+            taken.append(path)
+        if busy:
+            for path in taken:                         # none: give back what was taken, so nobody waits on half a run
+                self._lease_call(gate, path, "session/release", {})
+            return {"state": "queued", "waiting_for": sorted(busy), "held_by": busy}
+        self.waiting.remove(run_id)
+        self.allocated[run_id] = mine
+        return {"state": "allocated", "instruments": mine}
+
+    def release_run(self, run_id: str) -> None:
+        with self._alloc_lock:
+            if run_id in self.waiting:
+                self.waiting.remove(run_id)
+            mine = self.allocated.pop(run_id, None)
+        entry = self._run_entry(run_id)
+        if mine and entry:
+            gate = self.gate_for("Bearer " + entry[0])
+            for path in mine:
+                self._lease_call(gate, path, "session/release", {})
+
+    def _ensure_lease_thread(self) -> None:
+        if self._lease_thread is None or not self._lease_thread.is_alive():
+            self._lease_thread = threading.Thread(target=self._lease_loop, name="mhp-run-leases", daemon=True)
+            self._lease_thread.start()
+
+    def _lease_loop(self) -> None:
+        """Renew the leases of allocated runs (the gateway is always on, so a run's instruments stay held while its
+        agent is idle) and retry waiting runs in order."""
+        while True:
+            time.sleep(LEASE_RENEW_S)
+            with self._alloc_lock:
+                for run_id in list(self.allocated):
+                    entry = self._run_entry(run_id)
+                    if entry is None:
+                        self.allocated.pop(run_id, None)
+                        continue
+                    gate = self.gate_for("Bearer " + entry[0])
+                    for path in self.allocated[run_id]:
+                        self._lease_call(gate, path, "session/renew", {"ttl": LEASE_TTL_S})
+                for run_id in list(self.waiting):
+                    self._try_allocate(run_id)
+
+    def issue_plan_token(self, run_id: str, owner: str) -> str:
+        """A token for planning one run: every instrument can be read and rehearsed, nothing moves."""
+        self.end_run(run_id)
+        token = "plan_" + secrets.token_urlsafe(24)
+        self.state.setdefault("run_tokens", {})[token] = {"run": run_id, "owner": owner, "kind": "plan", "issued": time.time()}
+        self.persist()
+        return token
+
+    def end_run(self, run_id: str) -> None:
+        if run_id in self.allocated or run_id in self.waiting:
+            self.release_run(run_id)
+        toks = self.state.setdefault("run_tokens", {})
+        for t in [t for t, e in toks.items() if e["run"] == run_id]:
+            del toks[t]
+            self.gates.pop(t, None)
+        self.persist()
 
     def node_for(self, auth: str) -> Node | None:
         self.refresh()
@@ -336,6 +496,11 @@ class Gateway:
                 node.devices[did]["state"] = ev["state"]
             for q in list(self.subs.get((node.name, did), [])):
                 q.put(ev.get("event"))
+            if self.supervisor is not None:
+                try:
+                    self.supervisor.on_device_event(f"{node.name}/{did}", ev.get("event") or {})
+                except Exception:                      # noqa: BLE001  supervision must never break the relay
+                    pass
 
     # ---- agent face ----------------------------------------------------------------------------
     def relay(self, node: Node, device: str, kind: str, body: dict | None, client: str, timeout: float) -> tuple[int, dict]:
@@ -439,16 +604,53 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
             agent = gw.agent_for(self._auth())
             if agent is None:
                 return self._json(401, {"error": AGENT_401})
+            gate = gw.gate_for(self._auth())               # a run token: only its instruments, only its charter
+            if len(parts) == 2 and parts[0] == "runs" and parts[1] in ("ask_scientist", "report", "finish", "propose_charter"):
+                if gate is None or gw.supervisor is None:
+                    return self._json(403, {"ok": False, "error": "only a run's own token, on a supervising gateway"})
+                planning = getattr(gate, "planning", False)
+                if (parts[1] == "finish" and planning) or (parts[1] == "propose_charter" and not planning):
+                    return self._json(403, {"ok": False, "error": f"{parts[1]} is for the " + ("run" if planning else "planner")})
+                b, sv = self._body(), gw.supervisor
+                try:
+                    if parts[1] == "propose_charter":
+                        ans = sv.propose_from_planner(gate.run, b.get("charter"), str(b.get("notes", "")))
+                    elif parts[1] == "ask_scientist":
+                        ans = sv.ask(gate.run, str(b.get("question", "")), tried=str(b.get("tried", "")),
+                                     meanwhile=b.get("meanwhile") if b.get("meanwhile") in ("wait", "continue") else "wait",
+                                     needs_lab=b.get("needs_lab") is True)
+                    elif parts[1] == "report":
+                        ans = sv.report(gate.run, str(b.get("text", "")))
+                    else:
+                        ans = sv.finish(gate.run, str(b.get("summary", "")), str(b.get("outcome", "objective met")),
+                                        [str(x) for x in (b.get("next_experiments") or [])])
+                except (ValueError, LookupError) as e:
+                    return self._json(409, {"ok": False, "error": str(e)})
+                return self._json(200, {"ok": True, **ans} if "ok" not in ans else ans)
             if parts == ["directory", "rpc"]:
                 from .transport import dispatch
                 msg = self._body()
-                return self._json(200, dispatch(gw.directory, msg, agent, trusted=True) or {})
+                ans = dispatch(gw.directory, msg, agent, trusted=True) or {}
+                if gate and isinstance((ans.get("result") or {}).get("results"), list):
+                    ans["result"]["results"] = [r for r in ans["result"]["results"] if gate.allows_device(r.get("id", ""))]
+                return self._json(200, ans)
             if len(parts) == 3 and parts[2] == "rpc":
                 node = gw.nodes.get(parts[0])
-                if node is None or parts[1] not in node.devices:
+                if node is None or parts[1] not in node.devices or (gate and not gate.allows_device(f"{parts[0]}/{parts[1]}")):
                     return self._json(404, {"error": f"no device {parts[0]}/{parts[1]} behind this gateway"})
                 timeout = float(self.headers.get("X-MHP-Timeout", REQUEST_TIMEOUT_S))
-                return self._json(*gw.relay(node, parts[1], "rpc", self._body(), agent, timeout))
+                msg = self._body()
+                if gate is None:
+                    return self._json(*gw.relay(node, parts[1], "rpc", msg, agent, timeout))
+                send, refusal, commit = gate.check(f"{parts[0]}/{parts[1]}", msg)
+                if refusal is not None:
+                    return self._json(200, refusal)
+                code, reply = gw.relay(node, parts[1], "rpc", send, agent, timeout)
+                if code == 200:
+                    reply = gate.translate(reply)
+                    if commit:
+                        commit(reply)
+                return self._json(code, reply)
             return self._json(404, {"error": "POST /<node>/<device>/rpc or /directory/rpc"})
 
         def do_GET(self):
@@ -465,16 +667,18 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
             agent = gw.agent_for(self._auth())
             if agent is None:
                 return self._json(401, {"error": AGENT_401})
+            gate = gw.gate_for(self._auth())
             if not parts:
                 return self._json(200, {"mhp_gateway": gw.state["server_name"], "directory": agent_url(gw.state, "directory"),
-                                        "devices": sorted(f"{n}/{d}" for n, node in gw.nodes.items() for d in node.devices)})
+                                        "devices": sorted(f"{n}/{d}" for n, node in gw.nodes.items() for d in node.devices
+                                                          if not gate or gate.allows_device(f"{n}/{d}"))})
             if parts == ["directory", "mhp.json"]:
                 return self._json(200, gw.directory.rpc("device/describe", {}, agent))
             if parts == ["directory", "events"]:
                 return self._sse(queue.Queue())
             if len(parts) == 3:
                 node = gw.nodes.get(parts[0])
-                if node is None or parts[1] not in node.devices:
+                if node is None or parts[1] not in node.devices or (gate and not gate.allows_device(f"{parts[0]}/{parts[1]}")):
                     return self._json(404, {"error": f"no device {parts[0]}/{parts[1]} behind this gateway"})
                 if parts[2] == "mhp.json":
                     return self._json(200, node.devices[parts[1]]["nameplate"])
@@ -552,6 +756,11 @@ def serve(host: str | None = None, port: int | None = None) -> int:
     say(f"MHP gateway '{state['server_name']}' listening on https://{host}:{port}",
         f"  lab PCs join with:   mhp node <devices folder> --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair`>",
         f"  agent machines join: mhp agent --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair-agent`>", "  Ctrl-C to stop")
+    from . import scientists as S
+    from .supervisor import Supervisor
+    ssh = state.get("ssh") or {}
+    Supervisor(gw, lab_root=Path(ssh.get("lab_root") or S.lab_root()), runs_dir=RUNS_DIR,
+               run_as_users=ssh.get("mode") == "users").start()
     U.watch(lambda v: say(f"OpenMHP {v} is out (this gateway runs {__version__}). `mhp gateway status` lists the lab PCs "
                           f"that are behind. To update the gateway itself: pip install -U openmhp, then restart `mhp gateway serve`."))
     try:
@@ -799,6 +1008,30 @@ def check() -> int:
     return 0 if not problems else 1
 
 
+def llm_key(words: list[str]) -> int:
+    """`mhp gateway llm-key [VAR]`: store the key agent sessions for runs use, read from stdin so it never lands
+    in shell history or a process list. VAR defaults to ANTHROPIC_API_KEY."""
+    var = words[0] if words else "ANTHROPIC_API_KEY"
+    if not re.fullmatch(r"[A-Z][A-Z0-9_]*", var):
+        say(f"{var!r} is not an environment variable name")
+        return 2
+    if sys.stdin.isatty():
+        import getpass
+        key = getpass.getpass(f"{var} for runs on this gateway: ").strip()
+    else:
+        key = sys.stdin.read().strip()
+    if not key or "\n" in key:
+        say("no key given (one line on stdin)")
+        return 2
+    GW_DIR.mkdir(parents=True, exist_ok=True)
+    path = GW_DIR / "llm.env"
+    lines = [l for l in (path.read_text(encoding="utf-8").splitlines() if path.is_file() else []) if not l.startswith(var + "=")]
+    path.write_text("\n".join(lines + [f"{var}={key}"]) + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+    say(f"saved {var} for runs in {path} (this account only). Agent sessions get it and no other credential.")
+    return 0
+
+
 def ssh_setup(words: list[str]) -> int:
     """`mhp gateway ssh [users] [login=NAME] [port=N] [host=NAME] [host-key=FILE] [apply]`: turn on SSH access
     for scientists' machines. Without `apply` it records the settings and prints what to install; with
@@ -894,5 +1127,7 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
         return check()
     if verb == "ssh":
         return ssh_setup(args)
-    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh")
+    if verb == "llm-key":
+        return llm_key(args)
+    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh, llm-key")
     return 2

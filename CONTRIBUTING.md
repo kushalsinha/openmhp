@@ -93,7 +93,7 @@ For maintainers. `openmhp` (PyPI) and `openmhp-cli` (npm) are published by
 
 1. A PR bumps the version in `pyproject.toml`, `openmhp/__init__.py` and `npm/package.json` to the
    same number, and merges to `main`.
-2. Tag the merge commit: `git tag -a v0.10.2 -m "openmhp 0.10.2" && git push origin v0.10.2`.
+2. Tag the merge commit: `git tag -a v0.11.0 -m "openmhp 0.11.0" && git push origin v0.11.0`.
 3. The workflow checks the tag is on `main` and matches all three versions, then publishes PyPI
    first (the npm launcher installs `openmhp` from it), then stages npm. Each job waits for approval
    from a reviewer of the `release` environment.

@@ -4,7 +4,7 @@ name: Release
 #
 #   1. a PR bumps the version in pyproject.toml, openmhp/__init__.py and npm/package.json
 #   2. it merges to main
-#   3. someone pushes the tag:  git tag -a v0.10.2 -m "openmhp 0.10.2" && git push origin v0.10.2
+#   3. someone pushes the tag:  git tag -a v0.11.0 -m "openmhp 0.11.0" && git push origin v0.11.0
 #
 # No secrets. PyPI and npm are both set up as trusted publishers for this repository, workflow
 # file and environment, so GitHub proves who is publishing with a short-lived token. The

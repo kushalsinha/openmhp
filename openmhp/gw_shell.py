@@ -18,7 +18,8 @@ rsync is the way to copy. File copies run rsync or scp on the gateway only for p
 run's in/, out of its preview/ and out/. scp from OpenSSH 9 on speaks SFTP unless given -O, and SFTP
 cannot be limited this way, so it is refused with a hint.
 
-Every answer is one JSON object on stdout. Exit codes: 0 done, 2 waiting for a person, 3 refused,
+Every answer is one JSON object on stdout, with a `say` field: the same news in plain English, for the
+scientist (see gw_words). Exit codes: 0 done, 2 waiting for a person, 3 refused,
 4 not found. Anything not listed is refused, so there is no shell and no path outside the
 scientist's own folder.
 """
@@ -32,15 +33,25 @@ import shlex
 import sys
 from pathlib import Path
 
-from . import scientists as S
+from . import gw_words as W, scientists as S
 
 OK, WAITING, REFUSED, NOT_FOUND = 0, 2, 3, 4
 VERBS = {
     "open": "a new run in your folder; copy your skills, scripts and data into its in/ folder with rsync",
     "list": "your runs and their states",
     "status": "status <run id>: one run's state",
+    "request": "request <run id> [--harness claude-code] < request.md: what you need, in plain English; a planner starts",
+    "wait": "wait <run id> [--since <ts>] [--timeout <s>]: block until there is news (a question, a charter, a state change)",
+    "show": "show <run id>: the run's charter to approve, its state and any open questions",
+    "approve": "approve <run id> --charter-digest <digest>: the scientist approves exactly that charter; the run starts",
+    "message": "message <run id> <text, or on stdin>: tell the running agent something",
+    "answer": "answer <run id> <question id> <text, or on stdin>: answer the run's question",
+    "stop": "stop <run id>: stop now; the agent cleans up as the charter says",
+    "watch": "watch [--since <ts>] [--for <s>]: news from all your runs, one JSON line each, as it happens",
+    "ack": "ack <run id>: your machine received the results and checked them; the gateway may delete its copy",
     "help": "this list",
 }
+WAIT_S = 60                                    # how long a request waits for the supervisor before saying "pending"
 
 
 SFTP_HINT = ("copy files with rsync (rsync -a <folder>/ <gateway>:runs/<run id>/in/); scp works only in its "
@@ -57,21 +68,25 @@ SCP_FLAGS = {"-r", "-d", "-p", "-v", "-q"}
 
 
 class Shell:
-    def __init__(self, scientist: str, root: Path | None = None, out=None, env=None, execvp=None, err=None):
+    def __init__(self, scientist: str, root: Path | None = None, out=None, env=None, execvp=None, err=None, stdin=None,
+                 wait_s: float | None = None):
         self.scientist = S.check_name(scientist)
         self.root = root
         self.out = out if out is not None else sys.stdout
         self.err = err if err is not None else sys.stderr
         self.env = os.environ if env is None else env
         self.execvp = execvp or os.execvp
+        self.stdin = stdin if stdin is not None else sys.stdin
+        self.wait_s = WAIT_S if wait_s is None else wait_s
 
     def answer(self, code: int, **obj) -> int:
         self.out.write(json.dumps({"ok": code == OK, **obj}, default=str) + "\n")
         self.out.flush()
         return code
 
-    def refuse(self, why: str, code: int = REFUSED) -> int:
-        return self.answer(code, error=why, verbs=VERBS)
+    def refuse(self, why: str, code: int = REFUSED, verbs: bool = False) -> int:
+        extra = {"verbs": VERBS} if verbs else {}
+        return self.answer(code, error=why, say=f"The gateway did not do that: {why}.", **extra)
 
     def refuse_copy(self, why: str, code: int = REFUSED) -> int:
         """A refused file copy: on stderr, which rsync and scp show as text. Their stdout is the copy protocol."""
@@ -83,7 +98,7 @@ class Shell:
         original = self.env.get("SSH_ORIGINAL_COMMAND", "").strip()
         if not original:
             return self.refuse("this connection only accepts commands, for example: ssh <gateway> mhp-gw open. "
-                               "If you were copying files: " + SFTP_HINT)
+                               "If you were copying files: " + SFTP_HINT, verbs=True)
         try:
             argv = shlex.split(original)
         except ValueError as e:
@@ -106,7 +121,7 @@ class Shell:
         verb, args = argv[0], argv[1:]
         handler = getattr(self, "verb_" + verb, None) if verb in VERBS else None
         if handler is None:
-            return self.refuse(f"{verb!r} is not something this gateway does for scientists")
+            return self.refuse(f"{verb!r} is not something this gateway does for scientists", verbs=True)
         try:
             return handler(args)
         except (ValueError, LookupError) as e:
@@ -165,16 +180,209 @@ class Shell:
 
     # ---- verbs -------------------------------------------------------------------------------
     def verb_help(self, args) -> int:
-        return self.answer(OK, scientist=self.scientist, verbs=VERBS)
+        from .skills_install import bundled_version
+        skill = {"name": "openmhp-lab-gateway", "version": bundled_version("openmhp-lab-gateway")}
+        return self.answer(OK, scientist=self.scientist, verbs=VERBS, skill=skill,
+                           say=f"You are connected to the lab gateway as {self.scientist}. You can ask it for an "
+                               "experiment, answer its questions, approve its plans, follow runs, stop them, and "
+                               "bring results home.")
 
     def verb_open(self, args) -> int:
         meta = S.open_run(self.scientist, self.root)
         return self.answer(OK, run=meta["id"], state=meta["state"], upload=f"runs/{meta['id']}/in/",
-                           note=f"copy your folder into upload with rsync: rsync -a <folder>/ <gateway>:runs/{meta['id']}/in/")
+                           note=f"copy your folder into upload with rsync: rsync -a <folder>/ <gateway>:runs/{meta['id']}/in/",
+                           say=f"I opened run {meta['id']} on the lab gateway. Next I hand over your files and send "
+                               "your request.")
 
     def verb_list(self, args) -> int:
-        return self.answer(OK, scientist=self.scientist,
-                           runs=[{k: r.get(k) for k in ("id", "state", "created")} for r in S.runs(self.scientist, self.root)])
+        runs = [{k: r.get(k) for k in ("id", "state", "created")} for r in S.runs(self.scientist, self.root)]
+        say = ("You have no runs on the lab gateway yet." if not runs else f"You have {len(runs)} run(s) on the lab "
+               "gateway: " + "; ".join(f"{r['id']} ({W.SHORT.get(r['state'], r['state'])})" for r in runs) + ".")
+        return self.answer(OK, scientist=self.scientist, runs=runs, say=say)
+
+    # ---- requests the supervisor acts on ---------------------------------------------------
+    def _run(self, run_id: str) -> dict:
+        meta = S.load_run(self.scientist, S.check_run_id(run_id), self.root)
+        if meta is None:
+            raise LookupError(f"no run {run_id} in your folder")
+        return meta
+
+    def _text(self, rest: list[str]) -> str:
+        text = " ".join(rest).strip()
+        if not text and self.stdin is not None and not getattr(self.stdin, "isatty", lambda: False)():
+            text = self.stdin.read().strip()
+        if not text:
+            raise ValueError("say something: put the text after the arguments, or on stdin")
+        return text
+
+    def request(self, run_id: str, body: dict, say=None) -> int:
+        """Leave the request in the run's inbox for the supervisor, and wait for its answer."""
+        import time
+        self._run(run_id)
+        inbox = S.run_folder(self.scientist, run_id, self.root) / "inbox"
+        inbox.mkdir(exist_ok=True)
+        name = f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-{body['kind']}"
+        tmp = inbox / (name + ".tmp")
+        tmp.write_text(json.dumps(body), encoding="utf-8")
+        os.replace(tmp, inbox / (name + ".json"))
+        done = inbox / (name + ".done.json")
+        end = time.time() + self.wait_s
+        while time.time() < end:
+            if done.is_file():
+                ans = json.loads(done.read_text(encoding="utf-8"))
+                done.unlink()
+                if ans.get("ok"):
+                    ans = {k: v for k, v in ans.items() if k != "ok"}
+                    return self.answer(OK, **ans, say=say(ans) if say else "Done.")
+                return self.refuse(ans.get("error", "refused"), NOT_FOUND if ans.get("not_found") else REFUSED)
+            time.sleep(0.2)
+        return self.answer(WAITING, run=run_id, pending=body["kind"],
+                           note="the gateway has the request but has not acted on it yet; check again with mhp-gw status",
+                           say=f"The gateway has your {body['kind']} for {run_id} but has not acted on it yet. "
+                               "I will check again shortly.")
+
+    def verb_request(self, args) -> int:
+        if not args:
+            return self.refuse("request needs a run ID (from mhp-gw open), and the request on stdin")
+        harness = None
+        if len(args) == 3 and args[1] == "--harness":
+            harness = args[2]
+        elif len(args) != 1:
+            return self.refuse("request <run id> [--harness <name>], with the request on stdin")
+        return self.request(args[0], {"kind": "request", "text": self._text([]), "harness": harness},
+                            lambda a: f"I sent your request for {args[0]}. A planner on the gateway is working on it; "
+                                      "I will bring you its questions and then its plan for your approval.")
+
+    def verb_wait(self, args) -> int:
+        import time
+        if not args:
+            return self.refuse("wait needs a run ID")
+        run_id, opts = args[0], dict(zip(args[1::2], args[2::2]))
+        try:
+            since = float(opts.get("--since", 0))
+            timeout = min(float(opts.get("--timeout", 300)), 3600)
+        except ValueError:
+            return self.refuse("--since and --timeout take numbers")
+        self._run(run_id)
+        log = S.run_folder(self.scientist, run_id, self.root) / "events.jsonl"
+        news = {"question", "charter_proposed", "charter_revised", "plan_notes", "state", "finish", "report", "results_ready"}
+        end = time.time() + timeout
+        settled = False
+        while True:
+            events = []
+            if log.is_file():
+                for line in log.read_text(encoding="utf-8").splitlines():
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        continue
+                    if ev.get("ts", 0) > since and ev.get("kind") in news:
+                        events.append(ev)
+            if events and not settled:                  # news often comes in a burst: take the whole burst
+                settled = True
+                time.sleep(0.5)
+                continue
+            if events or time.time() >= end:
+                meta = self._run(run_id)
+                say = (W.events(events) if events else f"No news from {run_id} yet: it {W.STATES.get(meta.get('state'), meta.get('state'))}")
+                return self.answer(OK if events else WAITING, run=run_id, state=meta.get("state"), events=events,
+                                   since=max([since] + [e["ts"] for e in events]),
+                                   open_questions=meta.get("open_questions") or {}, say=say)
+            time.sleep(0.5)
+
+    NEWS = ("question", "answer", "charter_proposed", "charter_revised", "plan_notes", "state", "report", "finish",
+            "results_ready", "results_deleted")
+
+    def verb_watch(self, args) -> int:
+        """Stream news from every run of this scientist as JSON lines until the connection drops. A heartbeat line
+        every 30 s lets the far end notice a dead link; `since` makes a reconnect lose nothing."""
+        import time
+        opts = dict(zip(args[0::2], args[1::2]))
+        try:
+            since = float(opts.get("--since", 0))
+            until = time.time() + float(opts["--for"]) if "--for" in opts else None
+        except ValueError:
+            return self.refuse("--since and --for take numbers")
+        base = S.folder(self.scientist, self.root) / "runs"
+        offsets: dict[Path, int] = {}
+        beat = time.time()
+        try:
+            while until is None or time.time() < until:
+                fresh = []
+                for log in sorted(base.glob("*/events.jsonl")) if base.is_dir() else []:
+                    try:
+                        with open(log, "rb") as f:
+                            f.seek(offsets.get(log, 0))
+                            chunk = f.read()
+                            offsets[log] = f.tell()
+                    except OSError:
+                        continue
+                    for line in chunk.decode("utf-8", errors="replace").splitlines():
+                        try:
+                            ev = json.loads(line)
+                        except ValueError:
+                            continue
+                        if ev.get("ts", 0) > since and ev.get("kind") in self.NEWS:
+                            fresh.append(ev)
+                for ev in sorted(fresh, key=lambda e: e["ts"]):
+                    words = W.event(ev)
+                    self.out.write(json.dumps({**ev, **({"say": words} if words else {})}, default=str) + "\n")
+                    since = max(since, ev["ts"])
+                if fresh:
+                    self.out.flush()
+                if time.time() - beat > 30:
+                    self.out.write(json.dumps({"kind": "heartbeat", "ts": since, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}) + "\n")
+                    self.out.flush()
+                    beat = time.time()
+                time.sleep(0.5)
+        except (BrokenPipeError, OSError):
+            return OK
+        return OK
+
+    def verb_ack(self, args) -> int:
+        if len(args) != 1:
+            return self.refuse("ack needs one run ID")
+        return self.request(args[0], {"kind": "ack"},
+                            lambda a: f"The gateway knows {args[0]}'s results reached your machine intact, and deletes its copy.")
+
+    def verb_show(self, args) -> int:
+        if len(args) != 1:
+            return self.refuse("show needs one run ID")
+        meta = self._run(args[0])
+        d = S.run_folder(self.scientist, args[0], self.root)
+        charter = (d / "charter.md").read_text(encoding="utf-8") if (d / "charter.md").is_file() else None
+        notes = (d / "plan-notes.md").read_text(encoding="utf-8").strip() if (d / "plan-notes.md").is_file() else None
+        preview = sorted(p.name for p in (d / "preview").iterdir()) if (d / "preview").is_dir() else []
+        say = W.charter(args[0], charter, notes, preview) if meta.get("state") == "waiting_approval" else W.run_state(meta)
+        return self.answer(OK, run=meta, charter=charter, charter_digest=meta.get("charter_digest"), plan_notes=notes,
+                           preview=preview, open_questions=meta.get("open_questions") or {}, say=say)
+
+    def verb_approve(self, args) -> int:
+        if len(args) != 3 or args[1] != "--charter-digest":
+            return self.refuse("approve needs: approve <run id> --charter-digest <digest from mhp-gw show>")
+        return self.request(args[0], {"kind": "approve", "digest": args[2]},
+                            lambda a: f"You approved the plan for {args[0]}. It {W.STATES.get(a.get('state'), a.get('state'))}")
+
+    def verb_message(self, args) -> int:
+        if not args:
+            return self.refuse("message needs a run ID and the text")
+        return self.request(args[0], {"kind": "message", "text": self._text(args[1:])},
+                            lambda a: f"Your message went to the agent on {args[0]}. If it changes the approved plan, the "
+                                      "agent will ask you first; a change to a plan not yet approved comes back as a "
+                                      "revised plan for your approval.")
+
+    def verb_answer(self, args) -> int:
+        if len(args) < 2:
+            return self.refuse("answer needs a run ID, a question ID and the text")
+        return self.request(args[0], {"kind": "answer", "question": args[1], "text": self._text(args[2:])},
+                            lambda a: f"Your answer to question {args[1]} went to {args[0]}; it {W.STATES.get(a.get('state'), a.get('state'))}")
+
+    def verb_stop(self, args) -> int:
+        if len(args) != 1:
+            return self.refuse("stop needs one run ID")
+        return self.request(args[0], {"kind": "stop"},
+                            lambda a: f"Run {args[0]} {W.STATES.get(a.get('state'), a.get('state'))} Its agent cleaned up "
+                                      "as the plan says; whatever results it had are on the gateway for your machine.")
 
     def verb_status(self, args) -> int:
         if len(args) != 1:
@@ -182,7 +390,7 @@ class Shell:
         meta = S.load_run(self.scientist, S.check_run_id(args[0]), self.root)
         if meta is None:
             raise LookupError(f"no run {args[0]} in your folder")
-        return self.answer(OK, run=meta)
+        return self.answer(OK, run=meta, say=W.run_state(meta))
 
 
 def main(argv=None) -> int:
