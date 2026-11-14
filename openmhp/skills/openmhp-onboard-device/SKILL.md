@@ -2,7 +2,7 @@
 name: openmhp-onboard-device
 description: Put one physical device (instrument, robot, PLC-controlled machine) under the Open Model Hardware Protocol by interviewing its owner and writing a device package: DEVICE.md (card + operating instructions), descriptor.yaml (limits, interlocks, approvals) and a driver. Use when a user wants to connect, onboard, expose, or "make agent-controllable" a lab instrument or factory machine, or asks to write an MHP driver, device descriptor, DEVICE.md, safety limits, or interlocks for hardware.
 license: Apache-2.0
-compatibility: Requires Python 3.10+ and the openmhp package (pip install -e . from the OpenMHP repo). No hardware needed to write and validate the package.
+compatibility: Requires Python 3.10+ and the openmhp package (npx -y openmhp-cli@latest setup, or pip install openmhp). No hardware needed to write and validate the package.
 metadata:
   author: openmhp
   version: "0.6"

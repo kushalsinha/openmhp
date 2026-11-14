@@ -164,5 +164,5 @@ This skill comes with OpenMHP and is updated with it: a newer OpenMHP replaces t
 the next time an agent or the watcher starts. `mhp-gw help` says which version of this skill the
 gateway expects (`skill.version`). If it is newer than the `version` at the top of this file, tell
 the scientist in one sentence that the lab gateway is newer than their OpenMHP, and offer to update
-it (`npx -y openmhp-cli@latest update`, or `pip install -U "openmhp[all]"`). Until then, run
+it (`npx -y openmhp-cli@latest update`, or `pip install -U "openmhp[all]" && mhp skills install`). Until then, run
 `mhp-gw help` and use the verbs it lists as it explains them.

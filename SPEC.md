@@ -743,7 +743,7 @@ A single MCP server exposes a whole lab to any MCP host through ten generic tool
 MHP errors surface as MCP tool results with `isError: true` and the structured `mhpError` body, so the model sees *why* a write was refused and can adjust. A refused call inside an `mhp_run` script returns the same body.
 
 ```bash
-npx openmhp-cli setup                                        # scientist's laptop: runtime, skills, harness registration
+npx -y openmhp-cli@latest setup                              # scientist's laptop: runtime, skills, harness registration
 mhp-mcp                                                  # the lab in ~/.openmhp/fleet.json; mhp_lab fills it
 mhp-mcp --directory http://directory:18900               # big lab: nothing loaded until searched
 mhp-mcp --directory http://directory:18900 --http 18800  # over HTTP for remote harnesses: bearer token required

@@ -1,4 +1,4 @@
-/* The interactive flow behind `npx openmhp-cli node`: turn the computer it runs on into a
+/* The interactive flow behind `npx -y openmhp-cli@latest node`: turn the computer it runs on into a
  * lightweight OpenMHP node that keeps serving its instruments in the background, across reboots.
  * A lab bench PC that will never run an agent itself is the intended user.
  */
@@ -16,11 +16,14 @@ function ask(question, fallback) {
   }));
 }
 
+// what `mhp node` does on its own: fetch and set up a package, check, and manage the service
+const PASSTHROUGH = new Set(["add", "setup", "--check", "--service-status", "--uninstall-service"]);
+
 async function nodeSetup(rest) {
-  // this machine hosts instruments; it may never run an agent itself, so it wants serial + MQTT + mDNS.
-  // `node`/`--install-service` are newer than some installed venvs (openmhp-cli only upgrades an
-  // existing venv on request) -- force one here so this doesn't fail confusingly on a stale install.
-  ensureRuntime({ source: process.env.OPENMHP_SOURCE || "openmhp[all]", upgrade: true });
+  // this machine hosts instruments; it may never run an agent itself, so it wants serial + MQTT + mDNS
+  // (the `node` extra). Upgrade too, so a stale install does not fail confusingly on newer verbs.
+  ensureRuntime({ source: process.env.OPENMHP_SOURCE || "openmhp[node]", upgrade: true });
+  if (rest.length && PASSTHROUGH.has(rest[0])) process.exit(run("mhp", ["node", ...rest]));
   const args = [...rest];
   let folder = args.find((a) => !a.startsWith("-"));
   if (!folder) {
@@ -37,8 +40,8 @@ async function nodeSetup(rest) {
   const existing = fs.readdirSync(folder).filter((n) => fs.existsSync(path.join(folder, n, "DEVICE.md")));
   if (existing.length === 0) {
     log(`no device packages in ${folder} yet.`);
-    log("Add one first: `npx openmhp-cli mhp node add` lists the supported instruments, and");
-    log("`npx openmhp-cli mhp node add <name>` fetches one. Or point your agent at this machine and say");
+    log("Add one first: `npx -y openmhp-cli@latest node add` lists the supported instruments, and");
+    log("`npx -y openmhp-cli@latest node add <name>` fetches and sets one up. Or point your agent at this machine and say");
     log(`"onboard my <instrument>", or copy a package folder (with a DEVICE.md) into ${folder}; then run this again.`);
     process.exit(1);
   }
