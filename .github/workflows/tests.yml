@@ -48,6 +48,7 @@ jobs:
           python tests/test_gateway_planner.py
           python tests/test_gateway_watcher.py
           python tests/test_gateway_demo.py
+          python tests/test_gateway_playground.py     # skips where bash or rsync is missing (Windows)
 
   # The one check `main` requires, because this name does not change when the matrix does.
   #
