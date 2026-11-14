@@ -537,9 +537,20 @@ class Runs:
                 except OSError:
                     pass
 
+    notify = None       # callable(event, run): "started" when a script outlives the call that started it, "ended" after
+
+    def _tell(self, event: str, run: "Run") -> None:
+        if self.notify is not None:
+            try:
+                self.notify(event, run)
+            except Exception:                              # noqa: BLE001  (telling never stops a script)
+                pass
+
     def start(self, script: str, name: str = "run", timeout_s: float = 600, background: bool = False,
               lab: Lab | None = None, params: dict | None = None, plan: "PlanLab | None" = None) -> dict:
         run = Run(name, script, self.home)
+        run.detached = False
+        run.detach_lock = threading.Lock()
         self.runs[run.id] = run
         run.save()
         self.log.write("run/start", run=run.id, name=name, background=background, plan=plan is not None,
@@ -587,12 +598,23 @@ class Runs:
                 run.out.close()
                 run.save()
                 self.log.write("run/finish", run=run.id, state=run.state, error=run.error)
+                with run.detach_lock:
+                    detached = run.detached
+                if detached:
+                    self._tell("ended", run)
 
         run.thread = threading.Thread(target=target, name=f"mhp-run-{run.id}", daemon=True)
+        if background and plan is None:
+            run.detached = True
+            self._tell("started", run)
         run.thread.start()
         if background:
             return {"run": run.meta(), "note": "running in the background; check with mhp_data op='runs' or op='read' run=<id> path='stdout.txt'"}
         run.thread.join(timeout_s)
+        with run.detach_lock:                         # "started" is told before the script can tell "ended"
+            if run.thread.is_alive() and run.finished is None and plan is None:
+                run.detached = True
+                self._tell("started", run)
         if run.thread.is_alive():
             return {"run": run.meta(), "stdout": self._out(run), "note": f"still running after {timeout_s}s; it continues in the background"}
         return self.result(run)

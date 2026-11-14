@@ -84,6 +84,24 @@ def test_background_run_and_data():
         pass
 
 
+def test_scripts_that_outlive_their_call_are_reported():
+    b = fresh_bridge()
+    told = []
+    b.runs.notify = lambda event, run: told.append((event, run.id, run.state))
+    quick = b.call_tool("mhp_run", {"script": "x = 1", "name": "quick"})
+    assert quick["run"]["state"] == "done" and told == []                       # finished within its call: nothing to tell
+    bg = b.call_tool("mhp_run", {"script": "import time\ntime.sleep(0.5)", "name": "bg", "background": True})["run"]["id"]
+    slow = b.call_tool("mhp_run", {"script": "import time\ntime.sleep(1.0)", "name": "slow", "timeout_s": 0.1})["run"]["id"]
+    for _ in range(100):
+        if sum(1 for e in told if e[0] == "ended") == 2:
+            break
+        time.sleep(0.05)
+    for rid in (bg, slow):
+        mine = [e for e in told if e[1] == rid]
+        assert [e[0] for e in mine] == ["started", "ended"] and mine[1][2] == "done", told
+    b.runs.notify = None
+
+
 def test_pause_resume_and_events():
     b = fresh_bridge()
     job = b.call_tool("mhp_invoke", {"device": "thermocycler-01", "name": "run_protocol",

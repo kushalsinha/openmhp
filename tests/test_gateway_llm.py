@@ -78,12 +78,23 @@ def test_choosing_fetching_and_testing_a_sign_in():
     old_path = os.environ["PATH"]
     os.environ["PATH"] = f"{bindir}{os.pathsep}{old_path}"
     try:
+        # the default: the gateway's own Claude Code as set up; a run gets its sign-in variables and nothing else
         assert L.chosen(gw) is None and not L.configured(gw)
+        os.environ.update(ANTHROPIC_API_KEY="sk-ant-gateway", SOME_OTHER_SECRET="x")
         try:
-            L.turn_env(gw)
-            raise AssertionError("no sign-in should refuse")
-        except L.LLMAccessError as e:
-            assert "mhp gateway llm" in str(e)
+            got = L.turn_env(gw)
+            assert got["ANTHROPIC_API_KEY"] == "sk-ant-gateway" and "SOME_OTHER_SECRET" not in got
+            assert set(got) <= set(L.INSTALLED_VARS)
+        finally:
+            os.environ.pop("ANTHROPIC_API_KEY"), os.environ.pop("SOME_OTHER_SECRET")
+        steps = L.test(gw)                                                      # the fake claude: logged out here
+        real = L.installed_status
+        L.installed_status = lambda: {"loggedIn": False, "why": "not signed in"}
+        try:
+            ok, why = L.ready(gw)
+            assert not ok and "API key" in why and "mhp gateway llm" in why
+        finally:
+            L.installed_status = real
 
         # an API key: the secret lives only in llm.env (this account only); llm.json holds the choice
         L.choose(gw, "api-key", {}, "sk-ant-test-key\n")
@@ -133,6 +144,9 @@ def test_choosing_fetching_and_testing_a_sign_in():
                 raise AssertionError(method)
             except ValueError as e:
                 assert words in str(e), (method, str(e))
+
+        # back to the default
+        assert L.choose(gw, "installed", {}) is None and not L.configured(gw) and not (gw / "llm.env").exists()
 
         # a gateway set up before this existed (`mhp gateway llm-key` only) still works
         old = Path(tempfile.mkdtemp(prefix="gw-old-"))

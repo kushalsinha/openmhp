@@ -608,7 +608,8 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
             if agent is None:
                 return self._json(401, {"error": AGENT_401})
             gate = gw.gate_for(self._auth())               # a run token: only its instruments, only its charter
-            if len(parts) == 2 and parts[0] == "runs" and parts[1] in ("ask_scientist", "report", "finish", "propose_charter"):
+            if len(parts) == 2 and parts[0] == "runs" and parts[1] in ("ask_scientist", "report", "finish", "propose_charter",
+                                                                         "script"):
                 if gate is None or gw.supervisor is None:
                     return self._json(403, {"ok": False, "error": "only a run's own token, on a supervising gateway"})
                 planning = getattr(gate, "planning", False)
@@ -624,6 +625,10 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
                                      needs_lab=b.get("needs_lab") is True)
                     elif parts[1] == "report":
                         ans = sv.report(gate.run, str(b.get("text", "")))
+                    elif parts[1] == "script":
+                        ans = sv.script_event(gate.run, str(b.get("event", "")), str(b.get("script", "")),
+                                              str(b.get("name", ""))[:200], str(b.get("state", ""))[:40],
+                                              str(b.get("error", ""))[:500])
                     else:
                         ans = sv.finish(gate.run, str(b.get("summary", "")), str(b.get("outcome", "objective met")),
                                         [str(x) for x in (b.get("next_experiments") or [])])

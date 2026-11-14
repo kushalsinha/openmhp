@@ -22,9 +22,12 @@ Foundry, where SSO gives short-lived credentials), a company LLM gateway, or a h
 provides. Short-lived credentials are fetched again before every turn of every run, by the gateway's own
 account, so a run never holds more than one turn's worth and an SSO session is used as long as it lasts.
 
-Runs never use this account's own sign-in: they get only the chosen credentials, and Claude Code runs with a
-configuration folder of its own (CLAUDE_CONFIG_DIR) so it cannot find the operator's login. Secrets stay in
-<gateway>/llm.env (this account only); the choice, without secrets, is in <gateway>/llm.json.
+By default nothing needs choosing: runs use this gateway account's own Claude Code exactly as its operator set
+it up (signed in with the lab's API key, or with ANTHROPIC_API_KEY in the gateway's environment). That is the
+usual setup, on an account that exists for the gateway. `use` is for the other cases; once a method is chosen,
+runs get only its credentials, and Claude Code runs with a configuration folder of its own (CLAUDE_CONFIG_DIR),
+so it cannot find any other login on the machine. Secrets stay in <gateway>/llm.env (this account only); the
+choice, without secrets, is in <gateway>/llm.json. `mhp gateway llm use installed` goes back to the default.
 """
 from __future__ import annotations
 
@@ -40,6 +43,13 @@ import time
 from pathlib import Path
 
 METHODS = ("api-key", "claude-token", "llm-gateway", "bedrock", "vertex", "foundry", "helper")
+# what the gateway's own Claude Code may be signed in with through its environment; a run on the default sign-in
+# gets these from the gateway's environment, and nothing else of it
+INSTALLED_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN",
+                  "ANTHROPIC_MODEL", "CLAUDE_CONFIG_DIR", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+                  "CLAUDE_CODE_USE_FOUNDRY", "AWS_BEARER_TOKEN_BEDROCK", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+                  "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_REGION", "ANTHROPIC_VERTEX_PROJECT_ID", "CLOUD_ML_REGION",
+                  "GOOGLE_APPLICATION_CREDENTIALS", "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_RESOURCE")
 SECRET = {"api-key": "ANTHROPIC_API_KEY", "claude-token": "CLAUDE_CODE_OAUTH_TOKEN",
           "llm-gateway": "ANTHROPIC_AUTH_TOKEN", "foundry": "ANTHROPIC_FOUNDRY_API_KEY"}
 EXPECT = {"api-key": ("api_key", "firstParty"), "claude-token": ("oauth_token", "firstParty"),
@@ -90,11 +100,48 @@ def chosen(gw_dir: Path) -> dict | None:
 
 
 def configured(gw_dir: Path) -> bool:
+    """Has the operator chosen a sign-in for runs (rather than the default: the gateway's own Claude Code)?"""
     return chosen(gw_dir) is not None
 
 
-def choose(gw_dir: Path, method: str, opts: dict, secret: str | None = None) -> dict:
-    """Save the sign-in runs use. Replaces any earlier one entirely, so an old key cannot outrank the new method."""
+def installed_status() -> dict:
+    """How this account's own Claude Code is signed in, from `claude auth status` (no model call)."""
+    if not shutil.which("claude"):
+        return {"loggedIn": False, "why": "Claude Code (`claude`) is not installed on the gateway"}
+    try:
+        p = subprocess.run(["claude", "auth", "status", "--json"], capture_output=True, text=True, timeout=30,
+                           env={k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")})
+        return json.loads(p.stdout)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        return {"loggedIn": False, "why": f"`claude auth status` failed: {e}"}
+
+
+def ready(gw_dir: Path) -> tuple[bool, str]:
+    """Can runs sign in? A chosen method is taken as set up (`test` checks it); otherwise the gateway's own Claude
+    Code must be signed in."""
+    if configured(gw_dir):
+        return True, "chosen with `mhp gateway llm use`"
+    st = installed_status()
+    if st.get("loggedIn"):
+        return True, f"this gateway's own Claude Code ({st.get('authMethod')} via {st.get('apiProvider')})"
+    return False, ("this gateway's Claude Code is not signed in" + (f" ({st['why']})" if st.get("why") else "")
+                   + ": its operator signs it in with the lab's API key (run `claude` there, or set ANTHROPIC_API_KEY "
+                     "for the gateway), or chooses another sign-in with `mhp gateway llm`")
+
+
+def short_lived(gw_dir: Path) -> bool:
+    """Do the chosen credentials expire (a Bedrock SSO session, a helper's token)? A session that stays open is
+    then restarted on the same conversation now and then, so it signs in afresh."""
+    return (chosen(gw_dir) or {}).get("method") in ("bedrock", "helper")
+
+
+def choose(gw_dir: Path, method: str, opts: dict, secret: str | None = None) -> dict | None:
+    """Save the sign-in runs use. Replaces any earlier one entirely, so an old key cannot outrank the new method.
+    'installed' goes back to the default (the gateway's own Claude Code) and returns None."""
+    if method == "installed":
+        for p in _paths(gw_dir):
+            p.unlink(missing_ok=True)
+        return None
     if method not in METHODS:
         raise ValueError(f"no sign-in method {method!r}; one of: {', '.join(METHODS)}")
     cfg = {"method": method, "chosen": time.strftime("%Y-%m-%dT%H:%M:%S")}
@@ -159,8 +206,8 @@ def turn_env(gw_dir: Path) -> dict:
     """The environment one turn of a run signs in with. Short-lived credentials are fetched now, for this turn.
     Raises LLMAccessError with what the operator should do when they cannot be had."""
     cfg = chosen(gw_dir)
-    if cfg is None:
-        raise LLMAccessError("this gateway has no sign-in for runs yet: its operator chooses one with `mhp gateway llm`")
+    if cfg is None:                                    # the default: the gateway's own Claude Code, as set up
+        return {k: os.environ[k] for k in INSTALLED_VARS if os.environ.get(k)}
     env = dict(cfg.get("env") or {})
     env.update(_read_env(_paths(gw_dir)[1]))
     m = cfg["method"]
@@ -253,19 +300,6 @@ def probe(home: Path | None = None, environ: dict | None = None, which=shutil.wh
     return rows
 
 
-def own_login() -> str | None:
-    """How this account's own Claude Code is signed in (free; no model call), to say it is not used for runs."""
-    if not shutil.which("claude"):
-        return None
-    try:
-        p = subprocess.run(["claude", "auth", "status", "--json"], capture_output=True, text=True, timeout=30,
-                           env={k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")})
-        doc = json.loads(p.stdout)
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return None
-    return doc.get("authMethod") if doc.get("loggedIn") else None
-
-
 # ---- testing it as a run would ------------------------------------------------------------------------
 def test(gw_dir: Path, call: bool = False) -> list[tuple[bool, str]]:
     """Check the chosen sign-in the way a run's turn gets it: fetch the credentials, then ask Claude Code, in a
@@ -276,7 +310,11 @@ def test(gw_dir: Path, call: bool = False) -> list[tuple[bool, str]]:
     steps = []
     cfg = chosen(gw_dir)
     if cfg is None:
-        return [(False, "no sign-in chosen for runs: see `mhp gateway llm`")]
+        ok, why = ready(gw_dir)
+        steps.append((ok, "runs use " + why if ok else why))
+        if ok and call:
+            steps.append(_call(run_environment(turn_env(gw_dir)), None))
+        return steps
     try:
         env = turn_env(gw_dir)
         steps.append((True, f"credentials for a turn ({cfg['method']}): " + ", ".join(sorted(env)) + " (values not shown)"))
@@ -297,18 +335,24 @@ def test(gw_dir: Path, call: bool = False) -> list[tuple[bool, str]]:
         steps.append((ok, f"a run's Claude Code signs in with {doc.get('authMethod')} via {doc.get('apiProvider')}"
                       + ("" if ok else f" (expected {method or 'any'} via {provider or 'any'})")))
         if ok and call:
-            try:
-                p = subprocess.run(["claude", "-p", "Reply with the single word OK.", "--output-format", "json",
-                                    "--max-turns", "1", "--max-budget-usd", "0.05", "--strict-mcp-config"],
-                                   capture_output=True, text=True, timeout=180, env=run_env, cwd=home)
-                doc = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
-            except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as e:
-                return steps + [(False, f"the test call failed: {e}")]
-            good = not doc.get("is_error") and p.returncode == 0
-            steps.append((good, f"one model call: {'answered' if good else 'failed'} "
-                                f"(${float(doc.get('total_cost_usd') or 0):.4f})"
-                          + ("" if good else f": {(doc.get('result') or p.stderr or '').strip()[:300]}")))
+            steps.append(_call(run_env, home))
     return steps
+
+
+def _call(run_env: dict, cwd) -> tuple[bool, str]:
+    """One tiny model call, as a run would make it."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="openmhp-llm-call-") as tmp:
+        try:
+            p = subprocess.run(["claude", "-p", "Reply with the single word OK.", "--output-format", "json",
+                                "--max-turns", "1", "--max-budget-usd", "0.05", "--strict-mcp-config"],
+                               capture_output=True, text=True, timeout=180, env=run_env, cwd=cwd or tmp)
+            doc = json.loads(p.stdout.strip().splitlines()[-1]) if p.stdout.strip() else {}
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as e:
+            return False, f"the test call failed: {e}"
+    good = not doc.get("is_error") and p.returncode == 0
+    return good, (f"one model call: {'answered' if good else 'failed'} (${float(doc.get('total_cost_usd') or 0):.4f})"
+                  + ("" if good else f": {(doc.get('result') or p.stderr or '').strip()[:300]}"))
 
 
 # ---- the command ----------------------------------------------------------------------------------------
@@ -327,18 +371,20 @@ def main(gw_dir: Path, words: list[str], say=print) -> int:
     try:
         if verb == "probe":
             cur = chosen(gw_dir)
-            say("runs sign in with: " + (cur["method"] + (f" (profile {cur['profile']})" if cur.get("profile") else "")
-                                         if cur else "nothing yet"))
+            if cur:
+                say("runs sign in with: " + cur["method"] + (f" (profile {cur['profile']})" if cur.get("profile") else ""))
+            else:
+                ok, why = ready(gw_dir)
+                say("runs sign in with: this gateway's own Claude Code, as set up (the default)"
+                    + ("" if ok else f"\n  but: {why}"))
             say("")
             say("what this machine could use for runs:")
             for r in probe():
                 say(f"  [{'x' if r['found'] else ' '}] {r['method']:<13} {r['what']}")
                 say(f"      {r['use']}")
-            mine = own_login()
-            if mine:
-                say("")
-                say(f"This account's own Claude Code is signed in ({mine}). Runs never use it: they get only the "
-                    "sign-in chosen above.")
+            say("")
+            say("Nothing to choose when the gateway's Claude Code has the lab's API key; `use` the above for anything "
+                "else (runs then get only that). `mhp gateway llm use installed` returns to the default.")
             return 0
         if verb == "use":
             if len(words) < 2:
@@ -352,8 +398,8 @@ def main(gw_dir: Path, words: list[str], say=print) -> int:
                 else:
                     secret = sys.stdin.read()
             cfg = choose(gw_dir, method, opts, secret)
-            say(f"runs on this gateway now sign in with {method}" + (f" (profile {cfg['profile']})" if cfg.get("profile") else "")
-                + ". Check it with: mhp gateway llm test")
+            say(f"runs on this gateway now sign in with {method}" + (f" (profile {cfg['profile']})" if cfg and cfg.get("profile") else "")
+                + (" (the gateway's own Claude Code, as set up)" if cfg is None else "") + ". Check it with: mhp gateway llm test")
             return 0
         if verb == "show":
             say(json.dumps(chosen(gw_dir) or {"method": None}, indent=1))

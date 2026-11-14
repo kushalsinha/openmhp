@@ -467,19 +467,24 @@ The same channel carries whole experiments: a scientist's request in plain Engli
 gateway that rehearses and proposes a charter, approval, a supervised agent session that runs the loop
 within that charter, and the results back home.
 
-The gateway's agent sessions sign in to their model with whatever the lab's company uses, chosen once
-by the operator:
+Each run is one Claude Code session for the whole run, started when the scientist approves it and fed
+each piece of news (an instrument job finished, a background script ended, the scientist answered) as a
+new message. Between experiments it can read the literature, model the mechanism and update the
+scientist's optimizer; its mhp tools and background scripts stay up the whole time. If it dies, or the
+gateway restarts, it picks up the same conversation.
+
+Runs sign in with the gateway's own Claude Code, as its operator set it up with the lab's API key. For
+anything else (a Claude Team or Enterprise token, Bedrock, Vertex or Foundry with SSO, a company LLM
+gateway or helper), choose it once:
 
 ```bash
-mhp gateway llm                              # what this machine has: API key, Claude Team/Enterprise token,
-                                             # Bedrock, Vertex or Foundry (with SSO), a company LLM gateway or helper
+mhp gateway llm                              # how runs sign in now, and what else this machine could use
 mhp gateway llm use bedrock profile=lab-sso region=eu-west-1
 mhp gateway llm test                         # checks it as a run would see it, without calling the model
 ```
 
-Short-lived credentials (an SSO session, a helper's token) are fetched again before every turn. Runs
-never see the operator's own sign-in: they get only the chosen credentials and a Claude Code
-configuration folder of their own. `examples/gateway_closed_loop/` runs it end to end on
+Short-lived credentials (an SSO session, a helper's token) are fetched again for each session and renewed
+while it runs; a chosen sign-in is all a run gets. `examples/gateway_closed_loop/` runs it end to end on
 a simulated chromatograph.
 
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and

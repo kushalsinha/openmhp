@@ -1,9 +1,16 @@
-"""Harness adapters: how the gateway starts and resumes an agent session for a run.
+"""Harness adapters: how the gateway starts and keeps an agent session for a run.
 
-The supervisor never talks to a model itself. It wakes a run's agent by running one non-interactive
-turn of an agent harness in the run's working folder, then reads back what the turn cost and which
-session to resume next time. Each harness gets an adapter; the supervisor, charter and folders do not
-change when another harness is added.
+The supervisor never talks to a model itself. A run's agent is one harness session for the whole run: a
+harness that can stay open (Claude Code, in its streaming mode) runs as ONE long-lived process, started at
+approval and fed each piece of news (an instrument job finished, the scientist answered, a background script
+ended) as a new message. Its MCP servers, tools and background scripts live as long as the run, and between
+messages it is idle (no model calls). If the process dies, or the gateway restarts, it is started again on
+the same session (--resume), so the conversation carries on. A harness that cannot stay open runs one
+non-interactive turn per piece of news on the same session instead (run_turn). Each harness gets an adapter;
+the supervisor, charter and folders do not change when another harness is added.
+
+    live = open_live(adapter, Turn(workdir=..., session=..., mcp_config=..., instructions=...))
+    result = live.send("[12:01] instrument: gc-01 job j7 finished", timeout_s=3600)
 
     adapter = ADAPTERS["claude-code"]
     result = run_turn(adapter, Turn(prompt=..., workdir=..., session=..., mcp_config=..., instructions=...))
@@ -15,11 +22,15 @@ scientist handed over are copied to `<workdir>/.claude/skills/`, where Claude Co
 """
 from __future__ import annotations
 
+import collections
 import json
 import os
+import queue
 import shlex
 import shutil
 import subprocess
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -106,6 +117,11 @@ class Adapter:
         """Environment that keeps the harness from finding the gateway operator's own sign-in and settings."""
         return {}
 
+    def live_command(self, turn: "Turn", session: str, first: bool) -> list[str] | None:
+        """The command for a session that stays open and takes messages on stdin, or None if this harness
+        cannot stay open (then each message is a turn of its own)."""
+        return None
+
 
 class ClaudeCode(Adapter):
     name, program = "claude-code", "claude"
@@ -122,6 +138,25 @@ class ClaudeCode(Adapter):
     def allowed_tools(self) -> str:
         mcp = [f"mcp__openmhp__{t}" for t in INSTRUMENT_TOOLS] + [f"mcp__run__{t}" for t in RUN_TOOLS]
         return ",".join(list(FILE_TOOLS) + mcp)
+
+    def live_command(self, turn: Turn, session: str, first: bool) -> list[str]:
+        # one process for the whole run: messages arrive as stream-json lines on stdin, and every reply ends with a
+        # result line on stdout. No --max-turns: it would count across the whole run; the run's budget caps it.
+        cmd = [self.program, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+               "--permission-mode", "dontAsk", "--allowedTools", self.allowed_tools()]
+        return cmd + self._session_args(turn, session, first)
+
+    def _session_args(self, turn: Turn, session: str, first: bool) -> list[str]:
+        cmd = ["--session-id", session] if first else ["--resume", session]
+        if turn.mcp_config:
+            cmd += ["--mcp-config", str(turn.mcp_config), "--strict-mcp-config"]
+        if turn.instructions and first:                    # recorded with the session; reused when resumed
+            cmd += ["--append-system-prompt-file", str(turn.instructions)]
+        if turn.max_budget_usd:
+            cmd += ["--max-budget-usd", f"{turn.max_budget_usd:.2f}"]
+        if turn.model:
+            cmd += ["--model", turn.model]
+        return cmd
 
     def command(self, turn: Turn, session: str, first: bool) -> list[str]:
         cmd = [self.program, "-p", turn.prompt, "--output-format", "json", "--permission-mode", "dontAsk",
@@ -156,12 +191,22 @@ class ClaudeCode(Adapter):
 
 class Command(Adapter):
     """Any program that takes the prompt as its last argument and prints {"session", "text", "cost_usd", "tokens",
-    "ok"} as JSON: for harnesses without an adapter yet, and for tests."""
+    "ok"} as JSON: for harnesses without an adapter yet, and for tests. With live=True the program instead stays
+    open and speaks Claude Code's stream-json protocol on stdin and stdout (the subset LiveSession reads)."""
     name = "command"
 
-    def __init__(self, argv: list[str]):
+    def __init__(self, argv: list[str], live: bool = False):
         self.argv = list(argv)
         self.program = argv[0]
+        self.live = live
+
+    def live_command(self, turn: Turn, session: str, first: bool) -> list[str] | None:
+        if not self.live:
+            return None
+        extra = ["--session", session, "--workdir", str(turn.workdir), "--live"]
+        if turn.mcp_config:
+            extra += ["--mcp-config", str(turn.mcp_config)]
+        return self.argv + extra + ([] if first else ["--resume"])
 
     def command(self, turn: Turn, session: str, first: bool) -> list[str]:
         extra = ["--session", session, "--workdir", str(turn.workdir)]
@@ -214,6 +259,109 @@ def run_turn(adapter: Adapter, turn: Turn) -> TurnResult:
     except subprocess.TimeoutExpired:
         return TurnResult(ok=False, session=session, reason="timeout", text=f"the turn ran past {turn.timeout_s:.0f} s")
     return adapter.parse(p.stdout, p.stderr, p.returncode, session)
+
+
+class LiveSession:
+    """A run's harness session, kept open between messages. Not thread-safe: one sender at a time (the supervisor
+    holds the run's lock). Costs reported in its result lines are totals for the process, so each message is
+    charged the difference."""
+
+    def __init__(self, cmd: list[str], cwd: Path, env: dict, session: str):
+        self.session = session
+        self.p = subprocess.Popen(cmd, cwd=str(cwd), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, bufsize=1)
+        self.lines: queue.Queue = queue.Queue()
+        self.stderr = collections.deque(maxlen=40)
+        self.cost_seen = 0.0
+        threading.Thread(target=self._read, daemon=True, name="live-out").start()
+        threading.Thread(target=self._drain, daemon=True, name="live-err").start()
+
+    def _read(self) -> None:
+        for line in self.p.stdout:
+            try:
+                self.lines.put(json.loads(line))
+            except ValueError:
+                continue
+        self.lines.put(None)                                   # the process closed its output: it has ended
+
+    def _drain(self) -> None:
+        for line in self.p.stderr:
+            self.stderr.append(line.rstrip())
+
+    def alive(self) -> bool:
+        return self.p.poll() is None
+
+    def send(self, text: str, timeout_s: float = 3600) -> TurnResult:
+        """One message in, the session's reply out. Blocks until its result line, the process ending, or the timeout."""
+        try:
+            self.p.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+            self.p.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError):
+            return TurnResult(ok=False, session=self.session, reason="exited", text=self._why())
+        end = time.time() + timeout_s
+        while True:
+            try:
+                ev = self.lines.get(timeout=max(0.0, end - time.time()))
+            except queue.Empty:
+                return TurnResult(ok=False, session=self.session, reason="timeout", text=f"no reply within {timeout_s:.0f} s")
+            if ev is None:
+                return TurnResult(ok=False, session=self.session, reason="exited", text=self._why())
+            if ev.get("type") != "result":
+                continue
+            total = float(ev.get("total_cost_usd") or 0.0)
+            cost = total - self.cost_seen if total >= self.cost_seen else total
+            self.cost_seen = max(self.cost_seen, total)
+            usage = ev.get("usage") or {}
+            tokens = sum(int(usage.get(k) or 0) for k in ("input_tokens", "output_tokens",
+                                                           "cache_creation_input_tokens", "cache_read_input_tokens"))
+            sub = ev.get("subtype", "")
+            reason = {"error_max_turns": "max_turns", "error_max_budget_usd": "budget"}.get(sub, "")
+            ok = not ev.get("is_error") and sub in ("", "success")
+            self.session = ev.get("session_id") or self.session
+            return TurnResult(ok=ok, session=self.session, text=ev.get("result") or "", cost_usd=round(cost, 6),
+                              tokens=tokens, reason=reason or ("" if ok else "error"), raw=ev)
+
+    def _why(self) -> str:
+        code = self.p.poll()
+        tail = " | ".join(list(self.stderr)[-5:])
+        return f"the session ended (exit {code})" + (f": {tail[-600:]}" if tail else "")
+
+    def close(self, wait_s: float = 15) -> None:
+        """End the session: close its input (it finishes what it is doing and exits), then make sure it is gone."""
+        try:
+            self.p.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.p.wait(wait_s)
+        except subprocess.TimeoutExpired:
+            self.p.terminate()
+            try:
+                self.p.wait(5)
+            except subprocess.TimeoutExpired:
+                self.p.kill()
+
+
+def open_live(adapter: Adapter, turn: Turn) -> "LiveSession | TurnResult | None":
+    """Start a run's session as one long-lived process. None when the harness cannot stay open (use run_turn);
+    a TurnResult when it could not start."""
+    first = turn.session is None
+    session = turn.session or str(uuid.uuid4())
+    cmd = adapter.live_command(turn, session, first)
+    if cmd is None:
+        return None
+    if not adapter.available():
+        return TurnResult(ok=False, session=turn.session, reason="not installed",
+                          text=f"{adapter.program!r} is not installed on this gateway")
+    given = {**turn.env, **(adapter.isolation(turn.workdir) if turn.isolate else {})}
+    env = run_environment(given)
+    if turn.run_as:
+        keep = ",".join(sorted(given))
+        cmd = ["sudo", "-n", "-u", turn.run_as] + ([f"--preserve-env={keep}"] if keep else []) + cmd
+    try:
+        return LiveSession(cmd, turn.workdir, env, session)
+    except OSError as e:
+        return TurnResult(ok=False, session=turn.session, reason="error", text=f"could not start the session: {e}")
 
 
 def describe(cmd: list[str]) -> str:

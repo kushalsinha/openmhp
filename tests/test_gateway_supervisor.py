@@ -168,9 +168,18 @@ def test_runs_get_the_gateways_llm_key_and_no_other_credential():
     rid = S.open_run("kim")["id"]
     ch = {"version": 1, "run": rid, "owner": "kim", "objective": "x", "instruments": {"tc": "bench/thermocycler-01"},
           "envelope": {"tc": {"actions": {}, "settings": {}}}}
-    with raises(ValueError) as e:
-        sup.propose(rid, "kim", ch, harness="claude-code")
-    assert "mhp gateway llm" in str(e.value)
+    from openmhp import llm_access as L
+    real = L.installed_status
+    L.installed_status = lambda: {"loggedIn": False}               # this gateway's own Claude Code: not signed in
+    try:
+        with raises(ValueError) as e:
+            sup.propose(rid, "kim", ch, harness="claude-code")
+        assert "not signed in" in str(e.value) and "mhp gateway llm" in str(e.value)
+        L.installed_status = lambda: {"loggedIn": True, "authMethod": "api_key", "apiProvider": "firstParty"}
+        rid_b = S.open_run("kim")["id"]
+        assert sup.propose(rid_b, "kim", {**ch, "run": rid_b}, harness="claude-code").startswith("sha256:")
+    finally:
+        L.installed_status = real
     (sup.runs_dir.parent / "llm.env").write_text("ANTHROPIC_API_KEY=sk-test\n")
     assert sup.propose(rid, "kim", ch, harness="claude-code").startswith("sha256:")
 
@@ -247,6 +256,41 @@ if busy and "] start:" in prompt:
 elif busy:
     post("/runs/finish", {"summary": "protocol done", "outcome": "objective met"})
 print(json.dumps({"ok": True, "session": session, "text": "I set things up and will wait.", "cost_usd": 0.0, "tokens": 1}))
+"""
+
+
+LIVE = r"""
+import json, os, ssl, sys, threading, time, urllib.request
+# A stand-in for Claude Code's streaming mode: one process for the whole run, one JSON line per message on stdin,
+# one result line per reply on stdout, costs reported as totals for the process. It records its pid per message.
+args = sys.argv[1:]
+session, work = args[args.index("--session") + 1], args[args.index("--workdir") + 1]
+resumed = "--resume" in args
+env = json.load(open(os.path.join(work, ".mcp-run.json")))["mcpServers"]["run"]["env"]
+ctx = ssl.create_default_context(cafile=env["SSL_CERT_FILE"]); ctx.check_hostname = False
+def post(path, body):
+    req = urllib.request.Request(env["OPENMHP_GATEWAY"] + path, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Authorization": "Bearer " + env["OPENMHP_RUN_TOKEN"], "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+        return json.loads(r.read())
+charter = json.load(open(os.path.join(work, "..", "charter.json")))
+total = 0.0
+def later():            # a background script that ends a moment after the reply, while the session is idle
+    time.sleep(1.0)
+    post("/runs/script", {"event": "ended", "script": "s1", "name": "ramp sweep", "state": "done"})
+for line in sys.stdin:
+    prompt = json.loads(line)["message"]["content"]
+    with open(os.path.join(work, "live.log"), "a") as f:
+        f.write(json.dumps({"pid": os.getpid(), "resumed": resumed, "prompt": prompt.split(chr(10))[0][:120]}) + chr(10))
+    if "script" in charter["objective"] and "] start:" in prompt:
+        post("/runs/script", {"event": "started", "script": "s1", "name": "ramp sweep"})
+        threading.Thread(target=later).start()
+    elif "] script:" in prompt or "] message:" in prompt:
+        post("/runs/finish", {"summary": "done in one session", "outcome": "objective met"})
+    total += 0.01
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "working"}]}}), flush=True)
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "replied",
+                      "session_id": session, "total_cost_usd": round(total, 4)}), flush=True)
 """
 
 
@@ -379,7 +423,42 @@ def test_supervised_run_from_approval_to_results():
     job_done = time.time()
     wait_until(lambda: sup.record(rid4).state == "finished", timeout=60, what="run 4 to finish")
     assert all(e["ts"] >= job_done - 0.5 for e in sup.record(rid4).events() if e["kind"] == "idle")   # never while busy
-    sup.stop_event.set()
+
+    # ---- run 5: one session for the whole run; a background script keeps it busy, and its end wakes it ------
+    live = agent.parent / "live.py"
+    live.write_text(LIVE)
+    sup.adapters["live"] = H.Command([sys.executable, str(live)], live=True)
+    rid5 = gw_cmd("mhp-gw open")[1]["run"]
+    c5 = charter(rid5, "sweep the ramp with a background script")
+    assert gw_cmd(f"mhp-gw approve {rid5} --charter-digest {sup.propose(rid5, 'alice', c5, harness='live')}")[0] == GW.OK
+    wait_until(lambda: sup.record(rid5).state == "finished", what="run 5 to finish")
+    # finish arrives during the session's reply; the supervisor records the reply and closes the session after it
+    wait_until(lambda: any(e["kind"] == "session" and e["action"] == "closed" for e in sup.record(rid5).events()),
+               what="run 5's session to close")
+    log5 = [json.loads(l) for l in (S.run_folder("alice", rid5) / "work" / "live.log").read_text().splitlines()]
+    assert len(log5) == 2 and log5[0]["pid"] == log5[1]["pid"], log5              # both messages, one process
+    assert "] start:" in log5[0]["prompt"] and "] script: your background script ramp sweep (s1) ended" in log5[1]["prompt"]
+    ev5 = sup.record(rid5).events()
+    assert not any(e["kind"] == "idle" for e in ev5)                               # busy while the script ran
+    assert [e["action"] for e in ev5 if e["kind"] == "session"] == ["started", "closed"]
+    assert [e["cost_usd"] for e in ev5 if e["kind"] == "turn"] == [0.01, 0.01]    # process totals, charged per reply
+    assert sup.record(rid5).doc["spent_usd"] == 0.02 and sup.ctl[rid5].live is None
+
+    # ---- run 6: the session dies between messages; the next message starts it again on the same conversation --
+    rid6 = gw_cmd("mhp-gw open")[1]["run"]
+    c6 = charter(rid6, "hold the block")
+    assert gw_cmd(f"mhp-gw approve {rid6} --charter-digest {sup.propose(rid6, 'alice', c6, harness='live')}")[0] == GW.OK
+    work6 = S.run_folder("alice", rid6) / "work"
+    wait_until(lambda: (work6 / "live.log").is_file() and sup.ctl[rid6].live is not None, what="run 6's session")
+    first_pid = json.loads((work6 / "live.log").read_text().splitlines()[0])["pid"]
+    os.kill(first_pid, 9)
+    wait_until(lambda: not sup.ctl[rid6].live.alive(), what="the session to die")
+    assert gw_cmd(f"mhp-gw message {rid6} please wrap up")[0] == GW.OK
+    wait_until(lambda: sup.record(rid6).state == "finished", what="run 6 to finish")
+    log6 = [json.loads(l) for l in (work6 / "live.log").read_text().splitlines()]
+    assert log6[-1]["pid"] != first_pid and log6[-1]["resumed"] is True and "please wrap up" in log6[-1]["prompt"], log6
+    assert [e.get("resumed") for e in sup.record(rid6).events() if e["kind"] == "session" and e["action"] == "started"][-1]
+    sup.shutdown()
     node.close()
 
 
