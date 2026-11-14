@@ -367,6 +367,11 @@ class Bridge:
         self.lab = Lab(targets, directory, session=f"bridge-{uuid.uuid4().hex[:8]}", approver=self._approve,
                        observer=self._observe, on_connect=self._on_connect)
         self.runs = Runs(self.lab, self.log, self.home, observer=self._observe)
+        if self.run_scope and os.environ.get("OPENMHP_GATEWAY") and os.environ.get("OPENMHP_RUN_TOKEN"):
+            # a run's session on a gateway: a background script that ends wakes the session, as a finished job does
+            from .run_tools import call as _gw_call
+            self.runs.notify = lambda event, run: _gw_call("/runs/script", {
+                "event": event, "script": run.id, "name": run.name, "state": run.state, "error": run.error or ""})
         self._pin_packages()
 
     # ---- tools ------------------------------------------------------------
