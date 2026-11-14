@@ -895,9 +895,12 @@ class Supervisor:
                     result = {"ok": True, **ans}
                 except (ValueError, LookupError, PermissionError, OSError) as e:
                     result = {"ok": False, "error": str(e), "not_found": isinstance(e, LookupError)}
-                done = req.with_name(req.stem + ".done.json")
-                done.write_text(json.dumps(result, default=str), encoding="utf-8")
+                # the request goes before its answer appears, and the answer appears whole: mhp-gw returns as soon as
+                # it reads the answer, and its next request must not be the file this one removes
                 req.unlink()
+                tmp = req.with_name(req.stem + ".done.tmp")
+                tmp.write_text(json.dumps(result, default=str), encoding="utf-8")
+                os.replace(tmp, req.with_name(req.stem + ".done.json"))
 
     def loop(self) -> None:
         while not self.stop_event.is_set():
