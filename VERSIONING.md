@@ -27,7 +27,7 @@ change safe.
 
 ## Support window
 
-**Before 1.0.** One protocol revision at a time. Breaking changes are possible on any minor
+**Pre-1.0 (now).** One protocol revision at a time. Breaking changes are possible on any minor
 release and are listed at the top of the release notes. Do not build a validated or regulated
 deployment on a pre-1.0 revision.
 
