@@ -14,7 +14,7 @@ library: the package uses Python's standard library for HTTPS and JSON, plus `ke
 
 ## Install
 
-1. `pip install openmhp keyring`
+1. `pip install -U openmhp keyring`
 2. Store the `rw` password in the OS keyring, never in a file:
    `python -m keyring set BuchiRotavapor <host>` (the host exactly as you put it in config.json).
 3. Copy `config.example.json` to `config.json` and set `host`. The interface uses a self-signed

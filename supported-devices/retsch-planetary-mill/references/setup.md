@@ -9,7 +9,7 @@ description.
    manual says the data socket is inactive, for the firmware update that enables it.
 2. Cable the mill's serial socket to the PC (at most 2.5 m, per the PM 400 manual) with the cable
    Retsch specifies; on the PC the port appears as `/dev/ttyUSB0`, `/dev/tty.usbserial-*` or `COM3`.
-3. `pip install openmhp pyserial`.
+3. `pip install -U openmhp pyserial`.
 4. Rewrite `serial:` in `descriptor.yaml` (baud, eol, every command, booleans, estop) from the
    interface description, and `sim.py` to answer the same grammar.
 5. Copy `config.example.json` to `config.json` and set `port`.

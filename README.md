@@ -56,17 +56,13 @@ hardwired e-stops, PLC safety logic, and lab procedures; it does not replace the
 You need Node.js 18+ and Python 3.10+. Open Claude Code or Codex and ask:
 
 ```text
-Install OpenMHP for me by running `npx openmhp-cli setup`, then tell me when it is ready.
+Install OpenMHP for me by running `npx -y openmhp-cli@latest setup`, then tell me when it is ready.
 ```
 
-Setup installs a runtime under `~/.openmhp`, the bundled Agent Skills, and the MCP server for
-Claude Code and Codex. Any other MCP client takes
-`{"mcpServers": {"openmhp": {"command": "npx", "args": ["-y", "openmhp-cli"]}}}`, and Python
-users can `pip install "openmhp[all]"`. Then add two simulated instruments and ask for something
-concrete:
+Then add two simulated instruments and ask for something concrete:
 
 ```bash
-npx openmhp-cli demo
+npx -y openmhp-cli@latest demo
 ```
 
 ```text
@@ -74,8 +70,8 @@ Find a thermocycler, show me its operating instructions, and rehearse a
 3-cycle PCR at 95/58/72 °C before running it.
 ```
 
-Ask for a 200 °C setpoint too: the driver refuses it and returns the allowed range. To update
-later, run `npx -y openmhp-cli@latest update`; see [Updating](https://openmhp.com/quickstart#updating).
+Ask for a 200 °C setpoint too: the driver refuses it and returns the allowed range. Installing
+with pip, or on an instrument PC or a gateway: see [Install on each machine](https://github.com/kushalsinha/openmhp#install-on-each-machine).
 
 ## What you can ask for
 
@@ -136,39 +132,84 @@ device-level criteria of Gottstein et al.'s autonomous-ready procurement profile
 | Physics | 6 | Keithley 2400 SMU; Lake Shore 33x/350; Pfeiffer TPG gauges; SRS SR830 lock-in; SRS RGA; Thorlabs PM100D |
 | Engineering | 5 | Alicat flow controllers; LabJack T-series; NI-DAQmx; Rigol DP8xx supply; Rigol DS1000Z scope |
 
-## Connect a real instrument
+## Install on each machine
 
-On the PC wired to the instrument, name the package; `add` fetches it, asks only what a person
-knows, checks the answers against the instrument, and keeps it running:
+OpenMHP runs on up to three kinds of machine. Trying it needs only the first.
+
+| Machine | When you need it | What runs there |
+|---|---|---|
+| **Agent machine**: your laptop or workstation, where Claude Code, Codex or another agent runs | always | the MCP server and the Agent Skills |
+| **Instrument PC**: the computer wired to an instrument; it needs no agent | for real instruments | `mhp node`, serving that PC's instruments in the background |
+| **Lab gateway**: an always-on machine on the company network | when the lab network is closed to the outside, or scientists run experiments through the lab | the relay, pairing, and planned runs |
+
+Always start npx as `npx -y openmhp-cli@latest`, and pip as `pip install -U`: plain
+`npx openmhp-cli` reuses whatever version npx cached the first time, and plain `pip install` keeps
+whatever version is already installed.
+
+### Agent machine
 
 ```bash
-pip install "openmhp[node]"
+npx -y openmhp-cli@latest setup                      # runtime, skills, and the MCP server for Claude Code and Codex
+```
+
+Or with pip, then register the `mhp-mcp` server with your harness yourself:
+
+```bash
+pip install -U "openmhp[all]" && mhp skills install
+claude mcp add --scope user openmhp -- mhp-mcp      # Claude Code; other harnesses: {"command": "mhp-mcp"}
+```
+
+With npx, other harnesses take `{"mcpServers": {"openmhp": {"command": "npx", "args": ["-y", "openmhp-cli"]}}}`.
+To update: `npx -y openmhp-cli@latest update`, or `pip install -U "openmhp[all]" && mhp skills install`
+([more](https://openmhp.com/quickstart#updating)).
+
+### Instrument PC
+
+Name the instrument you are standing next to. `add` fetches its package, asks only what a person
+knows, checks the answers against the instrument, asks for the gateway's pairing line if there is
+one, and keeps it running in the background:
+
+```bash
+pip install -U "openmhp[node]"
 mhp node add                       # lists the ready-made packages
 mhp node add waters-empower-hplc
 ```
 
-For anything not on the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”*
-Guides: [Add an instrument](https://openmhp.com/add-a-device), [Lab nodes](https://openmhp.com/lab-nodes).
+With Node instead: `npx -y openmhp-cli@latest node add waters-empower-hplc`. For anything not on
+the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Guides:
+[Add an instrument](https://openmhp.com/add-a-device), [Lab nodes](https://openmhp.com/lab-nodes).
 
-### Instruments behind the lab firewall
+### Lab gateway
 
-The bench PC connects **outward** over HTTPS to a gateway on the company network; agents talk to
+```bash
+pip install -U openmhp
+mhp gateway init                      # the address others will use, and a certificate
+mhp gateway serve --install-service   # runs now and after every reboot
+mhp gateway pair                      # a one-time code for an instrument PC (15 minutes)
+mhp gateway pair-agent                # a one-time code for an agent machine (1 hour)
+```
+
+The instrument PC pastes its code when `mhp node add` asks (or runs
+`mhp node --join https://gw.office <code>`). The agent machine runs
+`mhp agent --join https://gw.office <code> --name alice` (after an npx setup:
+`npx -y openmhp-cli@latest join https://gw.office <code> --name alice`); the name becomes the scientist's folder on the gateway, or the operator sets it
+with `mhp gateway pair-agent alice`. For experiments run through the gateway, also run `mhp gateway ssh` there and
+install the agent harness on the gateway, signed in as the lab's. Guide:
+[Gateway and relay](https://openmhp.com/gateway).
+
+## Instruments behind the lab firewall
+
+The instrument PC connects **outward** over HTTPS to a gateway on the company network; agents talk to
 the gateway. No port is opened, and working from home over the VPN is the same as at your desk.
 
 ![Bench PCs on the lab network dial out through the firewall to one gateway on the company network; agent machines in the office or on the VPN reach the same gateway with an agent token. Every arrow points at the gateway, none enters the lab.](https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/openmhp-gateway.svg)
-
-```bash
-mhp gateway init && mhp gateway serve --install-service   # on the gateway, once
-mhp node --join https://gw.office ab12-cd34                # on the lab PC, with a code from `mhp gateway pair`
-mhp agent --join https://gw.office ef56-ab78               # on the agent machine, with a code from `mhp gateway pair-agent`
-```
 
 ![One call through the relay: the lab PC holds a long-poll open on the gateway; the agent posts its request with its token; the gateway queues it under the agent's name and hands it to the open poll once; the driver runs it on the bench with every limit enforced; the reply comes back the same way. Offline means 503 at once, no answer means 504, and nothing is re-sent.](https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/openmhp-relay-flow.svg)
 
 A request reaches the lab PC once or not at all, and the gateway is the approval boundary. More:
 [Gateway and relay](https://openmhp.com/gateway).
 
-### Experiments on the lab gateway
+## Experiments on the lab gateway
 
 A scientist asks for an experiment in plain English, from their own agent, and hands over their own
 models, optimizer and skills; the gateway plans it with them and, once they approve, runs the closed

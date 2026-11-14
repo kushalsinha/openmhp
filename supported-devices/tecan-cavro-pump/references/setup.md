@@ -1,6 +1,6 @@
 # Setting up a Tecan Cavro XLP 6000 / XCalibur
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. The pump's RS-232 connector to a PC serial port or USB-serial adapter (Tecan's cable or the
    pin-out in the operating manual). Power the pump from its 24 V supply.

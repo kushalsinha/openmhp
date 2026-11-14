@@ -2,7 +2,7 @@
 
 The package needs no vendor library and no network connection to the spectrometer: it writes
 files into a folder ICON-NMR reads and reads files TopSpin writes. Run it on the TopSpin
-workstation (Windows or Linux/CentOS as Bruker ships it) with `pip install openmhp`, or on any
+workstation (Windows or Linux/CentOS as Bruker ships it) with `pip install -U openmhp`, or on any
 machine with the same two folders mounted.
 
 1. Create (or pick) an ICON-NMR user for the agent, for example `openmhp`, in ICON-NMR

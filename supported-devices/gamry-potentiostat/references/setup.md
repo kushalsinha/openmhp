@@ -8,7 +8,7 @@ through the Framework). The simulated twin runs anywhere.
    without it the Framework refuses the COM objects with a "Device Not Authorized" code). Power the
    Interface 1010 or Reference 620 and confirm Framework > Options > Instrument Manager lists it;
    note its name (`IFC1010-12345`, `REF620-00123`).
-2. In the Python environment that runs `mhp`: `pip install openmhp pywin32`. Use the same bitness
+2. In the Python environment that runs `mhp`: `pip install -U openmhp pywin32`. Use the same bitness
    as GamryCOM registers (a 32-bit Python is the safe choice; the Toolkit's own Python modules are
    32-bit).
 3. Copy `config.example.json` to `config.json`: `device` (the section name, or empty for the first

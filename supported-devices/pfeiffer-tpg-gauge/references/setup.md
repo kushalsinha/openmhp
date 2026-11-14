@@ -2,7 +2,7 @@
 
 ## What to install
 
-- `pip install openmhp pyserial` on the computer the controller is cabled to (Linux, macOS or Windows; the driver is pure Python).
+- `pip install -U openmhp pyserial` on the computer the controller is cabled to (Linux, macOS or Windows; the driver is pure Python).
 - TPG 36x over USB: a USB-A to USB-B cable. The controller contains an FTDI chip and appears as a virtual COM port; on Windows install the FTDI VCP driver if nothing appears.
 - TPG 26x: a straight 9-pin RS-232 cable (or a USB-to-RS-232 adapter) to the controller's RS232 socket.
 - TPG 36x over Ethernet: this package opens a serial port only. Pfeiffer's "Ethernet Configuration Tool" can map the controller's IP to a virtual COM port on Windows; name that port here. Third-party drivers reach the mnemonic protocol directly on TCP port 8000 (not confirmed in a Pfeiffer document); a socket route would need a small driver change.

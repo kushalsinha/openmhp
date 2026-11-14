@@ -25,7 +25,7 @@ Store the password in the OS keyring on the serving machine, never in config.jso
 ## Web API
 
 1. Ask the Empower administrator for the Web API address.
-2. `pip install openmhp opti-hplc-handler` (Novo Nordisk's BSD-licensed client for the Web API).
+2. `pip install -U openmhp opti-hplc-handler` (Novo Nordisk's BSD-licensed client for the Web API).
 3. Copy `config.example.json` to `config.json`: `backend: "web_api"`, address, project, username,
    the `node` and `system` names exactly as Empower shows them, default plate types, the injection
    volume range and maximum injections per sample for this system's loop, and `allowed_methods`
@@ -40,7 +40,7 @@ The Web API calls used are in `references/web_api.md`.
 1. The Toolkit is a licensed Empower option, installed with the Empower client (Personal, Workgroup
    or Enterprise) on a Windows PC. Check the license is present in Configuration Manager.
 2. Empower 3 and its Toolkit are 32-bit COM servers, so install 32-bit Python 3.11 on that PC (the
-   same arrangement as the ÄKTA package's OpenOPC) and `pip install openmhp pywin32 keyring`.
+   same arrangement as the ÄKTA package's OpenOPC) and `pip install -U openmhp pywin32 keyring`.
 3. Copy `config.example.json` to `config.json`: `database` (the Empower
    database name shown on the login dialog), project, username, node, system, plates and limits as
    above. `result_fields` are the Empower result fields the job result returns per peak.

@@ -24,7 +24,7 @@ Needed on the acquisition PC:
 
 Steps:
 
-1. `pip install openmhp` on the serving machine (no vendor library; the FCS reader is in the driver).
+1. `pip install -U openmhp` on the serving machine (no vendor library; the FCS reader is in the driver).
 2. Copy `config.example.json` to `config.json`: `import_dir`, `results_dir`, the SpectroFlo
    version for the record, `allowed_templates`, and the timeouts (`result_wait_s` 3600 s covers a
    plate well with a slow loader and a slow helper).

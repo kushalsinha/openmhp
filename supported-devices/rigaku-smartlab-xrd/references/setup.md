@@ -2,7 +2,7 @@
 
 SmartLab Studio II is a Windows-only suite (Windows 10/11 Pro 64-bit, Microsoft SQL Server
 backend, CodeMeter licence dongle on the instrument PC), and the job and result folders are
-local to it, so this package is served from that PC: `pip install openmhp` in a Python 3.11
+local to it, so this package is served from that PC: `pip install -U openmhp` in a Python 3.11
 environment there. No vendor library is needed; the package only writes and reads files.
 
 1. With the Studio II administrator, set up the way jobs enter the instrument. Rigaku's

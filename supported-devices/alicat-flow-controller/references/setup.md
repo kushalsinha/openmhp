@@ -2,7 +2,7 @@
 
 ## What to install
 
-- `pip install openmhp pyserial` on the computer cabled to the device (Linux, macOS or Windows; pure Python).
+- `pip install -U openmhp pyserial` on the computer cabled to the device (Linux, macOS or Windows; pure Python).
 - Cable: Alicat's USB cable (appears as a virtual COM port), its DB-9 RS-232 cable, or an RS-485 adapter for a multi-drop bus. The 8-pin mini-DIN on the device carries power and serial; use Alicat's cables rather than a home-made one.
 
 ## Device settings (on the display, Setup > Comm, or through Alicat's FlowVision software)

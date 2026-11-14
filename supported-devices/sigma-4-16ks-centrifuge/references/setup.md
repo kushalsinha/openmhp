@@ -15,7 +15,7 @@ service-fitted option with no published commands); Beckman and Thermo publish no
 
 ## What to install
 
-- `pip install openmhp pyserial` on the computer cabled to the centrifuge (Linux, macOS or Windows; pure Python).
+- `pip install -U openmhp pyserial` on the computer cabled to the centrifuge (Linux, macOS or Windows; pure Python).
 - A straight 1:1 DB-9 cable (the centrifuge's socket is wired like a PC's: pin 2 TxD, pin 3 RxD, pin 5 GND) or a USB-to-RS-232 adapter. Not a null-modem cable.
 
 ## Centrifuge settings

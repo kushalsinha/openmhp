@@ -7,7 +7,7 @@
    `keyring set UNICORN <user>`).
 2. Install 32-bit Python 3.11 on the same PC (the UNICORN OPC server is a 32-bit COM server;
    32-bit Python is the combination reported to work reliably with OpenOPC). Then:
-   `pip install openmhp OpenOPC-Python3x pywin32`, and register the OPC automation wrapper
+   `pip install -U openmhp OpenOPC-Python3x pywin32`, and register the OPC automation wrapper
    (`regsvr32 gbda_aut.dll`, shipped with OpenOPC).
 3. Copy `config.example.json` to `config.json`:
    - `progid`: `UNICORN_DAServer30.System1.1` (DA 3.0) or `UNICORN_DAServer20.System1.1` (DA 2.05a).

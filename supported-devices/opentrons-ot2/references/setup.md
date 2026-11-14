@@ -3,7 +3,7 @@
 Runs on any Windows, Linux or macOS machine that reaches the OT-2 on port 31950 (the Opentrons App's
 own HTTP API; Wi-Fi or the USB-Ethernet link).
 
-1. `pip install openmhp pylabrobot` (0.1.x, or 1.0 where the OT-2 backend is `OpentronsOT2Backend`
+1. `pip install -U openmhp pylabrobot` (0.1.x, or 1.0 where the OT-2 backend is `OpentronsOT2Backend`
    under `pylabrobot.legacy`; both names are tried).
 2. Find the robot's address in the Opentrons App. Check `http://<host>:31950/health` answers.
 3. Build the deck in PyLabRobot once (`OTDeck()`, assign tip racks, plates and reservoirs to slots

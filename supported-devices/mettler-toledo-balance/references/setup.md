@@ -1,6 +1,6 @@
 # Setting up a Mettler Toledo MT-SICS balance
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. RS-232 socket on the balance to a PC serial port or USB-serial adapter (a straight cable on
    most models; Mettler sells the right one per balance), or the balance's USB device port with the

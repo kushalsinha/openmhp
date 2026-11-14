@@ -2,7 +2,7 @@
 
 ## What to install
 
-- LAN: nothing beyond `pip install openmhp`; `tcp://<ip>:5555` is opened as a plain socket.
+- LAN: nothing beyond `pip install -U openmhp`; `tcp://<ip>:5555` is opened as a plain socket.
 - USB: `pip install pyvisa pyvisa-py pyusb` (USBTMC; on Linux a udev rule for vendor 0x1AB1,
   on Windows NI-VISA or a libusb driver via Zadig). The resource is what pyvisa lists,
   `USB0::0x1AB1::0x0E11::DP8C...::INSTR`.

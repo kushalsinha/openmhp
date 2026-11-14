@@ -21,6 +21,7 @@ through the operator's hands: the code is what travels in chat, lasts an hour an
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import socket
@@ -130,7 +131,7 @@ def join(gateway_url: str, code: str, name: str | None = None, *, quiet: bool = 
     gateway_url = gateway_url.rstrip("/")
     if not gateway_url.startswith("https://"):
         raise SystemExit(f"the gateway address must start with https:// (got {gateway_url})")
-    name = name or socket.gethostname().split(".")[0]
+    name = name or re.sub(r"[^a-z0-9_-]", "-", socket.gethostname().split(".")[0].lower()) or "agent"
     try:
         pem = fetch_cert(gateway_url)
     except OSError as e:
@@ -201,7 +202,8 @@ def status() -> int:
     cfg = load_agent_config()
     if cfg is None:
         say("not paired with a gateway. Ask the operator for a code (`mhp gateway pair-agent` there), then:",
-            "  mhp agent --join https://<gateway> <code>")
+            "  mhp agent --join https://<gateway> <code> --name <your name, e.g. alice>",
+            "  (on a gateway that runs experiments, the name is your folder there; without it, this computer's name)")
         return 1
     if cfg.get("ssh"):
         say(f"runs and files over SSH: ssh {SSH_ALIAS} mhp-gw help   (scientist '{cfg['ssh']['scientist']}', "
@@ -239,6 +241,10 @@ def main(verb: str | None, args: list[str], *, join_args: list[str] | None = Non
             "agents on this machine now reach every instrument behind it:  mhp-mcp",
             f"  (or by hand:  mhp {cfg['directory']} find <what you need>)")
         if cfg.get("ssh"):
+            if not name and cfg["ssh"]["scientist"] == re.sub(r"[^a-z0-9_-]", "-", socket.gethostname().split(".")[0].lower()):
+                say("", f"Your folder on the gateway is named '{cfg['ssh']['scientist']}', after this computer. To use your "
+                        "own name, ask the gateway operator for a new code and run:",
+                    f"  mhp agent --join {cfg['gateway']} <new code> --name <your name, e.g. alice>")
             say("", f"runs and files on the gateway, as scientist '{cfg['ssh']['scientist']}':",
                 f"  ssh {SSH_ALIAS} mhp-gw help",
                 f"  rsync -a <folder>/ {SSH_ALIAS}:runs/<run id>/in/",

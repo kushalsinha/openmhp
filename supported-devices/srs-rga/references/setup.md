@@ -14,7 +14,7 @@ the degas ends, minutes later, and the stray STATUS byte would corrupt the next 
 
 ## What to install
 
-- `pip install openmhp pyserial` on the computer cabled to the ECU (Linux, macOS or Windows).
+- `pip install -U openmhp pyserial` on the computer cabled to the ECU (Linux, macOS or Windows).
 - A straight-through DB-9 cable: the ECU's RS-232 connector is wired as DCE (it transmits on pin 3, receives on pin 2), so a PC port or a USB-to-RS-232 adapter connects without a null modem.
 - Do not share the port with RGA Windows; any command sent during one of its scans aborts the scan.
 

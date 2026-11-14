@@ -9,7 +9,7 @@ this package is served either from the MultiVu PC or from any other machine that
    with `mpv.Server()`). It listens on port 27183 by default; pass another port to both ends if that
    one is taken. The server hosts one client at a time. `python -m MultiPyVu -get_ip` prints the
    address to put in `config.json`.
-2. Where this package runs: `pip install openmhp MultiPyVu` (the client needs no pywin32).
+2. Where this package runs: `pip install -U openmhp MultiPyVu` (the client needs no pywin32).
 3. Copy `config.example.json` to `config.json`: `host`, `port`, and `platform` (ppms, dynacool,
    mpms3, versalab, opticool), which decides whether the PPMS-only persistent/driven magnet mode
    is offered and whether the chamber commands exist (not on an OptiCool).

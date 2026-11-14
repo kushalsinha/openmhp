@@ -50,8 +50,8 @@ Nothing is removed without passing through deprecation first:
 Pin the implementation (`openmhp==X.Y.Z`) and the protocol revision your device reports. A
 conformance report (`mhp conformance <target>`) is evidence about **one device at one protocol
 revision**, so re-run it after changing either. Nothing in the runtime auto-updates a
-deployment; `npx openmhp-cli` resolves the latest published launcher at install time, so pin
-it too if your deployment is qualified.
+deployment. `npx -y openmhp-cli@latest` fetches the newest launcher, while plain `npx openmhp-cli`
+reuses whatever npx cached first; a qualified deployment pins it instead (`npx -y openmhp-cli@X.Y.Z`).
 
 ## Where changes are announced
 

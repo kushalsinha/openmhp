@@ -33,7 +33,7 @@ Mapping
                                     signal to confirm, the way the rest of MHP treats safety: a claim is
                                     evidence only once something read from the device shows it.
 
-Needs paho-mqtt (`pip install "openmhp[mqtt]"` or `[all]`); pass `client=` to inject a fake for tests, or
+Needs paho-mqtt (`pip install -U "openmhp[mqtt]"` or `[all]`); pass `client=` to inject a fake for tests, or
 your own configured `paho.mqtt.client.Client` (auth, TLS, a shared connection with other subscribers).
 """
 from __future__ import annotations

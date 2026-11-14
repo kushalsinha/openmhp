@@ -7,7 +7,7 @@ members for Windows clients; this package uses the OPC UA server directly.)
 1. The automation option must be licensed and enabled on the instrument (Beckman's "Vi-CELL BLU
    Automation" kit, part C40752 for the offline simulator); set the OPC UA port in the instrument
    software and enable security: a user with automation rights and X.509 certificates.
-2. On the serving machine: `pip install openmhp asyncua keyring`. Store the password in the keyring:
+2. On the serving machine: `pip install -U openmhp asyncua keyring`. Store the password in the keyring:
    `python -m keyring set ViCellBLU automation`.
 3. Trust certificates both ways (UaExpert first, as for any OPC UA server).
 4. Node ids: the public integration guide names the properties and methods but not their node ids.

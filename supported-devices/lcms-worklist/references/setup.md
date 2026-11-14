@@ -2,7 +2,7 @@
 
 The package writes files; it needs no vendor library and no instrument connection. It runs on
 any Windows, Linux or macOS machine that can write into a folder the acquisition PC reads. The
-simplest place is the acquisition PC itself (`pip install openmhp`), writing into a local folder.
+simplest place is the acquisition PC itself (`pip install -U openmhp`), writing into a local folder.
 
 1. Decide the vendor: `masslynx` (Waters MassLynx 4.x), `sciexos` (SCIEX OS), `masshunter`
    (Agilent MassHunter Acquisition LC/TQ or LC/Q-TOF 10.x-12.x) or `xcalibur` (Thermo Xcalibur

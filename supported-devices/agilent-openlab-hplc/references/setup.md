@@ -17,7 +17,7 @@ machine that mounts them. OpenLab CDS and Sample Scheduler themselves are Window
 
 ## Install
 
-1. `pip install openmhp`
+1. `pip install -U openmhp`
 2. Copy `config.example.json` to `config.json`: `command_dir`, `result_dir`, `project`, `instrument` exactly
    as Sample Scheduler shows them, the sampler's injection volume range and, if you want to restrict the
    agent, `allowed_methods`. `injection_source` is the sampler as the scheduler names it.

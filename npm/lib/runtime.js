@@ -29,14 +29,48 @@ function tool(n) {
   return path.join(BIN, process.platform === "win32" ? n + ".exe" : n);
 }
 
+const LAUNCHER = require("../package.json").version;
+
+function older(a, b) {                      // is version a older than b (x.y.z, any suffix ignored)?
+  const n = (v) => String(v).split("-")[0].split(".").map(Number);
+  const [x, y] = [n(a), n(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0);
+  return false;
+}
+
+function runtimeVersion() {
+  const r = spawnSync(tool("python"), ["-I", "-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
 function ensureRuntime({ upgrade = false, source = SOURCE } = {}) {
-  if (fs.existsSync(tool("mhp-mcp")) && !upgrade) return;
+  if (fs.existsSync(tool("mhp-mcp")) && fs.existsSync(tool("python")) && !upgrade) {
+    // a runtime older than this launcher (left by an earlier, older setup) lacks commands the launcher's
+    // instructions use, such as `mhp agent --join`: bring it up to date first
+    const have = runtimeVersion();
+    if (have && !older(have, LAUNCHER)) return;
+    const tried = path.join(HOME, ".upgraded-for");          // once per launcher version: a lagging mirror must not
+    try {                                                                                  // slow every run
+      if (fs.readFileSync(tried, "utf8").trim() === LAUNCHER) {
+        log(`OpenMHP ${have} here, older than this launcher (${LAUNCHER}): your package index has nothing newer yet.`);
+        return;
+      }
+    } catch { /* not tried yet */ }
+    try { fs.writeFileSync(tried, LAUNCHER); } catch { /* read-only home: try every time */ }
+    log(`the runtime in ${VENV} is OpenMHP ${have || "of unknown version"}; this launcher is ${LAUNCHER}. Updating it.`);
+    upgrade = true;
+  }
   const py = findPython();
   if (!py) {
     log("Python 3.10 or newer is required. Install it from https://www.python.org/downloads/ and run this again.");
     process.exit(1);
   }
   fs.mkdirSync(HOME, { recursive: true });
+  if (fs.existsSync(VENV) && !fs.existsSync(tool("python"))) {
+    // the Python this runtime was made from is gone (uninstalled, or a conda env removed): start it again
+    log(`${VENV} lost its Python; making it again`);
+    fs.rmSync(VENV, { recursive: true, force: true });
+  }
   if (!fs.existsSync(VENV)) {
     log(`creating ${VENV}`);
     if (spawnSync(py, ["-m", "venv", VENV], { stdio: ["ignore", "inherit", "inherit"] }).status !== 0) process.exit(1);
@@ -47,7 +81,35 @@ function ensureRuntime({ upgrade = false, source = SOURCE } = {}) {
   args.push(source);
   const r = spawnSync(tool("python"), args, { stdio: ["ignore", "inherit", "inherit"] });
   if (r.status !== 0) { log("install failed"); process.exit(1); }
+  const got = runtimeVersion();
+  if (got && older(got, LAUNCHER) && /^openmhp(\[|$)/.test(source)) mirrorBehind(got);
   log("runtime ready");
+}
+
+// Where pip looks for packages, as a host name only: an index URL can carry a user and token.
+function indexHost() {
+  let url = process.env.PIP_INDEX_URL || "";
+  if (!url) {
+    const r = spawnSync(tool("python"), ["-m", "pip", "config", "list"], { encoding: "utf8" });
+    const m = /index-url\s*=\s*'?([^'\s]+)/.exec(r.stdout || "");
+    url = m ? m[1] : "";
+  }
+  try { return url ? new URL(url).host : null; } catch { return null; }
+}
+
+// pip upgraded as far as it could and is still behind: the package index offers nothing newer. In an
+// enterprise that is usually an internal mirror; say what to ask for instead of carrying on silently.
+function mirrorBehind(got) {
+  try { fs.writeFileSync(path.join(HOME, ".upgraded-for"), LAUNCHER); } catch { /* read-only home */ }
+  const host = indexHost();
+  log("");
+  log(`the newest OpenMHP your Python package index offers is ${got}; this launcher is ${LAUNCHER}.`);
+  log(host && host !== "pypi.org"
+    ? `pip installs from ${host}, which looks like an internal mirror: ask whoever runs it to add openmhp ${LAUNCHER}`
+    : `ask whoever manages Python packages on this machine for openmhp ${LAUNCHER}`);
+  log("  (https://pypi.org/project/openmhp/, with pyyaml, zeroconf, pyserial and paho-mqtt).");
+  log(`until then OpenMHP ${got} runs here, without what came later (joining a gateway needs 0.10.0 or newer).`);
+  log("");
 }
 
 function run(cmd, args, opts = {}) {

@@ -1,6 +1,6 @@
 # Setting up a New Era NE-1000 / NE-4000
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. New Era's CBL-PC-PUMP (RJ-11 pump socket "To Computer" to 9-pin serial), with the CBL-USB232
    adapter for a USB port. Do not plug the PC cable into the "To Network" socket.

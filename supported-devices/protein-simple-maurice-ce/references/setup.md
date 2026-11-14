@@ -21,7 +21,7 @@ Needed on the instrument PC:
 
 Steps:
 
-1. `pip install openmhp` on the serving machine.
+1. `pip install -U openmhp` on the serving machine.
 2. Copy `config.example.json` to `config.json`: `import_dir`, `results_dir`, the Compass
    version for the record, `allowed_methods` (Compass method names an agent may queue; empty
    allows any) and the timeouts (`result_wait_s` 7200 s covers a CE-SDS batch with replicates and

@@ -1,14 +1,23 @@
 #!/usr/bin/env node
 /* openmhp: one command to run the OpenMHP MCP server in any agent harness.
+ * Always start it as `npx -y openmhp-cli@latest ...`: plain `npx openmhp-cli` reuses whatever
+ * launcher npx cached the first time, however old.
  *
- *   npx openmhp-cli                 start the MCP server on stdio (what harness configs run)
- *   npx openmhp-cli setup           install the Python runtime, the skills, and register with your harnesses
- *   npx openmhp-cli node [folder]   turn THIS computer into a lightweight OpenMHP node for its instruments
- *   npx openmhp-cli scan [host...]  find MHP devices on the network
- *   npx openmhp-cli add <target>    add a device (http://host:port or a device package folder)
- *   npx openmhp-cli demo            add two simulated instruments to try things without hardware
- *   npx openmhp-cli update          upgrade the runtime and the skills (use openmhp-cli@latest to get a new launcher too)
- *   npx openmhp-cli list | remove <id> | validate <folder> | device <folder> [--http PORT]
+ * On the agent's machine (a scientist's laptop):
+ *   setup                    install the Python runtime and the skills, register with Claude Code and Codex
+ *   update                   upgrade the runtime and the skills
+ *   demo                     add two simulated instruments to try things without hardware
+ *   join <url> <code> --name <you>   use a lab gateway (code from `mhp gateway pair-agent` there)
+ *   (no command)             start the MCP server on stdio: what harness configs run
+ *   scan [host...] | add <target> | list | remove <id> | validate <folder> | device <folder> [--http PORT]
+ *
+ * On an instrument PC (no agent needed):
+ *   node add [<package>]     list the ready-made packages, or fetch one, ask its questions, pair, keep it running
+ *   node setup <package>     ask a package's questions again
+ *   node [folder]            serve every package in a folder in the background, across reboots
+ *   node --service-status | --uninstall-service | --check
+ *
+ * The lab gateway is set up with pip (`pip install -U openmhp`, then `mhp gateway init`); see openmhp.com/gateway.
  *
  * Everything lives in ~/.openmhp (venv, fleet.json, devices/). The Python package
  * does the work; this launcher only makes sure it exists. Logs go to stderr because
@@ -21,13 +30,63 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { HOME, log, ensureRuntime, run, tool } = require("../lib/runtime");
 const { nodeSetup } = require("../lib/node_setup");
+const SELF = require("../package.json").version;
+
+// npx keeps the first launcher it fetched for `npx openmhp-cli`, so an old one can linger for months.
+// Ask the registry once (3 s at most) and say so, rather than set up with old instructions.
+function newerLauncher() {
+  return new Promise((resolve) => {
+    if (process.env.OPENMHP_NO_UPDATE_CHECK) return resolve(null);
+    const req = require("https").get("https://registry.npmjs.org/openmhp-cli/latest", { timeout: 3000 }, (res) => {
+      let body = "";
+      res.on("data", (c) => { body += c; });
+      res.on("end", () => {
+        try {
+          const latest = JSON.parse(body).version;
+          const n = (v) => v.split("-")[0].split(".").map(Number);
+          const [a, b] = [n(latest), n(SELF)];
+          const newer = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+          resolve(newer > 0 ? latest : null);
+        } catch { resolve(null); }
+      });
+    });
+    req.on("timeout", () => { req.destroy(); resolve(null); });
+    req.on("error", () => resolve(null));
+  });
+}
+
+async function warnIfOld(verb) {
+  const latest = await newerLauncher();
+  if (latest) {
+    log(`this is openmhp-cli ${SELF}, an old copy npx kept; ${latest} is out. Run instead:`);
+    log(`  npx -y openmhp-cli@latest ${verb}`);
+  }
+  return latest;
+}
 
 function installedVersion() {
-  const r = require("child_process").spawnSync(tool("python"), ["-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
+  const r = require("child_process").spawnSync(tool("python"), ["-I", "-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
-function update() {
+// A separate `pip install -U openmhp` puts its own `mhp` on PATH; this launcher's runtime does not, so a bare
+// `mhp ...` typed afterwards runs that other copy, often an old one. Say so once, at setup.
+function otherMhp() {
+  const r = require("child_process").spawnSync(process.platform === "win32" ? "where" : "which", ["mhp"], { encoding: "utf8" });
+  const found = (r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+    .filter((p) => !path.resolve(p).startsWith(path.resolve(HOME)));
+  if (!found.length) return;
+  const v = require("child_process").spawnSync(found[0].replace(/mhp(\.exe)?$/i, process.platform === "win32" ? "python.exe" : "python"),
+    ["-I", "-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
+  log("");
+  log(`note: another OpenMHP is on your PATH: ${found[0]}${v.status === 0 ? ` (version ${v.stdout.trim()})` : ""}.`);
+  log("a bare `mhp ...` runs that one, not this install. Run commands through this launcher instead:");
+  log("  npx -y openmhp-cli@latest mhp <args>");
+  log("or remove the other copy (pip uninstall openmhp) or update it (pip install -U openmhp).");
+}
+
+async function update() {
+  if (await warnIfOld("update")) process.exit(1);
   const before = installedVersion();
   ensureRuntime({ upgrade: true });
   log("refreshing Agent Skills in the harnesses found on this machine");
@@ -37,7 +96,8 @@ function update() {
   log("restart your agent (or reconnect the openmhp MCP server) so it loads the new version.");
 }
 
-function setup() {
+async function setup() {
+  if (await warnIfOld("setup")) process.exit(1);
   ensureRuntime({ upgrade: true });     // rerunning setup on an old install upgrades it instead of keeping it
   log("installing Agent Skills into the harnesses found on this machine");
   run("mhp", ["skills", "install"]);
@@ -63,6 +123,8 @@ function setup() {
   console.error(JSON.stringify({ mcpServers: { openmhp: { command: "npx", args: ["-y", "openmhp-cli"] } } }, null, 2));
   console.error("");
   log("next: open your agent and say \"find the instruments on my network\" or \"onboard my hotplate\".");
+  log("if your lab has a gateway: npx -y openmhp-cli@latest join <gateway url> <code from mhp gateway pair-agent> --name <your name>");
+  otherMhp();
   log(`lab lives in ${HOME}`);
 }
 
@@ -74,18 +136,22 @@ function main() {
       { const child = spawn(tool("mhp-mcp"), ["--fleet", path.join(HOME, "fleet.json"), ...rest], { stdio: "inherit" });
         child.on("exit", (c) => process.exit(c ?? 0)); }
       return;
-    case "setup": return setup();
+    case "setup": return setup().catch((e) => { log(String(e)); process.exit(1); });
     case "node": return nodeSetup(rest).catch((e) => { log(String(e)); process.exit(1); });
-    case "update": case "upgrade": return update();
+    case "update": case "upgrade": return update().catch((e) => { log(String(e)); process.exit(1); });
     case "scan": case "add": case "remove": case "list": case "demo":
       ensureRuntime(); process.exit(run("mhp", ["lab", cmd, ...rest]));
     case "validate": ensureRuntime(); process.exit(run("mhp", ["validate", ...rest]));
     case "skills": ensureRuntime(); process.exit(run("mhp", ["skills", ...rest]));
     case "device": ensureRuntime(); process.exit(run("mhp", ["serve", `pkg:${path.resolve(rest[0])}`, ...rest.slice(1)]));
     case "mhp": ensureRuntime(); process.exit(run("mhp", rest));
+    case "join":                                       // pair this machine with a lab gateway
+      ensureRuntime();
+      if (rest.length < 2) { log("usage: npx -y openmhp-cli@latest join https://<gateway> <code> --name <your name>"); process.exit(2); }
+      process.exit(run("mhp", ["agent", "--join", rest[0], rest[1], ...rest.slice(2)]));
     case "home": console.log(HOME); return;
     case "-h": case "--help": case "help":
-      console.log(fs.readFileSync(__filename, "utf8").split("*/")[0].split("\n").slice(1).map((l) => l.replace(/^ \* ?/, "")).join("\n"));
+      console.log(fs.readFileSync(__filename, "utf8").split("*/")[0].split("\n").slice(1).map((l) => l.replace(/^(\/\*| \*) ?/, "")).join("\n"));
       return;
     default:
       log(`unknown command ${cmd}; try --help`); process.exit(2);

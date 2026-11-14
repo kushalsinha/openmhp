@@ -6,7 +6,7 @@ assembly, so this package runs on the instrument PC through pythonnet. Windows-o
 1. Obtain the ZS Xplorer SDK from Malvern Panalytical (it is not public; ask your account manager
    for the SDK and its reference document). For a Zetasizer Nano under the classic software, ask for
    the Zetasizer Nano SDK instead; the shape is the same.
-2. `pip install openmhp pythonnet`.
+2. `pip install -U openmhp pythonnet`.
 3. Open the SDK reference and correct the member names in `config.example.json` (`sdk`: assembly,
    application class, connect, status, temperature, SOP load, start, running, abort, result, export);
    every shipped name is a placeholder. Then copy it to `config.json` with `sop_dir` and `export_dir`.

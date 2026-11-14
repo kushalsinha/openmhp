@@ -7,7 +7,7 @@
 3. Build the `mhp_server` sequence from `flozf_server_sequence.md`, calling your own validated
    sampling, injection and rinse sequences with the variables it reads (probe, dil1, dil2, vial).
    Give the project a "stop sequence" that turns the pumps off (FloZF manual 1.4.7).
-4. On the same PC: `pip install openmhp pyserial`. Copy `config.example.json` to `config.json`,
+4. On the same PC: `pip install -U openmhp pyserial`. Copy `config.example.json` to `config.json`,
    set `port` to the other end of the pair (COM21) and `sequence_codes` to the codes your
    `mhp_server` sequence uses.
 5. `mhp serve pkg:<this folder> --http <port>`, then start `mhp_server` in FloZF and read

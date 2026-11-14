@@ -12,7 +12,7 @@ data interface. Until the map is confirmed, rehearse with the twin (`sim.py`) on
   part per your model) and, if the controller has no Modbus of its own, a serial-to-Modbus-TCP
   gateway configured to poll the ASCII protocol of manual chapter 12.
 - A PC or small Linux box on the same network (or on the serial side for Modbus RTU), with
-  Python 3.11+ and `pip install openmhp pymodbus`. The route is pure Python and runs on Linux,
+  Python 3.11+ and `pip install -U openmhp pymodbus`. The route is pure Python and runs on Linux,
   macOS or Windows.
 - An Ethernet cable to the Modbus TCP interface, or a USB cable / RS-232 lead for RTU.
 

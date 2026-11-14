@@ -24,7 +24,7 @@ Needed on the instrument PC:
 
 Steps:
 
-1. `pip install openmhp` on the serving machine (no vendor library is needed).
+1. `pip install -U openmhp` on the serving machine (no vendor library is needed).
 2. Copy `config.example.json` to `config.json`: `import_dir`, `results_dir`, the `software`
    versions for the record, `result_wait_s` (900 s is generous for a baseline plus a sample
    scan plus a slow helper) and `poll_s`.

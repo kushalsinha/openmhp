@@ -16,7 +16,7 @@ macOS or Windows); the vendor side is Windows-only.
 
 ## Install
 
-1. `pip install openmhp asyncua keyring` (python-opcua also works).
+1. `pip install -U openmhp asyncua keyring` (python-opcua also works).
 2. Copy `config.example.json` to `config.json`: set `url`, `max_pressure_bar` (below the weakest part of
    the flow path), and, after browsing, the `nodes`. Pump flows, setpoints, pressure and state are
    required; reactor channels without a reactor and the method nodes may stay `null`.

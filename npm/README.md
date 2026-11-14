@@ -1,35 +1,69 @@
 # openmhp-cli
 
-One command to give any AI agent harness safe control of your lab instruments through the
-[Open Model Hardware Protocol](https://openmhp.com).
+Give any AI agent harness safe control of your lab instruments through the
+[Open Model Hardware Protocol](https://openmhp.com). This launcher installs and runs the
+[`openmhp`](https://pypi.org/project/openmhp/) Python runtime in `~/.openmhp`. Needs Node 18+ and
+Python 3.10+.
+
+Always run it as `npx -y openmhp-cli@latest ...`. Plain `npx openmhp-cli` reuses whatever version
+npx cached the first time, however old.
+
+## On your laptop or workstation (where the agent runs)
 
 ```bash
-npx openmhp-cli setup      # installs the runtime and skills, registers the MCP server with your harness
+npx -y openmhp-cli@latest setup     # runtime, Agent Skills, and the MCP server for Claude Code and Codex
+npx -y openmhp-cli@latest demo      # optional: two simulated instruments to try it with no hardware
 ```
 
 Then, in your agent: *"find the instruments on my network"*, *"add the thermocycler"*,
-*"onboard my hotplate"*, *"run a 30-cycle PCR at 95/58/72"*.
-
-Harness config, if you prefer to add it by hand:
+*"onboard my hotplate"*, *"run a 30-cycle PCR at 95/58/72"*. Any other MCP harness takes:
 
 ```json
 {"mcpServers": {"openmhp": {"command": "npx", "args": ["-y", "openmhp-cli"]}}}
 ```
 
-Try it with no hardware: `npx openmhp-cli demo` adds a simulated thermocycler and plate arm.
-
-Other commands: `scan [host...]`, `add <target>`, `list`, `remove <id>`, `validate <folder>`,
-`device <folder> --http 18921`, `node` (serve the instruments on a bench PC), and `mhp <args>`
-(the full `mhp` command line, for example `npx openmhp-cli mhp node add`).
-
-A scientist can also ask a lab gateway for a whole experiment in plain English and hand over
-their own models and optimizer: see [Experiment flow](https://openmhp.com/experiment-flow).
-
-To update, run the command below, then restart your agent. It upgrades the runtime and the
-skills. The OpenMHP server tells your agent when a new version is out.
+If your lab has a gateway, join it once with the code its admin gives you
+(from `mhp gateway pair-agent`):
 
 ```bash
-npx -y openmhp-cli@latest update
+npx -y openmhp-cli@latest join https://<gateway> <code> --name <your name, e.g. alice>
 ```
 
-Requires Node 18+ and Python 3.10+. Everything is kept in `~/.openmhp`.
+The name becomes your folder on the gateway (unless the admin already chose it when making the code).
+
+Through the gateway you can also ask the lab for a whole experiment in plain English and hand over
+your own models and optimizer: see [Experiment flow](https://openmhp.com/experiment-flow).
+
+## On an instrument PC (the computer wired to an instrument)
+
+No agent is needed there. Name the instrument:
+
+```bash
+npx -y openmhp-cli@latest node add                       # lists the ready-made packages
+npx -y openmhp-cli@latest node add waters-empower-hplc   # fetches it, asks its questions, pairs with the gateway, keeps it running
+```
+
+`node setup <package>` asks the questions again, `node --service-status` and
+`node --uninstall-service` manage the background service. A PC with only Python can do the same
+with `pip install -U "openmhp[node]"` and `mhp node add`.
+
+## On the lab gateway
+
+The gateway is set up with pip: `pip install -U openmhp`, then `mhp gateway init`. See
+[Gateway and relay](https://openmhp.com/gateway).
+
+## Updating
+
+```bash
+npx -y openmhp-cli@latest update           # on the agent machine: runtime and skills; then restart the agent
+npx -y openmhp-cli@latest node <folder>    # on an instrument PC: restarts its service on the new version
+```
+
+The OpenMHP server tells your agent when a new version is out.
+Set `OPENMHP_NO_UPDATE_CHECK=1` to turn the check off.
+
+Other commands: `scan [host...]`, `add <target>`, `list`, `remove <id>`, `validate <folder>`,
+`device <folder> --http 18921`, and `mhp <args>` (the full `mhp` command line). Everything is kept
+in `~/.openmhp`, and its `mhp` is not put on your PATH: run it as `npx -y openmhp-cli@latest mhp ...`.
+A bare `mhp` belongs to a separate pip install, if there is one; update that with
+`pip install -U openmhp` (plain `pip install` keeps an old version).

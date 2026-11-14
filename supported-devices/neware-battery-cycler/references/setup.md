@@ -9,7 +9,7 @@ machine on the network that can also write into the step folder. The simulated t
 2. Make a folder on the BTS PC for step files (for example `D:\OpenMHP\steps`) and share it so the
    serving machine can write there; `step_dir` is the path from the serving machine, `step_dir_on_server`
    the Windows path the server uses to open the file.
-3. `pip install openmhp` on the serving machine.
+3. `pip install -U openmhp` on the serving machine.
 4. Copy `config.example.json` to `config.json`: `host`, `port`, `user`, `password` (kept in the
    keyring by `mhp node setup`), `step_dir`, `step_dir_on_server`, `backup_dir`, and the chemistry caps
    `voltage_max_v`, `voltage_min_v`, `current_max_a` for the cells on the bench.

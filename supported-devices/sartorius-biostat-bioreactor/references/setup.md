@@ -3,7 +3,7 @@
 The package talks OPC UA over Ethernet to the Biobrain controller, so it can be served from any
 Windows, Linux or macOS machine on the same network (not necessarily the Biobrain Supervise PC).
 
-1. On the serving machine: `pip install openmhp asyncua keyring` (python-opcua also works).
+1. On the serving machine: `pip install -U openmhp asyncua keyring` (python-opcua also works).
 2. In Biobrain, create a device user for the agent (for example `openmhp`) with the **Remote
    operation** permission, and note the unit name (Unit1, ...). Store the password in the OS keyring,
    never in config.json: `python -m keyring set Biobrain openmhp`.

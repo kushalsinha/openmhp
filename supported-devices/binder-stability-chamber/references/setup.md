@@ -9,7 +9,7 @@ row of `references/registers.md` is marked unverified. Until then, rehearse with
 - The MB2 controller's Ethernet port is standard; ask BINDER service for document 7001-0242
   (the Modbus register list) for your controller firmware.
 - A PC or small Linux box on the same network with Python 3.11+ and
-  `pip install openmhp pymodbus`. Pure Python; runs on Linux, macOS or Windows.
+  `pip install -U openmhp pymodbus`. Pure Python; runs on Linux, macOS or Windows.
 - A network cable from the chamber's RJ45 port to the lab network (or a direct cable to the
   PC with fixed addresses).
 

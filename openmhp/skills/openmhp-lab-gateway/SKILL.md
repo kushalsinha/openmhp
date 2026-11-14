@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs a shell with ssh and rsync, and a machine paired with `mhp agent --join` on a gateway that has SSH access turned on. Works in any harness that can run shell commands.
 metadata:
   author: openmhp
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Being the scientist's go-between with the lab gateway
@@ -77,7 +77,10 @@ mhp agent
 It names the gateway and, when SSH access is set up, the scientist name this machine works as.
 Pairing added a host called `mhp-gateway` to the SSH configuration, so no address, user or key is
 ever needed. If the machine is not paired, the scientist needs a code from whoever runs the
-gateway (`mhp gateway pair-agent` there), and then you run `mhp agent --join https://<gateway> <code>`.
+gateway (`mhp gateway pair-agent` there), and then you run
+`mhp agent --join https://<gateway> <code> --name <scientist's name>`. Ask the scientist which name to use
+unless the operator already set one: it becomes their folder on the gateway (lower-case letters, digits,
+`-` and `_`). Without `--name` it is this computer's name.
 
 ## The commands
 
@@ -164,5 +167,5 @@ This skill comes with OpenMHP and is updated with it: a newer OpenMHP replaces t
 the next time an agent or the watcher starts. `mhp-gw help` says which version of this skill the
 gateway expects (`skill.version`). If it is newer than the `version` at the top of this file, tell
 the scientist in one sentence that the lab gateway is newer than their OpenMHP, and offer to update
-it (`npx -y openmhp-cli@latest update`, or `pip install -U "openmhp[all]"`). Until then, run
+it (`npx -y openmhp-cli@latest update`, or `pip install -U "openmhp[all]" && mhp skills install`). Until then, run
 `mhp-gw help` and use the verbs it lists as it explains them.

@@ -8,7 +8,7 @@ the Vision64 side; the package itself is pure Python.
    under Vision64) is available for your Dektak XT licence, and obtain its command set document.
    For a KLA Alpha-Step D-500/D-600, ask KLA for any remote interface; its manual documents only
    `.rcp` scan recipes, sequences and auto-save/auto-export.
-2. `pip install openmhp`.
+2. `pip install -U openmhp`.
 3. Correct every command string in `config.example.json` `commands` from that document (every
    shipped string is a placeholder), set `host`, `port`, `data_dir`, `db_csv`, `recipes_dir`, and
    copy it to `config.json`.
