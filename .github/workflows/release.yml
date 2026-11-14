@@ -9,8 +9,10 @@ name: Release
 # No secrets. PyPI and npm are both set up as trusted publishers for this repository, workflow
 # file and environment, so GitHub proves who is publishing with a short-lived token. The
 # `release` environment lists the people who must approve each run; nothing is published until
-# they do. npm only accepts staged versions from CI: the npm job stages the version and a
-# maintainer approves it on npmjs.com with 2FA. See CONTRIBUTING.md ("Releasing") for the one-time setup.
+# they do. Both publishing jobs wait on it at the same time, and GitHub approves an environment once
+# per run, so one approval starts both. npm only accepts staged versions from CI: the npm job stages
+# the version and a maintainer approves it on npmjs.com with 2FA. See CONTRIBUTING.md ("Releasing")
+# for the one-time setup.
 on:
   push:
     tags: ["v*"]
@@ -58,8 +60,10 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
 
   npm:
-    # openmhp-cli installs openmhp from PyPI the first time it runs, so PyPI must have the version first
-    needs: pypi
+    # Runs beside the PyPI job, under the same approval. It only stages the launcher: nothing reaches
+    # users until it is approved on npmjs.com, by which time PyPI (which the launcher installs
+    # openmhp from on first run) has long finished. Approve on npmjs.com after the pypi job succeeds.
+    needs: check
     runs-on: ubuntu-latest
     environment: release
     permissions:
