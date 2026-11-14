@@ -15,7 +15,7 @@ Windows; iControl and its OPC server are Windows.
 
 ## Install
 
-1. `pip install openmhp asyncua keyring` (python-opcua also works).
+1. `pip install -U openmhp asyncua keyring` (python-opcua also works).
 2. Copy `config.example.json` to `config.json` and set `url`. If the server needs a user, set `username`
    and store the password with `python -m keyring set iControlOPC <username>`.
 3. Browse the server and fill in `nodes`: the Tr and Tj values and setpoints, the stirrer speed and

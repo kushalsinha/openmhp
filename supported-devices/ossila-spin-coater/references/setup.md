@@ -4,7 +4,7 @@
 unit's firmware offers serial control over USB and for its command document, rewrite the `serial:`
 block and `references/serial.md`, and rehearse with the twin until then.
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. The unit's USB port to the PC (a glovebox USB feedthrough if the unit is inside); it
    enumerates as a virtual COM port when the firmware offers serial control.

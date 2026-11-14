@@ -1,7 +1,7 @@
 # Setting up on the TRIOS PC (Windows only)
 
 TRIOS runs only on the instrument's Windows PC and the run-list and export folders are local
-to it, so this package is served from that PC: `pip install openmhp` in a Python 3.11
+to it, so this package is served from that PC: `pip install -U openmhp` in a Python 3.11
 environment there. No vendor library is needed; the package writes and reads files.
 
 1. With the TRIOS administrator, set up how runs enter the queue: the TRIOS Auto / autoloader

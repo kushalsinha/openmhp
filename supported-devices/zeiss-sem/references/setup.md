@@ -8,7 +8,7 @@ real driver only there.
    component; ZEISS's knowledge base describes installing the Remote API Client and a "SmartSEM API
    Test" desktop application that exercises the same object). SmartSEM must be running with the
    microscope initialised whenever this package is used.
-2. In the Python that runs `mhp`: `pip install openmhp pywin32`.
+2. In the Python that runs `mhp`: `pip install -U openmhp pywin32`.
 3. Open the API reference (or the API Test application) and correct every name in
    `config.example.json` `smartsem`: the COM ProgID, the initialise/close members, the Get/Set/
    Execute/Grab/MoveStage members, the vacuum, run-up and stage status parameters and their words,

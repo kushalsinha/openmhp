@@ -2,7 +2,7 @@
 
 DIFFRAC.SUITE (DIFFRAC.MEASUREMENT CENTER, DIFFRAC.COMMANDER, Result Manager) runs only on the
 instrument's Windows PC, and the job import and result folders are local to it, so this package
-is served from that PC: `pip install openmhp` in a Python 3.11 environment there. No vendor
+is served from that PC: `pip install -U openmhp` in a Python 3.11 environment there. No vendor
 library is needed; the package only writes and reads files.
 
 1. With the DIFFRAC.SUITE administrator, set up the way jobs enter the measurement centre:

@@ -11,7 +11,7 @@ Chromeleon client on the same machine, so this package is served from that PC. T
   is what a Python process is, needs no SDK runtime licence; a development licence (P/N 7100.0082) buys the
   API reference, which you will want for the members marked unverified in `references/chromeleon_sdk.md`.
 - A **32-bit Python** (the SDK raises `SdkException` "WrongArchitecture" from a 64-bit process) with
-  `pip install openmhp pythonnet keyring`.
+  `pip install -U openmhp pythonnet keyring`.
 - A Chromeleon user for the agent with rights on the data vault folder and instrument control.
 
 ## Install

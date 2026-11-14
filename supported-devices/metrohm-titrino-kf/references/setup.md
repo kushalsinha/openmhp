@@ -1,7 +1,7 @@
 # Setting up
 
 Runs on any Linux, macOS or Windows machine with a serial port (or USB-serial adapter) to the Titrino.
-`pip install openmhp pyserial`.
+`pip install -U openmhp pyserial`.
 
 ## Cable and port
 

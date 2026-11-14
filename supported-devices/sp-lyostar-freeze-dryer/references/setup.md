@@ -13,7 +13,7 @@ chamber.
   run, hold, stop and defrost. If only OPC is offered, an OPC-to-Modbus gateway, or write the
   package on the openmhp OPC UA adapter instead.
 - A PC or small Linux box on the control network with Python 3.11+ and
-  `pip install openmhp pymodbus`. Pure Python; Linux, macOS or Windows.
+  `pip install -U openmhp pymodbus`. Pure Python; Linux, macOS or Windows.
 - An Ethernet cable to the PLC or SCADA PC's Modbus port.
 
 ## Instrument settings that must be enabled

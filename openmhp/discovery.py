@@ -4,7 +4,7 @@ Two mechanisms, both optional to the protocol and both used by ``mhp lab scan``:
 
 1. mDNS / DNS-SD: servers advertise ``_mhp._tcp.local.`` with TXT records
    ``id``, ``class``, ``path=/mhp.json``. Needs the ``zeroconf`` package
-   (``pip install openmhp[discovery]``); silently skipped without it.
+   (``pip install -U openmhp[discovery]``); silently skipped without it.
 2. HTTP probe: GET ``http://host:port/mhp.json`` on a list of hosts and the
    default MHP port range. Works everywhere, including networks that block
    multicast. The probe is parallel and each request has a short timeout.

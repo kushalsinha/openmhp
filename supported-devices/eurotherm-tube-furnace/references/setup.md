@@ -6,7 +6,7 @@
   EIA-232 communications module fitted (Carbolite Gero and MTI sell the furnace with it as the
   "comms option"); or a Modbus TCP gateway in front of it.
 - A USB-to-EIA-485 adapter (isolated preferred) or the furnace's RS-232 cable; a PC with Python
-  3.11+ and `pip install openmhp pymodbus`. Pure Python; Linux, macOS or Windows.
+  3.11+ and `pip install -U openmhp pymodbus`. Pure Python; Linux, macOS or Windows.
 - Wiring per HA026230 chapter 2: on a 2416, HD = A(+), HE = B(-), HF = common for EIA-485; 120 ohm
   termination at the far end of a long bus.
 

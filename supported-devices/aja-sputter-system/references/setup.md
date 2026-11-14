@@ -8,7 +8,7 @@ connect a real tool until the `modbus:` block has been rewritten from the integr
    be reached over Modbus TCP or OPC UA, and for the tag list. On an AJA Orion the Phase II laptop
    and the PLC share a private network: a gateway or a second port is usually added.
 2. Cable the serving machine to that network; note the PLC or gateway address and unit id.
-3. `pip install openmhp pymodbus`.
+3. `pip install -U openmhp pymodbus`.
 4. Rewrite `modbus:` in `descriptor.yaml` (addresses, kinds, types, scale for Torr versus mbar,
    `sequences`, `estop`) from the tag list, and `sim.py`'s `_Plc` to match.
 5. Copy `config.example.json` to `config.json`: `host` and, if not 1, `unit`.

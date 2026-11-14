@@ -1,6 +1,6 @@
 # Setting up an Atlas Scientific EZO circuit
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Hardware. Seat the EZO circuit on a carrier (Atlas USB carrier, Tentacle/Whitebox isolated carrier, or a
    plain 3.3/5 V USB-serial adapter: TX to RX, RX to TX, GND, VCC). Use an isolated carrier when the probe

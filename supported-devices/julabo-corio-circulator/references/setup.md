@@ -1,6 +1,6 @@
 # Setting up a JULABO CORIO / MAGIO / DYNEO circulator
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. USB-B on the unit to the PC (install the JULABO USB driver from julabo.com; on Windows the
    unit appears as "STMicroelectronics Virtual COM Port"), or a serial cable on the RS-232 socket of

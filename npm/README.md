@@ -45,11 +45,11 @@ npx -y openmhp-cli@latest node add waters-empower-hplc   # fetches it, asks its 
 
 `node setup <package>` asks the questions again, `node --service-status` and
 `node --uninstall-service` manage the background service. A PC with only Python can do the same
-with `pip install "openmhp[node]"` and `mhp node add`.
+with `pip install -U "openmhp[node]"` and `mhp node add`.
 
 ## On the lab gateway
 
-The gateway is set up with pip: `pip install openmhp`, then `mhp gateway init`. See
+The gateway is set up with pip: `pip install -U openmhp`, then `mhp gateway init`. See
 [Gateway and relay](https://openmhp.com/gateway).
 
 ## Updating
@@ -65,4 +65,5 @@ Set `OPENMHP_NO_UPDATE_CHECK=1` to turn the check off.
 Other commands: `scan [host...]`, `add <target>`, `list`, `remove <id>`, `validate <folder>`,
 `device <folder> --http 18921`, and `mhp <args>` (the full `mhp` command line). Everything is kept
 in `~/.openmhp`, and its `mhp` is not put on your PATH: run it as `npx -y openmhp-cli@latest mhp ...`.
-A bare `mhp` belongs to a separate pip install, if there is one.
+A bare `mhp` belongs to a separate pip install, if there is one; update that with
+`pip install -U openmhp` (plain `pip install` keeps an old version).

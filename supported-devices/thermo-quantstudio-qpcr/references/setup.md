@@ -21,7 +21,7 @@ Needed:
 
 Steps:
 
-1. `pip install openmhp` on the serving machine.
+1. `pip install -U openmhp` on the serving machine.
 2. Copy `config.example.json` to `config.json`: `import_dir`, `results_dir`, `wells` (96 or 384),
    `reporter` and `quencher` as the plate setup file must carry them (FAM / NFQ-MGB for TaqMan,
    SYBR / None for SYBR), `allowed_templates`, and the timeouts (`result_wait_s` 14400 s covers a

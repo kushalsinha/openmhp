@@ -3,7 +3,7 @@
 SharkSEM is the remote-control interface of the TESCAN microscope software on the microscope PC; it
 is a TCP protocol, so this package can run on that PC (Windows) or on any Linux, macOS or Windows
 machine that can reach it, provided TESCAN's client library imports there. Only the Python standard
-library is otherwise needed: `pip install openmhp`.
+library is otherwise needed: `pip install -U openmhp`.
 
 1. Ask TESCAN (or your service engineer) for the SharkSEM manual and the SharkSEM client library
    for your software version (VEGA, MIRA and CLARA all carry it; it is also the base of TESCAN's

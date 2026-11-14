@@ -2,7 +2,7 @@
 
 Octet BLI Discovery runs on the instrument's Windows PC; its automation interface is a TCP/IP socket
 (or RS-232), so this package can be served from that PC or from any Windows, Linux or macOS machine on
-the network. Only the Python standard library is needed: `pip install openmhp`.
+the network. Only the Python standard library is needed: `pip install -U openmhp`.
 
 1. In Octet BLI Discovery: File > Options > Automation; choose TCP/IP and a port (or RS-232), and
    "Localhost" only when the client runs on the same PC. The software must stay open with the

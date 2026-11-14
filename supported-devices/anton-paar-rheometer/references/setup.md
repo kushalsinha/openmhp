@@ -2,7 +2,7 @@
 
 RheoCompass runs on Windows 10/11 with a Microsoft SQL Server database (Anton Paar's system
 requirements), and the job and export folders are local to it, so this package is served from
-that PC: `pip install openmhp` in a Python 3.11 environment there. No vendor library is needed;
+that PC: `pip install -U openmhp` in a Python 3.11 environment there. No vendor library is needed;
 the package only writes and reads files.
 
 1. With the RheoCompass administrator, set up the way jobs enter the rheometer. RheoCompass has

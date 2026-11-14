@@ -17,7 +17,7 @@
  *   node [folder]            serve every package in a folder in the background, across reboots
  *   node --service-status | --uninstall-service | --check
  *
- * The lab gateway is set up with pip (`pip install openmhp`, then `mhp gateway init`); see openmhp.com/gateway.
+ * The lab gateway is set up with pip (`pip install -U openmhp`, then `mhp gateway init`); see openmhp.com/gateway.
  *
  * Everything lives in ~/.openmhp (venv, fleet.json, devices/). The Python package
  * does the work; this launcher only makes sure it exists. Logs go to stderr because
@@ -69,7 +69,7 @@ function installedVersion() {
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
-// A separate `pip install openmhp` puts its own `mhp` on PATH; this launcher's runtime does not, so a bare
+// A separate `pip install -U openmhp` puts its own `mhp` on PATH; this launcher's runtime does not, so a bare
 // `mhp ...` typed afterwards runs that other copy, often an old one. Say so once, at setup.
 function otherMhp() {
   const r = require("child_process").spawnSync(process.platform === "win32" ? "where" : "which", ["mhp"], { encoding: "utf8" });

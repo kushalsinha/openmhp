@@ -26,7 +26,7 @@ only thing to run is the twin (`sim.py`).
 
 ## Cabling and port (once the frames are known)
 
-- `pip install openmhp pyserial` on the computer cabled to the apparatus (Linux, macOS or Windows; pure Python).
+- `pip install -U openmhp pyserial` on the computer cabled to the apparatus (Linux, macOS or Windows; pure Python).
 - Agilent cable 5075-0552 (DB9 to DB25, single tester) or 5075-0252 from the Dissolution Workstation kit; a USB-to-serial adapter such as Agilent 8121-1013 is what Agilent recommends. Daisy-chained testers use the RJ-11 "RS232 in/out" sockets with the 5075-0260 adapter kit.
 - 9600 baud (fixed on the 708-DS; required by all Agilent dissolution equipment); data bits, parity and stop bits are not documented (8N1 assumed, unverified).
 - Comm ID: Menu > Instrument > Instrument Settings 1 on the 708-DS; the placeholder frames use 01.

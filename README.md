@@ -142,8 +142,9 @@ OpenMHP runs on up to three kinds of machine. Trying it needs only the first.
 | **Instrument PC**: the computer wired to an instrument; it needs no agent | for real instruments | `mhp node`, serving that PC's instruments in the background |
 | **Lab gateway**: an always-on machine on the company network | when the lab network is closed to the outside, or scientists run experiments through the lab | the relay, pairing, and planned runs |
 
-Always start npx as `npx -y openmhp-cli@latest`: plain `npx openmhp-cli` reuses whatever version
-npx cached the first time.
+Always start npx as `npx -y openmhp-cli@latest`, and pip as `pip install -U`: plain
+`npx openmhp-cli` reuses whatever version npx cached the first time, and plain `pip install` keeps
+whatever version is already installed.
 
 ### Agent machine
 
@@ -154,7 +155,7 @@ npx -y openmhp-cli@latest setup                      # runtime, skills, and the 
 Or with pip, then register the `mhp-mcp` server with your harness yourself:
 
 ```bash
-pip install "openmhp[all]" && mhp skills install
+pip install -U "openmhp[all]" && mhp skills install
 claude mcp add --scope user openmhp -- mhp-mcp      # Claude Code; other harnesses: {"command": "mhp-mcp"}
 ```
 
@@ -169,7 +170,7 @@ knows, checks the answers against the instrument, asks for the gateway's pairing
 one, and keeps it running in the background:
 
 ```bash
-pip install "openmhp[node]"
+pip install -U "openmhp[node]"
 mhp node add                       # lists the ready-made packages
 mhp node add waters-empower-hplc
 ```
@@ -181,7 +182,7 @@ the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Gu
 ### Lab gateway
 
 ```bash
-pip install openmhp
+pip install -U openmhp
 mhp gateway init                      # the address others will use, and a certificate
 mhp gateway serve --install-service   # runs now and after every reboot
 mhp gateway pair                      # a one-time code for an instrument PC (15 minutes)

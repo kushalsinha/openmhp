@@ -19,7 +19,7 @@ Needed:
 
 Steps:
 
-1. `pip install openmhp` on the serving machine.
+1. `pip install -U openmhp` on the serving machine.
 2. Copy `config.example.json` to `config.json`: `request_dir`, `results_dir`, `software`,
    `allowed_schedules`, the chemistry caps `voltage_max_v` and `current_max_a`, and the timeouts
    (`result_wait_s` 1209600 s = 14 days covers a formation test).

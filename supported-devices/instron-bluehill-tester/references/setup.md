@@ -9,7 +9,7 @@ through pythonnet. Windows-only.
    read its reference: the service endpoint, the client assembly and the members for connecting,
    opening a method, setting specimen inputs, rate and limits, starting and stopping a test, and
    reading frame mode, crosshead status, force and displacement.
-2. `pip install openmhp pythonnet`.
+2. `pip install -U openmhp pythonnet`.
 3. Correct every member name in `config.example.json` `api` from the API help (every shipped
    name is a placeholder), set `endpoint`, `outputs_dir`, `methods_dir`, `load_cell_N`, and copy
    it to `config.json`.

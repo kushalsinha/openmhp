@@ -5,7 +5,7 @@ XPR/XSR MT-SICS manual; the three dosing commands (QDS, QDR, QDH) are placeholde
 Toledo for the dosing command set for your balance and head, write it into `descriptor.yaml` and
 `references/mt-sics.md`, and rehearse with the twin until then.
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. The balance's RS-232 socket to a PC serial port or USB-serial adapter, or the balance's
    USB device port with the Mettler Toledo USB driver (a virtual COM port). The dosing head is

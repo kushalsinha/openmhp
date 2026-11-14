@@ -1,6 +1,6 @@
 # Setting up the EUROSTAR 60 / 100 control
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. Either the IKA PC 1.1 cable from the station's RS-232 socket to the PC, or a USB cable from
    the Wireless Controller's USB port. For USB, install the IKA USB driver from ika.com first; the

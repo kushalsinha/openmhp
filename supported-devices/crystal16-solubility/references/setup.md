@@ -13,7 +13,7 @@ two folders on the CrystalClear PC. CrystalClear itself is Windows and is operat
 
 ## Install
 
-1. `pip install openmhp`
+1. `pip install -U openmhp`
 2. Copy `config.example.json` to `config.json`: `program_dir`, `export_dir`.
 3. `mhp serve pkg:<this folder> --http <port>` and read `connected`.
 

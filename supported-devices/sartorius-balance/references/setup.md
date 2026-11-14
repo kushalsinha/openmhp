@@ -1,6 +1,6 @@
 # Setting up a Sartorius SBI balance
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. The balance's RS-232 socket (9-pin, DCE wiring as in the Sartorius note) to a PC serial port
    or USB-serial adapter with a Sartorius data cable, or the balance's USB port on models that offer

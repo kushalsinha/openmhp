@@ -9,7 +9,7 @@ unverified. Until then, rehearse with the twin only.
 - The PLC Ethernet / fieldbus interface option from MBRAUN (fitted at the factory or by service)
   and its signal list for your box's PLC program version.
 - A PC or small Linux box on the same network with Python 3.11+ and
-  `pip install openmhp pymodbus`. Pure Python; runs on Linux, macOS or Windows.
+  `pip install -U openmhp pymodbus`. Pure Python; runs on Linux, macOS or Windows.
 - A network cable from the PLC's RJ45 port to the lab network (or a direct cable with fixed
   addresses).
 

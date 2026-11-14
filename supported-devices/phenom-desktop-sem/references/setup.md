@@ -3,7 +3,7 @@
 PPI (Phenom Programming Interface) is a licensed option: Thermo Fisher supplies the PyPhenom package,
 its reference document and a licence password bound to the instrument ID. Thermo's PPI page lists
 Windows as the supported OS for the PC that runs the scripts; that PC sits on the Phenom's network.
-Nothing in this package needs Windows itself (pure Python, `pip install openmhp`), but PyPhenom
+Nothing in this package needs Windows itself (pure Python, `pip install -U openmhp`), but PyPhenom
 ships for Windows, so plan on the PPI PC.
 
 1. Obtain PPI from Thermo Fisher (or the Phenom reseller) for your instrument: the PyPhenom

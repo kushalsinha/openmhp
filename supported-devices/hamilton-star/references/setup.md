@@ -4,7 +4,7 @@ Runs on the PC connected to the STAR by USB: Windows (with the Hamilton USB driv
 or libusb/WinUSB via Zadig for PyLabRobot), Linux or macOS (libusb). PyLabRobot documents the USB
 driver step per OS.
 
-1. `pip install openmhp pylabrobot` (PyLabRobot 0.1.x, or 1.0 where the same classes live under
+1. `pip install -U openmhp pylabrobot` (PyLabRobot 0.1.x, or 1.0 where the same classes live under
    `pylabrobot.legacy` with deprecation shims on the old paths; both import paths used here work).
 2. Close VENUS; only one program may hold the instrument.
 3. Build the deck in PyLabRobot once (`STARLetDeck()` or `STARDeck()`, assign carriers, tip racks,

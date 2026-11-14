@@ -4,7 +4,7 @@
 command document (the one Spin 3000 uses) from support@laurell.com, rewrite the `serial:` block
 and `references/serial.md`, and rehearse with the twin until then.
 
-Runs on Linux, macOS or Windows: pure Python, `pip install openmhp pyserial`.
+Runs on Linux, macOS or Windows: pure Python, `pip install -U openmhp pyserial`.
 
 1. Cable. The 650 controller's RS-232 socket (used by Spin 3000) through a straight cable to a
    USB-serial adapter, or its USB port with Laurell's driver (a virtual COM port). Indeck units

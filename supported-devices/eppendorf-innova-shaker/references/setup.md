@@ -12,7 +12,7 @@ Neither can be driven by this package; ask the vendor for the protocol and write
 
 ## What to install
 
-- `pip install openmhp pyserial` on the computer cabled to the shaker (Linux, macOS or Windows; pure Python).
+- `pip install -U openmhp pyserial` on the computer cabled to the shaker (Linux, macOS or Windows; pure Python).
 - A straight DB-9 RS-232 cable (or USB-to-RS-232 adapter) to the RS-232 socket on the right side of the control panel, below the power switch. The pinout is not printed in the manual; if nothing answers with a straight cable, try a null-modem cable.
 
 ## Shaker settings (RS232 / COMM screen on the front panel)

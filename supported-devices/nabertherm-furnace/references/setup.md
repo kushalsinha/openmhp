@@ -6,7 +6,7 @@
   on newer controllers it is built in, on older ones it is a retrofit option from Nabertherm.
   Controller firmware 1.51 or later (B400/C440/P470), module firmware 1.8 or later; program
   transfer needs a P-controller with module 1.14 and operating unit 1.79.
-- A PC or small Linux box on the same network with Python 3.11+ and `pip install openmhp pymodbus`.
+- A PC or small Linux box on the same network with Python 3.11+ and `pip install -U openmhp pymodbus`.
   Pure Python: runs on Linux, macOS or Windows.
 - A network cable from the controller's RJ45 port to the lab network (DHCP with a reservation,
   or a fixed address).
