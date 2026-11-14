@@ -26,8 +26,8 @@ from pathlib import Path
 
 # The run's tools, by MCP name: instruments through the gateway, and the run's own tools.
 INSTRUMENT_TOOLS = ("mhp_find", "mhp_describe", "mhp_read", "mhp_write", "mhp_invoke", "mhp_job", "mhp_estop",
-                    "mhp_run", "mhp_data")
-RUN_TOOLS = ("ask_scientist", "report", "finish")
+                    "mhp_run", "mhp_data", "mhp_method")
+RUN_TOOLS = ("ask_scientist", "report", "propose_charter", "finish")   # the run server offers each phase its own
 FILE_TOOLS = ("Read", "Edit", "Write", "Glob", "Grep", "Bash")
 # Credentials a harness might pick up from the gateway's own environment. A run gets exactly the gateway's LLM
 # key for runs (Turn.env) and none of these, so an operator's own login never pays for or answers as a run.

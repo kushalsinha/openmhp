@@ -164,6 +164,18 @@ def test_from_a_plain_english_request_to_a_finished_run():
     assert (pub / "out" / "temps.csv").is_file() and "block held at 30 C" in (pub / "out" / "report.md").read_text()
     assert drivers["thermocycler-01"]._lease_holder() is None
     assert not any(e["run"] == rid for e in gw.state.get("run_tokens", {}).values())
+
+    # a planner that ends its turn with nothing proposed and nothing asked: what it said reaches the scientist
+    quiet = agent.parent / "quiet.py"
+    quiet.write_text("import json, sys\nargs = sys.argv[1:]\nprint(json.dumps({'ok': True, 'session': "
+                     "args[args.index('--session') + 1], 'text': 'I could not submit the charter: the tool was denied.', "
+                     "'cost_usd': 0.0, 'tokens': 1}))\n")
+    sup.adapters["quiet"] = H.Command([sys.executable, str(quiet)])
+    rid3 = gw_cmd("mhp-gw open")[1]["run"]
+    assert gw_cmd(f"mhp-gw request {rid3} --harness quiet", "Warm the block.")[0] == GW.OK
+    wait_until(lambda: sup.record(rid3).doc.get("open_questions"), what="the stalled planner's question")
+    q = next(iter(sup.record(rid3).doc["open_questions"].values()))["question"]
+    assert "without proposing" in q and "tool was denied" in q, q
     sup.stop_event.set()
     node.close()
 

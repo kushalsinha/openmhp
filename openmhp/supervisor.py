@@ -221,11 +221,14 @@ class RunCtl:
 
 class Supervisor:
     def __init__(self, gateway, *, lab_root: Path, runs_dir: Path, adapters: dict | None = None,
-                 run_as_users: bool = False, poll_s: float = 0.5):
+                 run_as_users: bool = False, poll_s: float = 0.5, local_login: bool = False):
         from .harness import ADAPTERS
         self.gw, self.lab_root, self.runs_dir = gateway, Path(lab_root), Path(runs_dir)
         self.adapters = adapters if adapters is not None else ADAPTERS
         self.run_as_users, self.poll_s = run_as_users, poll_s
+        # a single-machine trial only: harnesses use this machine's own sign-in (e.g. Claude Code's keychain login)
+        # instead of a key in llm.env. Credential variables are still stripped from every run's environment.
+        self.local_login = local_login
         self.ctl: dict[str, RunCtl] = {}
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
@@ -261,7 +264,7 @@ class Supervisor:
             raise ValueError("the charter names another run or scientist")
         if harness not in self.adapters:
             raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
-        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env():
+        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env() and not self.local_login:
             raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
         rec = self.record(run_id, owner)
         (self.runs_dir / run_id).mkdir(parents=True, exist_ok=True)
@@ -324,7 +327,7 @@ class Supervisor:
         """The scientist's request in plain English: start a planner for it."""
         if harness not in self.adapters:
             raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
-        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env():
+        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env() and not self.local_login:
             raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
         rec = self.record(run_id, owner)
         if rec.state != "open":
@@ -520,6 +523,12 @@ class Supervisor:
                       said=(result.text or "")[:2000])
             if result.ok:
                 c.failures = 0
+                rec = self.record(run_id)
+                if rec.state == "planning" and not rec.doc.get("open_questions") and c.triggers.empty():
+                    # the planner ended its turn with nothing proposed and nothing asked: nothing would ever wake it,
+                    # so what it said goes to the scientist as a question rather than into a log nobody reads
+                    self.ask(run_id, "The planner stopped without proposing a charter. It said:\n"
+                             + (result.text or "(nothing)")[:1500], meanwhile="wait", by_supervisor=True)
             else:
                 c.failures += 1
                 if c.failures >= STUCK_AFTER_FAILED_TURNS and c.record.state in ("running", "planning"):

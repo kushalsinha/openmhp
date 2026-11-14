@@ -5,6 +5,8 @@ and the results come home. Everything runs on this machine, in a temporary folde
     python examples/gateway_closed_loop/demo.py                       a scripted agent (free, no model)
     python examples/gateway_closed_loop/demo.py --harness claude-code Claude Code as the planner and run agent
                                                                       (needs ANTHROPIC_API_KEY; it costs money)
+    ... --harness claude-code --use-this-machines-login                Claude Code signed in on this machine instead
+                                                                      of a key (a one-machine trial only)
 
 What is real: the gateway, its charter checks, the run token, the supervisor, the lab PC relaying a simulated
 chromatograph, mhp-gw (called as the gateway's SSH forced command would call it), the manifest check and the
@@ -31,12 +33,21 @@ REPO = HERE.parent.parent
 
 
 def setup_env(home: Path) -> None:
+    # the gateway's MCP servers for runs are started by the harness: they import openmhp from this checkout
+    os.environ["PYTHONPATH"] = os.pathsep.join([str(REPO)] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p])
     os.environ.update(OPENMHP_HOME=str(home), OPENMHP_LAB_ROOT=str(home / "lab"), OPENMHP_NO_UPDATE_CHECK="1",
                       OPENMHP_NO_NOTIFY="1", OPENMHP_SIM_TIME_SCALE=os.environ.get("OPENMHP_SIM_TIME_SCALE", "0.002"))
     sys.path.insert(0, str(REPO))
 
 
-def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False) -> dict:
+ANSWER = ("Use the request as written: the sample is exactly acetone, ethanol, isopropanol and toluene; 1 uL per injection; "
+          "at most 10 injections and 10 uL of sample in total; carrier flow 0.5 to 5 mL/min; oven ramp 2 to 40 C/min; "
+          "target resolution 1.5 between every neighbouring peak; shortest run time wins; use my gc-separation-loop "
+          "optimizer for every next condition; no deadline; nobody needs to be in the lab, and no bake-out.")
+
+
+def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False, local_login: bool = False,
+        timeout_s: float = 1800) -> dict:
     home = Path(home or tempfile.mkdtemp(prefix="openmhp-demo-"))
     setup_env(home)
     from openmhp import gateway as G, gw_shell as GW, harness as H, relay as R, scientists as S, watcher as W
@@ -67,11 +78,12 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
     while time.time() < end and "gc-01" not in getattr(gw.nodes.get("bench"), "devices", {}):
         time.sleep(0.05)
     adapters = {"scripted": H.Command([sys.executable, str(HERE / "scripted_agent.py")]), "claude-code": H.ClaudeCode()}
-    sup = Supervisor(gw, lab_root=S.lab_root(), runs_dir=G.RUNS_DIR, adapters=adapters, poll_s=0.1)
-    if harness == "claude-code":
+    sup = Supervisor(gw, lab_root=S.lab_root(), runs_dir=G.RUNS_DIR, adapters=adapters, poll_s=0.1, local_login=local_login)
+    if harness == "claude-code" and not local_login:
         key = os.environ.get("ANTHROPIC_API_KEY")
         if not key:
-            raise SystemExit("--harness claude-code needs ANTHROPIC_API_KEY (the gateway's key for runs)")
+            raise SystemExit("--harness claude-code needs ANTHROPIC_API_KEY (the gateway's key for runs), "
+                             "or --use-this-machines-login for a one-machine trial")
         (G.GW_DIR / "llm.env").write_text(f"ANTHROPIC_API_KEY={key}\n")
         os.chmod(G.GW_DIR / "llm.env", 0o600)
     sup.start()
@@ -92,7 +104,7 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
     gw_cmd(f"mhp-gw request {rid} --harness {harness}", request)
 
     since, digest, answered = 0.0, None, set()
-    deadline = time.time() + 1800
+    deadline = time.time() + timeout_s
     while digest is None and time.time() < deadline:
         ans = gw_cmd(f"mhp-gw wait {rid} --since {since} --timeout 60")
         since = ans.get("since", since)
@@ -100,7 +112,7 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
             if qid in answered:
                 continue
             tell("gateway", f"asks: {q['question']}")
-            reply = "Yes, exactly those four, and 10 uL in total is fine."
+            reply = ANSWER
             tell("scientist", reply)
             gw_cmd(f"mhp-gw answer {rid} {qid}", reply)
             answered.add(qid)
@@ -150,6 +162,9 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--harness", default="scripted", choices=["scripted", "claude-code"])
+    ap.add_argument("--use-this-machines-login", action="store_true",
+                    help="(claude-code) use Claude Code's sign-in on this machine instead of ANTHROPIC_API_KEY")
+    ap.add_argument("--timeout", type=float, default=1800, help="seconds to wait for the plan and the run")
     a = ap.parse_args()
-    out = run(a.harness)
+    out = run(a.harness, local_login=a.use_this_machines_login, timeout_s=a.timeout)
     print(json.dumps(out, indent=1))

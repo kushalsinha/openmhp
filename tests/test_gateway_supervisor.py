@@ -96,6 +96,13 @@ def test_harness_adapters():
     allowed = first[first.index("--allowedTools") + 1].split(",")
     assert "Bash" in allowed and "mcp__openmhp__mhp_invoke" in allowed and "mcp__run__ask_scientist" in allowed
     assert "mcp__openmhp__mhp_lab" not in allowed                       # a run never adds or scans instruments
+    # every tool the gateway gives a planner or a run is allowed: dontAsk refuses anything left out
+    from openmhp import mcp_bridge as B, run_tools as RT
+    for mode in ("plan", "run"):
+        os.environ["OPENMHP_RUN_MODE"] = mode
+        assert all(f"mcp__run__{t}" in allowed for t in RT.offered()), (mode, RT.offered())
+    os.environ.pop("OPENMHP_RUN_MODE")
+    assert {f"mcp__openmhp__{t['name']}" for t in B.TOOLS} - set(allowed) == {"mcp__openmhp__mhp_lab"}
     later = cc.command(turn, "11111111-2222-3333-4444-555555555555", first=False)
     assert later[later.index("--resume") + 1].startswith("1111") and "--session-id" not in later
     assert "--append-system-prompt-file" not in later                  # kept with the session
