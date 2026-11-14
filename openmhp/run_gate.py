@@ -124,9 +124,14 @@ class RunGate:
             return None, self._error(mid, FORBIDDEN, f"{alias} {name} has bounded parameters, so the run must pass them "
                                      "explicitly rather than by a saved method", charter="outside", instrument=alias, action=name), None
         for p, b in spec.items():
-            if p in args and not _in_bounds(args[p], b):
-                return None, self._error(mid, FORBIDDEN, f"{alias} {name} {p} = {args[p]!r} is outside the charter's {b}",
-                                         charter="outside", instrument=alias, action=name, param=p, bounds=b), None
+            for v in C.values_at(args, p):                   # a plain name, or a path into a structured parameter
+                if v is C._SHAPE:
+                    return None, self._error(mid, FORBIDDEN, f"{alias} {name} {p}: the value is not shaped as the "
+                                             "charter's path expects, so it cannot be checked", charter="outside",
+                                             instrument=alias, action=name, param=p, bounds=b), None
+                if not _in_bounds(v, b):
+                    return None, self._error(mid, FORBIDDEN, f"{alias} {name} {p} = {v!r} is outside the charter's {b}",
+                                             charter="outside", instrument=alias, action=name, param=p, bounds=b), None
         with self.lock:
             count = budgets.get("count") or {}
             counts = count.get("instrument") == alias and count.get("action") == name
@@ -137,7 +142,12 @@ class RunGate:
             for cname, c in (self.charter.get("consumables") or {}).items():
                 for u in c.get("uses") or []:
                     if u.get("instrument") == alias and u.get("action") == name:
-                        amount = float(args.get(u.get("param"), 0) or 0) * float(u.get("scale", 1))
+                        found = C.values_at(args, str(u.get("param")))
+                        if any(v is C._SHAPE or isinstance(v, bool) or not isinstance(v, (int, float)) for v in found):
+                            return None, self._error(mid, FORBIDDEN, f"{cname}: {alias} {name} {u.get('param')} is not "
+                                                     "a number where the charter counts it, so its use cannot be "
+                                                     "counted", charter="consumable", consumable=cname), None
+                        amount = sum(found) * float(u.get("scale", 1))
                         spend[cname] = spend.get(cname, 0.0) + amount
                 used = self.usage["consumables"].get(cname, 0.0)
                 if cname in spend and not dry and used + spend[cname] > c["limit"] + 1e-12:

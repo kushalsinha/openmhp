@@ -30,16 +30,70 @@ cleanup) guide the run's agent; the structured fields are what code enforces.
 
 An action or setting the envelope does not list is outside it. A parameter the envelope does not
 bound is free (the device's own limits still apply). `{}` for an action means "allowed, any params".
+
+A bounded parameter can sit inside a structured one. Name it by its path: `.` steps into an object and
+`[]` into every entry of a list, so every value found must be in range:
+
+      "envelope": {"gc": {"actions": {"run_method": {
+          "carrier_flow_ml_min": {"min": 0.5, "max": 5},
+          "oven_program[].ramp_c_min": {"min": 2, "max": 40},     # each step of the oven program
+          "inlet.split_ratio": {"in": [10, 20, 50]}}}}}
+
+An entry that leaves the field out is free, as a top-level parameter left out is (the device's default
+applies). A value of the wrong shape (not a list where the path says `[]`, not an object where it steps in)
+is refused, because it cannot be checked. Consumable `uses` take paths too; the amounts found are added up.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 
 VERSION = 1
 AUTONOMY = ("suggest", "act", "campaigns")
 REQUIRED = ("run", "owner", "objective", "instruments", "envelope")
+_PATH = re.compile(r"^[A-Za-z_][\w-]*(\[\])?(\.[A-Za-z_][\w-]*(\[\])?)*$")
+_SHAPE = object()                      # values_at found a value of the wrong shape on the way
+
+
+def values_at(obj, path: str) -> list:
+    """Every value at `path` in obj ('a.b', 'a[].b', 'a[]'). Missing fields give nothing; a value of the wrong
+    shape on the way gives the marker _SHAPE, which no bound accepts."""
+    found = [obj]
+    for seg in path.split("."):
+        each, key, nxt = seg.endswith("[]"), seg[:-2] if seg.endswith("[]") else seg, []
+        for v in found:
+            if v is _SHAPE:
+                nxt.append(v)
+                continue
+            if not isinstance(v, dict):
+                nxt.append(_SHAPE)
+                continue
+            if key not in v:
+                continue
+            v = v[key]
+            if each:
+                if isinstance(v, list):
+                    nxt.extend(v)
+                else:
+                    nxt.append(_SHAPE)
+            else:
+                nxt.append(v)
+        found = nxt
+    return found
+
+
+def param_text(path: str) -> str:
+    """'oven_program[].ramp_c_min' -> 'ramp_c_min in each oven_program entry', for the English summary."""
+    if "." not in path and "[]" not in path:
+        return path
+    parts = path.split(".")
+    last = parts[-1]
+    where = " ".join(("each " + p[:-2] + " entry") if p.endswith("[]") else p for p in parts[:-1])
+    if last.endswith("[]"):
+        return f"each {last[:-2]} entry" + (f" of {where}" if where else "")
+    return f"{last} in {where}"
 
 
 def canonical(charter: dict) -> bytes:
@@ -102,6 +156,9 @@ def problems(charter: dict) -> list[str]:
                         out.append(f"envelope.{alias}.actions.{name}: expected {{param: bounds}}")
                         continue
                     for param, b in spec.items():
+                        if not _PATH.match(str(param)):
+                            out.append(f"envelope.{alias}.actions.{name}: {param!r} is not a parameter path "
+                                       "(name, name.field, or name[].field)")
                         out += _range_problems(f"envelope.{alias}.actions.{name}.{param}", b)
                 else:
                     out += _range_problems(f"envelope.{alias}.settings.{name}", spec)
@@ -111,6 +168,8 @@ def problems(charter: dict) -> list[str]:
         for u in c.get("uses") or []:
             if u.get("instrument") not in inst:
                 out.append(f"consumables.{cname}: uses an instrument the run does not have ({u.get('instrument')!r})")
+            if u.get("param") is not None and not _PATH.match(str(u["param"])):
+                out.append(f"consumables.{cname}: {u['param']!r} is not a parameter path")
     b = charter.get("budgets") or {}
     if "experiments" in b and not (isinstance(b["experiments"], int) and b["experiments"] >= 0):
         out.append("budgets.experiments: a whole number")
@@ -154,7 +213,7 @@ def summary(charter: dict) -> str:
     lines.append("## What the run may do without asking")
     for alias, e in (charter.get("envelope") or {}).items():
         for name, spec in (e.get("actions") or {}).items():
-            bounds = "; ".join(f"{p} {_bounds_text(b)}" for p, b in spec.items()) or "any parameters"
+            bounds = "; ".join(f"{param_text(p)} {_bounds_text(b)}" for p, b in spec.items()) or "any parameters"
             lines.append(f"- {alias}: run {name} ({bounds})")
         for name, spec in (e.get("settings") or {}).items():
             lines.append(f"- {alias}: set {name} to {_bounds_text(spec)}")

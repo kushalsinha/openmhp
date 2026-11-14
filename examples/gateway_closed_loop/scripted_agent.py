@@ -88,6 +88,7 @@ if planning:
             "autonomy": "act",
             "instruments": {"gc": gc},
             "envelope": {"gc": {"actions": {"run_method": {"carrier_flow_ml_min": {"min": 0.5, "max": 5},
+                                                           "oven_program[].ramp_c_min": {"min": 2, "max": 40},
                                                            "injection_volume_ul": {"min": 1, "max": 1}}},
                                 "settings": {}}},
             "consumables": {"sample_ul": {"limit": 10, "uses": [{"instrument": "gc", "action": "run_method",

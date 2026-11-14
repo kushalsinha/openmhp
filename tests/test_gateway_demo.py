@@ -27,6 +27,7 @@ def test_closed_loop_demo():
     assert out["best"] and out["best"]["resolution_min"] >= 1.5, out
     assert out["verified"] and out["acknowledged"] and out["purged"], out
     assert out["lease_after"] is None, out
+    assert "ramp_c_min in each oven_program entry 2 to 40" in out["charter"], out["charter"]   # the nested limit is in it
 
 
 if __name__ == "__main__":

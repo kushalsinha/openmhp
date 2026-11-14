@@ -78,6 +78,55 @@ def test_charter_format_digest_and_summary():
         assert words in text, (words, text)
 
 
+def test_limits_inside_structured_parameters():
+    import tempfile
+    from pathlib import Path
+    from openmhp.run_gate import RunGate
+    gc = {"version": 1, "run": "R-2611-0050", "owner": "alice", "objective": "fastest resolved GC run",
+          "instruments": {"gc": "bench/gc-01"},
+          "envelope": {"gc": {"actions": {"run_method": {
+              "carrier_flow_ml_min": {"min": 0.5, "max": 5},
+              "oven_program[].ramp_c_min": {"min": 2, "max": 40},
+              "inlet.split_ratio": {"in": [10, 20]}}}}},
+          "consumables": {"sample_ul": {"limit": 3, "uses": [{"instrument": "gc", "action": "run_method",
+                                                             "param": "injections[].volume_ul"}]}}}
+    assert C.problems(gc) == []
+    assert C.values_at({"a": [{"b": 1}, {"c": 2}, {"b": 3}]}, "a[].b") == [1, 3]           # a missing field is free
+    assert C.values_at({"a": {"b": 1}}, "a[].b") == [C._SHAPE]                              # not a list: unchecked
+    assert C.values_at({"a": 5}, "a.b") == [C._SHAPE] and C.values_at({}, "a[].b") == []
+    text = C.summary(gc)
+    assert "ramp_c_min in each oven_program entry 2 to 40" in text and "split_ratio in inlet one of 10, 20" in text, text
+
+    gate = RunGate(gc, Path(tempfile.mkdtemp()))
+    def invoke(**params):
+        sent, err, commit = gate.check("bench/gc-01", {"jsonrpc": "2.0", "id": 1, "method": "actions/invoke",
+                                                      "params": {"name": "run_method", "params": params}})
+        if commit:
+            commit({"result": {}})
+        return err["error"] if err else "sent"
+    prog = lambda *ramps: [{"temp": 60, "hold_s": 30}] + [{"temp": 200, "ramp_c_min": r} for r in ramps]
+    assert invoke(carrier_flow_ml_min=1, oven_program=prog(20)) == "sent"           # the first step has no ramp: free
+    e = invoke(carrier_flow_ml_min=1, oven_program=prog(20, 45))                    # one step too steep
+    assert e["data"]["charter"] == "outside" and e["data"]["param"] == "oven_program[].ramp_c_min" and "45" in e["message"]
+    assert invoke(oven_program=prog(1.5))["data"]["bounds"] == {"min": 2, "max": 40}
+    e = invoke(oven_program={"temp": 200, "ramp_c_min": 45})                        # not a list: cannot be checked
+    assert e["data"]["charter"] == "outside" and "shaped" in e["message"]
+    assert invoke(inlet={"split_ratio": 20}) == "sent" and invoke(inlet={"split_ratio": 50})["data"]["param"] == "inlet.split_ratio"
+    assert invoke(inlet=20)["data"]["charter"] == "outside"
+    # a consumable counted inside a list adds up every entry, and a value it cannot count is refused
+    assert invoke(injections=[{"volume_ul": 1}, {"volume_ul": 1}]) == "sent"
+    assert invoke(injections=[{"volume_ul": 1}, {"volume_ul": 1}])["data"]["charter"] == "consumable"   # 2 + 2 > 3
+    assert invoke(injections={"volume_ul": 1})["data"]["charter"] == "consumable"
+    assert invoke(injections=[{"volume_ul": "lots"}])["data"]["charter"] == "consumable"
+    assert abs(gate.usage["consumables"]["sample_ul"] - 2) < 1e-9
+
+    bad = copy.deepcopy(gc)
+    bad["envelope"]["gc"]["actions"]["run_method"]["oven_program[.ramp"] = {"max": 1}
+    bad["consumables"]["sample_ul"]["uses"][0]["param"] = "x..y"
+    found = " | ".join(C.problems(bad))
+    assert "is not a parameter path" in found and "consumables.sample_ul" in found, found
+
+
 # ---- a gateway, a lab PC with three simulated instruments, and a run whose charter covers two ----------
 _LAB = []
 

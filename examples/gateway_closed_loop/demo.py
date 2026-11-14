@@ -103,7 +103,7 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
     tell("agent", f"opened run {rid}, handed over gc-separation-loop, sent the request")
     gw_cmd(f"mhp-gw request {rid} --harness {harness}", request)
 
-    since, digest, answered = 0.0, None, set()
+    since, digest, answered, shown = 0.0, None, set(), {}
     deadline = time.time() + timeout_s
     while digest is None and time.time() < deadline:
         ans = gw_cmd(f"mhp-gw wait {rid} --since {since} --timeout 60")
@@ -156,7 +156,8 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
     node.close()
     return {"run": rid, "state": meta["state"], "injections": len(history), "best": best, "verified": not bad,
             "acknowledged": bool(ack.get("ok")), "purged": bool((S.load_run("alice", rid) or {}).get("purged")),
-            "lease_after": gc._lease_holder(), "spent_usd": meta.get("spent_usd", 0.0), "home": str(home)}
+            "lease_after": gc._lease_holder(), "spent_usd": meta.get("spent_usd", 0.0), "home": str(home),
+            "charter": shown.get("charter")}
 
 
 if __name__ == "__main__":
