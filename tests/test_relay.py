@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, ".")
 os.environ["OPENMHP_HOME"] = tempfile.mkdtemp(prefix="openmhp-relay-tests-")
 HOME = Path(os.environ["OPENMHP_HOME"])
+os.environ["OPENMHP_USER_SSH_CONFIG"] = str(HOME / "user-ssh-config")      # never the real ~/.ssh/config
 
 SKIP = None if shutil.which("openssl") else "openssl is needed to make the gateway's certificate"
 try:
@@ -204,7 +205,10 @@ def test_relay_end_to_end():
     # ---- an agent machine pairs with a code (SPEC 9.2): nothing to paste, the certificate is pinned
     from openmhp import agent as AG
     from openmhp.client import HttpDevice
+    hostkey = HOME / "ssh_host_ed25519_key.pub"
+    hostkey.write_text("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl root@gw\n")
     with contextlib.redirect_stderr(log):
+        assert G.ssh_setup(["host=127.0.0.1", "port=2222", f"host-key={hostkey}", "login=mhp"]) == 0
         assert G.pair_agent("laptop") == 0 and G.pair() == 0
     acode = next(c for c, v in G.load()["codes"].items() if v.get("kind") == "agent")
     ncode = next(c for c, v in G.load()["codes"].items() if v.get("kind", "node") == "node")
@@ -219,6 +223,20 @@ def test_relay_end_to_end():
     assert Path(acfg["pin"]).is_file() and "laptop" in G.load()["agents"].values()
     with raises(SystemExit):                                    # single use
         AG.join(base, acode, quiet=True)
+    # SSH: the machine's key went with the code; sshd will accept it for mhp-gw as scientist 'laptop' only
+    from openmhp import scientists as S, ssh_access as SA
+    if AG.SSH_KEY.with_suffix(".pub").is_file():                # ssh-keygen exists on this machine
+        assert acfg["ssh"] == {"alias": "mhp-gateway", "host": "127.0.0.1", "port": 2222, "login": "mhp", "scientist": "laptop"}
+        mine = AG.SSH_KEY.with_suffix(".pub").read_text().split()
+        assert S.load_profile("laptop")["ssh_key"] == " ".join(mine[:2])
+        lines = SA.keys_for("mhp", G.load()["ssh"])
+        assert len(lines) == 1 and "--scientist laptop" in lines[0] and lines[0].endswith("openmhp:laptop")
+        conf = AG.SSH_CONFIG.read_text()
+        assert "Host mhp-gateway" in conf and "Port 2222" in conf and "User mhp" in conf and "StrictHostKeyChecking yes" in conf
+        assert AG.SSH_KNOWN.read_text().startswith("[127.0.0.1]:2222 ssh-ed25519 AAAAC3")
+        assert f'Include "{AG.SSH_CONFIG}"' in AG.user_ssh_config().read_text()
+    else:
+        print("skip: no ssh-keygen; pairing without SSH")
     dev = HttpDevice(f"{base}/bench/{oid}/", "laptop-test")      # no token given, no env: agent.json supplies both
     assert dev.token == acfg["token"] and dev._ctx is not None and dev.call("ping")["ok"] is True
     assert AG.access("https://elsewhere.example/dev") == (None, None)   # the token and the pin are not offered elsewhere
@@ -231,6 +249,7 @@ def test_relay_end_to_end():
     with contextlib.redirect_stderr(log):
         assert AG.status() == 0 and AG.leave() == 0 and AG.status() == 1
     assert not AG.AGENT_FILE.is_file() and AG.access(f"{base}/bench/{oid}/") == (None, None)
+    assert not AG.SSH_CONFIG.exists() and "Include" not in (AG.user_ssh_config().read_text() if AG.user_ssh_config().is_file() else "")
 
     # ---- node goes away: 503, nothing queued; comes back: re-registers, works, nothing replayed
     node.close()

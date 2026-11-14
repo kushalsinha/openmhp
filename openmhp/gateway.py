@@ -9,6 +9,7 @@ command either finishes the job or prints the one thing to do next.
     mhp gateway pair-agent [name]     print a one-time code for an agent machine:  mhp agent --join <this url> <code>
     mhp gateway add-agent <name>      let one agent machine through by hand; prints the token to paste there
     mhp gateway status | check        what is connected, which lab PCs run an old OpenMHP, and what to fix
+    mhp gateway ssh [users] [apply]   let scientists' machines run mhp-gw and copy files over SSH (keys arrive at pairing)
 
 Agent face (bearer = agent token):  POST /agent/join (code, no token)    GET /    GET /<node>/<device>/mhp.json    POST /<node>/<device>/rpc
                                     GET /<node>/<device>/events (SSE)         /directory/{rpc,mhp.json}
@@ -68,6 +69,7 @@ def save(state: dict) -> None:
     STATE.write_text(json.dumps(state, indent=1), encoding="utf-8")
     try:
         os.chmod(STATE, 0o600)
+        os.chmod(GW_DIR, 0o700)                   # tokens and the TLS key: this account only, never a scientist's run
     except OSError:
         pass
 
@@ -256,7 +258,28 @@ class Gateway:
         token = secrets.token_urlsafe(24)
         agents[token] = name
         self.persist()
-        return 200, {"agent_token": token, "name": name, "directory": agent_url(self.state, "directory")}
+        return 200, {"agent_token": token, "name": name, "directory": agent_url(self.state, "directory"),
+                     "ssh": self.register_scientist_key(name, body.get("ssh_key"))}
+
+    def register_scientist_key(self, name: str, key: str | None) -> dict | None:
+        """The machine's SSH key, kept in the scientist's profile so sshd accepts it for mhp-gw only.
+        None when this gateway has no SSH access set up or the machine sent no key; an error the agent
+        machine can show otherwise. Pairing itself never fails over SSH."""
+        cfg = self.state.get("ssh")
+        if not cfg or not key:
+            return None
+        from . import scientists as S, ssh_access as SA
+        try:
+            sci = S.check_name(name.lower())
+            root = Path(cfg["lab_root"])
+            if cfg.get("mode") == "users" and not S.folder(sci, root).is_dir():
+                return {"error": f"no folder for scientist {sci!r} yet: the gateway operator runs `sudo mhp gateway "
+                                 f"pair-agent {sci}` first, then this machine pairs with the new code"}
+            S.create(sci, root=root, ssh_key=SA.check_key(key), agent=name)
+        except ValueError as e:
+            return {"error": str(e)}
+        return {"host": cfg["host"], "port": cfg.get("port", 22), "login": SA.login_for(sci, cfg),
+                "host_key": cfg["host_key"], "scientist": sci}
 
     def register(self, node: Node, body: dict) -> None:
         node.last_poll = time.time()              # registering counts as alive until the first poll arrives
@@ -597,6 +620,21 @@ def pair_agent(name: str | None = None) -> int:
     if state is None:
         say("no gateway on this machine yet. Run `mhp gateway init` first.")
         return 1
+    ssh = state.get("ssh") or {}
+    if ssh.get("mode") == "users":                 # each scientist gets their own Linux user before their machine joins
+        from . import scientists as S, ssh_access as SA
+        if not name:
+            say("this gateway gives every scientist their own Linux user: name them, e.g.  sudo mhp gateway pair-agent alice")
+            return 2
+        try:
+            sci = S.check_name(name.lower())
+            for step in SA.apply_system_user(sci, ssh):
+                say(f"  {step}")
+        except (ValueError, PermissionError, RuntimeError) as e:
+            say(str(e))
+            return 1
+        name = sci
+        say(f"scientist '{sci}': Linux user {SA.login_for(sci, ssh)}, folder {S.folder(sci, Path(ssh['lab_root']))}", "")
     code = new_code()
     entry = {"expires": time.time() + AGENT_CODE_TTL_S, "kind": "agent"}
     if name:
@@ -708,6 +746,9 @@ def status() -> int:
         for name, cmd in behind:
             say(f"  {name}:  {cmd or NODE_UPGRADE_GENERIC}")
     say("", "agents allowed through: " + (", ".join(sorted(set(state["agents"].values()))) or "none yet (mhp gateway pair-agent)"))
+    ssh = state.get("ssh")
+    say("scientists over SSH: " + (f"{ssh['mode']} mode, {ssh['host']}:{ssh.get('port', 22)}, folders in {ssh['lab_root']}"
+                                   if ssh else "off (mhp gateway ssh)"))
     say("", f"network requirement: lab PCs and agent machines must reach {state['server_name']}:{state.get('listen', 443)}. Nothing inbound to the lab.")
     return 0
 
@@ -758,6 +799,63 @@ def check() -> int:
     return 0 if not problems else 1
 
 
+def ssh_setup(words: list[str]) -> int:
+    """`mhp gateway ssh [users] [login=NAME] [port=N] [host=NAME] [host-key=FILE] [apply]`: turn on SSH access
+    for scientists' machines. Without `apply` it records the settings and prints what to install; with
+    `apply` (as root) it writes the sshd snippet and the key helper too."""
+    from . import scientists as S, ssh_access as SA
+    import getpass
+    state = load()
+    if state is None:
+        say("no gateway on this machine yet. Run `mhp gateway init` first.")
+        return 1
+    opts = dict(w.split("=", 1) for w in words if "=" in w)
+    flags = {w for w in words if "=" not in w}
+    unknown = flags - {"users", "single", "apply"} | set(opts) - {"login", "port", "host", "host-key", "root"}
+    if unknown:
+        say(f"unknown: {', '.join(sorted(unknown))}. Usage: mhp gateway ssh [users] [login=NAME] [port=N] [host=NAME] "
+            "[host-key=FILE] [root=DIR] [apply]")
+        return 2
+    service_user = os.environ.get("SUDO_USER") or getpass.getuser()
+    hk = SA.host_key(opts.get("host-key"))
+    if hk is None:
+        say("cannot read this machine's SSH host key (is the OpenSSH server installed?). Give one with host-key=<file.pub>.")
+        return 1
+    old = state.get("ssh") or {}
+    mode = "users" if "users" in flags else ("single" if "single" in flags else old.get("mode", "single"))
+    # users mode: scientists' users must reach the lab root, so it lives outside this gateway's private folder
+    lab_root = Path(opts.get("root") or old.get("lab_root") or ("/srv/openmhp" if mode == "users" else S.lab_root())).resolve()
+    cfg = {"mode": mode,
+           "login": opts.get("login") or old.get("login") or service_user,
+           "port": int(opts.get("port") or old.get("port") or 22),
+           "host": opts.get("host") or old.get("host") or state["server_name"],
+           "host_key": hk, "lab_root": str(lab_root), "python": sys.executable,
+           "service_user": service_user, "group": old.get("group", "mhp-scientists"), "openmhp_home": str(HOME.resolve())}
+    state["ssh"] = cfg
+    save(state)
+    try:
+        lab_root.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        say(f"cannot create {lab_root} as {getpass.getuser()}: run `sudo mkdir -p {lab_root} && sudo chown {service_user} {lab_root}` once.")
+    say(f"scientists' machines will use SSH to {cfg['host']}:{cfg['port']} ({cfg['mode']} mode"
+        + (f", account {cfg['login']}" if cfg["mode"] == "single" else ", one Linux user per scientist") + ")",
+        f"their folders: {cfg['lab_root']}/scientists/", "")
+    if "apply" in flags:
+        if not hasattr(os, "geteuid") or os.geteuid() != 0:
+            say("`apply` writes into /etc and /usr/local: run it with sudo.")
+            return 1
+        SA.HELPER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SA.HELPER_PATH.write_text(SA.helper_script(cfg), encoding="utf-8")
+        os.chmod(SA.HELPER_PATH, 0o755)
+        SA.SNIPPET_PATH.write_text(SA.sshd_snippet(cfg), encoding="utf-8")
+        say(f"wrote {SA.HELPER_PATH} and {SA.SNIPPET_PATH}. Reload sshd to use them:  sudo systemctl reload ssh")
+    else:
+        say(f"To finish, run once as root:  sudo {sys.executable} -m openmhp.cli gateway ssh apply",
+            f"It writes {SA.HELPER_PATH}:", "", SA.helper_script(cfg), f"and {SA.SNIPPET_PATH}:", "", SA.sshd_snippet(cfg))
+    say("Machines that pair from now on (mhp gateway pair-agent) get SSH access with no keys to paste.")
+    return 0
+
+
 def main(verb: str | None, args: list[str], *, server_name=None, listen=None, cert=None, key=None, host=None,
          install_service=False, dry_run_service=False) -> int:
     if verb in (None, "status", "list"):
@@ -794,5 +892,7 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
         return remove(verb.split("-")[1], args[0])
     if verb == "check":
         return check()
-    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check")
+    if verb == "ssh":
+        return ssh_setup(args)
+    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh")
     return 2

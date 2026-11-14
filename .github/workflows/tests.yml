@@ -42,6 +42,7 @@ jobs:
           python tests/test_inclusion.py
           python tests/test_methods.py
           python tests/test_relay.py
+          python tests/test_gateway_runs.py
 
   # The one check `main` requires, because this name does not change when the matrix does.
   #

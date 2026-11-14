@@ -441,6 +441,24 @@ lab PC's token never leaves it, and the gateway is the approval boundary. `mhp g
 prints `OK` or `FIX` for the gateway, each lab PC and each instrument. The wire-level rules
 are in `SPEC.md` (transports).
 
+**Scientists' folders on the gateway (preview).** A gateway can also keep one folder per
+scientist, which their machine reaches over SSH with plain commands. Turn it on once on the
+gateway; machines that pair afterwards get access with no keys to paste:
+
+```bash
+mhp gateway ssh                      # then, as root: mhp gateway ssh apply, and reload sshd
+                                     # (`mhp gateway ssh users` gives each scientist their own Linux user)
+
+# on a paired scientist's machine
+ssh mhp-gateway mhp-gw open                                   # a new run in your folder; prints its ID
+rsync -a ./my-analysis/ mhp-gateway:runs/R-2611-0001/in/      # hand over scripts, skills and data
+rsync -a mhp-gateway:runs/R-2611-0001/out/ ./results/         # bring results home
+```
+
+The SSH server runs `mhp-gw` for every scientist's key, so the only things a machine can do are
+its verbs and copies into a run's `in/` and out of its `preview/` and `out/`. The bundled
+`openmhp-lab-gateway` skill teaches an agent these commands.
+
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of
 contact behavior, and keep the manufacturer's safety systems in place. OpenMHP is currently an
