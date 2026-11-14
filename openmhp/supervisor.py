@@ -153,6 +153,7 @@ import sys as _sys
 
 WAKE_EVENTS = ("jobs/finished", "safety/estop", "safety/fault", "safety/watchdog", "operator/instruction", "jobs/paused")
 STUCK_AFTER_FAILED_TURNS = 3
+REPLY_TIMEOUT_S = 6 * 3600   # longest one reply of a run's session may take (literature, modelling, a long loop)
 STALL_GRACE_S = 5.0          # after a turn ends with nothing running: time for a job's finished event to arrive
 NUDGE = ("Supervisor: your last turn ended, but nothing is running on your instruments and nothing is waiting "
          "on the scientist, so nothing will wake you again. Carry on with the next step now; or, if the "
@@ -175,10 +176,14 @@ How to work:
   the notebook is how you remember.
 - Put results the scientist should receive in out/ (data, plots, a report), as you go.
 - Call report now and then with a short progress note.
-- You are woken when an instrument job of this run finishes, when the scientist answers or writes, and
-  on the charter's scheduled checks. Your tools stop when your turn ends, so do not leave a background
-  mhp_run script to carry on without you: start an instrument job and end your turn, and you are woken
-  when it finishes. A turn that ends with nothing running and nothing asked is followed up by the gateway.
+- You are one session for the whole run, and you think like the scientist's colleague: between experiments,
+  read the literature, model the mechanism, fit and update the scientist's optimizer with each new result,
+  and decide the next experiment. Your tools, MCP servers and background scripts stay up between messages.
+- When you reply, you go idle until there is news: you get a new message when an instrument job of this run
+  finishes, when a background mhp_run script you started ends, when the scientist answers or writes, and on
+  the charter's scheduled checks. So start the long thing (an instrument job, mhp_run background=true for a
+  fixed sequence), then reply; do not sit in a loop waiting. A reply that leaves nothing running and asks
+  nothing is followed up by the gateway.
 - When the objective is met, a stop condition holds, or the budget is spent: do the cleanup the charter
   describes, then call finish with a summary and suggested next experiments.
 
@@ -228,27 +233,24 @@ class RunCtl:
         self.question_seq = 0
         self.last_report = time.time()
         self.nudged = False          # woken once already for ending a turn with nothing running
+        self.live = None             # the run's harness session, open for the whole run (harness.LiveSession)
+        self.live_phase = None       # "plan" or "work": the planner and the run are separate sessions
+        self.live_started = 0.0
+        self.live_lock = threading.Lock()
+        self.scripts: dict[str, str] = {}   # background mhp_run scripts still going in the session: id -> name
 
 
 class Supervisor:
     def __init__(self, gateway, *, lab_root: Path, runs_dir: Path, adapters: dict | None = None,
-                 run_as_users: bool = False, poll_s: float = 0.5, local_login: bool = False):
+                 run_as_users: bool = False, poll_s: float = 0.5):
         from .harness import ADAPTERS
         self.gw, self.lab_root, self.runs_dir = gateway, Path(lab_root), Path(runs_dir)
         self.adapters = adapters if adapters is not None else ADAPTERS
         self.run_as_users, self.poll_s = run_as_users, poll_s
-        # a single-machine trial only: harnesses use this machine's own sign-in (e.g. Claude Code's keychain login)
-        # instead of a key in llm.env. Credential variables are still stripped from every run's environment.
-        self.local_login = local_login
         self.ctl: dict[str, RunCtl] = {}
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         gateway.supervisor = self
-
-    def llm_env(self) -> dict:
-        """The gateway's own LLM key for runs (<runs dir>/../llm.env), never the operator's login."""
-        from .harness import llm_env
-        return llm_env(self.runs_dir.parent / "llm.env")
 
     # ---- records -----------------------------------------------------------------------------
     def record(self, run_id: str, owner: str | None = None) -> RunRecord:
@@ -275,8 +277,9 @@ class Supervisor:
             raise ValueError("the charter names another run or scientist")
         if harness not in self.adapters:
             raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
-        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env() and not self.local_login:
-            raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
+        ok, why = self.adapters[harness].ready()        # installed, and signed in, as the admin set it up
+        if not ok:
+            raise ValueError(why)
         rec = self.record(run_id, owner)
         (self.runs_dir / run_id).mkdir(parents=True, exist_ok=True)
         (self.runs_dir / run_id / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
@@ -338,8 +341,9 @@ class Supervisor:
         """The scientist's request in plain English: start a planner for it."""
         if harness not in self.adapters:
             raise ValueError(f"no harness {harness!r} on this gateway (available: {', '.join(sorted(self.adapters))})")
-        if getattr(self.adapters[harness], "needs_llm_key", False) and not self.llm_env() and not self.local_login:
-            raise ValueError("this gateway has no LLM key for runs yet: its operator sets one with `mhp gateway llm-key`")
+        ok, why = self.adapters[harness].ready()        # installed, and signed in, as the admin set it up
+        if not ok:
+            raise ValueError(why)
         rec = self.record(run_id, owner)
         if rec.state != "open":
             raise ValueError(f"run {run_id} is {rec.state}; a request starts an open run (open a new one with mhp-gw open)")
@@ -369,6 +373,7 @@ class Supervisor:
         mcp = {"mcpServers": {
             "openmhp": {"command": _sys.executable, "args": ["-m", "openmhp.mcp_bridge", "--directory", gateway + "/directory/"],
                         "env": {**common, "OPENMHP_DEVICE_TOKEN": token, "OPENMHP_RUN_SCOPE": "1",
+                                "OPENMHP_RUN_TOKEN": token, "OPENMHP_GATEWAY": gateway,
                                 "OPENMHP_HOME": str(plan / ".openmhp")}},
             "run": {"command": _sys.executable, "args": ["-m", "openmhp.run_tools"],
                     "env": {**common, "OPENMHP_RUN_TOKEN": token, "OPENMHP_GATEWAY": gateway, "OPENMHP_RUN_MODE": "plan"}}}}
@@ -451,6 +456,7 @@ class Supervisor:
         mcp = {"mcpServers": {
             "openmhp": {"command": _sys.executable, "args": ["-m", "openmhp.mcp_bridge", "--directory", gateway + "/directory/"],
                         "env": {**common, "OPENMHP_DEVICE_TOKEN": token, "OPENMHP_RUN_SCOPE": "1",
+                                "OPENMHP_RUN_TOKEN": token, "OPENMHP_GATEWAY": gateway,
                                 "OPENMHP_HOME": str(work / ".openmhp")}},
             "run": {"command": _sys.executable, "args": ["-m", "openmhp.run_tools"],
                     "env": {**common, "OPENMHP_RUN_TOKEN": token, "OPENMHP_GATEWAY": gateway}}}}
@@ -508,7 +514,7 @@ class Supervisor:
             work = rec.public_folder() / ("plan" if planning else "work")
             session_key = "plan_session" if planning else "session"
             adapter = self.adapters[rec.doc.get("harness", "claude-code")]
-            env = {"OPENMHP_RUN_ID": run_id, **self.llm_env()}
+            env = {"OPENMHP_RUN_ID": run_id}
             try:
                 venv = self.ensure_env(run_id)
             except RuntimeError as e:
@@ -524,14 +530,20 @@ class Supervisor:
                          tried="", meanwhile="wait", by_supervisor=True)
                 continue
             rec.event("wake", triggers=[t["kind"] for t in batch])
-            result = run_turn(adapter, Turn(prompt=prompt, workdir=work, session=rec.doc.get(session_key),
-                                            mcp_config=work / ".mcp-run.json", instructions=work / ".run-instructions.md",
-                                            max_budget_usd=left, env=env,
-                                            run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
+            result = self._send(run_id, c, adapter, Turn(
+                prompt=prompt, workdir=work, session=rec.doc.get(session_key), mcp_config=work / ".mcp-run.json",
+                instructions=work / ".run-instructions.md", max_budget_usd=left, env=env,
+                timeout_s=REPLY_TIMEOUT_S, run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
             c.spent_usd += result.cost_usd
             rec.set(**{session_key: result.session or rec.doc.get(session_key)}, spent_usd=round(c.spent_usd, 4))
             rec.event("turn", ok=result.ok, reason=result.reason, cost_usd=result.cost_usd, tokens=result.tokens,
-                      said=(result.text or "")[:2000])
+                      said=(result.text or "")[:2000],
+                      **({"session_total_usd": result.raw["total_cost_usd"]} if "total_cost_usd" in (result.raw or {}) else {}))
+            now_rec = self.record(run_id)
+            if now_rec.state in ENDED or (planning and now_rec.doc.get("phase") != "plan"):
+                self._close_live(c, "the run ended" if now_rec.state in ENDED else "the plan was proposed")
+                if now_rec.state in ENDED:
+                    return
             if result.ok:
                 c.failures = 0
                 rec = self.record(run_id)
@@ -549,10 +561,81 @@ class Supervisor:
                              f"{(result.text or '')[:300]}). Should it keep trying, or stop?", tried="", meanwhile="wait",
                              by_supervisor=True)
 
+    # ---- the run's one session -----------------------------------------------------------------
+    def _send(self, run_id: str, c: "RunCtl", adapter, turn) -> "TurnResult":
+        """Give the run's session one message and wait for its reply. The session is one process for the whole
+        run (its MCP servers and background scripts live as long as it does); it is started on first use, and
+        started again on the same conversation if it died or the phase changed. A harness that cannot stay open
+        gets one turn per message instead."""
+        from dataclasses import replace
+        from .harness import TurnResult, open_live, run_turn
+        phase = Path(turn.workdir).name
+        with c.live_lock:
+            if c.live is not None:
+                why = "it had ended" if not c.live.alive() else "the phase changed" if c.live_phase != phase else None
+                if why:
+                    self._close_live(c, why, locked=True)
+            if c.live is None:
+                live = open_live(adapter, replace(turn, prompt=""))
+                if live is None:                                   # this harness cannot stay open
+                    return run_turn(adapter, turn)
+                if isinstance(live, TurnResult):
+                    return live
+                c.live, c.live_phase, c.live_started = live, phase, time.time()
+                c.record.event("session", action="started", phase=phase, resumed=turn.session is not None)
+            result = c.live.send(turn.prompt, timeout_s=turn.timeout_s)
+            if not result.ok and result.reason in ("exited", "timeout"):
+                self._close_live(c, f"its reply {result.reason}", locked=True)
+            return result
+
+    def _close_live(self, c: "RunCtl", why: str, locked: bool = False) -> None:
+        def close():
+            if c.live is not None:
+                c.live.close()
+                c.record.event("session", action="closed", phase=c.live_phase, why=why)
+                c.live, c.scripts = None, {}
+        if locked:
+            close()
+        else:
+            with c.live_lock:
+                close()
+
+    def shutdown(self) -> None:
+        """Stop supervising and close every run's session (the conversations stay on disk, for --resume)."""
+        self.stop_event.set()
+        for c in list(self.ctl.values()):
+            if c.live is not None and c.live_lock.acquire(timeout=5):
+                try:
+                    self._close_live(c, "the gateway is stopping", locked=True)
+                finally:
+                    c.live_lock.release()
+            elif c.live is not None:
+                c.live.close(wait_s=1)
+
+    def script_event(self, run_id: str, event: str, script: str, name: str = "", state: str = "", error: str = "") -> dict:
+        """A background mhp_run script in the run's session started or ended. While one is going the run is busy;
+        when it ends the session is told, as it is when an instrument job finishes."""
+        c = self.ctl.get(run_id) or (self.record(run_id) and self.ctl[run_id])
+        if event == "started":
+            c.scripts[script] = name
+        elif event == "ended":
+            c.scripts.pop(script, None)
+            c.record.event("script", script=script, name=name, state=state, error=error[:500])
+            if c.record.state in ("running", "planning", "waiting_scientist"):
+                self.wake(run_id, "script", f"your background script {name or script} ({script}) ended: {state}"
+                          + (f" ({error[:300]})" if error else "") + f". Its output: mhp_data op='read' run={script}")
+        else:
+            raise ValueError("event is 'started' or 'ended'")
+        return {"ok": True}
+
     def busy(self, run_id: str) -> bool:
-        """Is any job still going on the run's instruments? A finished job wakes the run, so while one is going
-        the run is waiting, not stuck. An instrument that cannot be asked counts as busy: no false alarm."""
+        """Is anything still going for the run: a background script in its session, or a job on its instruments?
+        Either wakes the run when it ends, so meanwhile the run is waiting, not stuck. An instrument that cannot
+        be asked counts as busy: no false alarm."""
         from .driver import TERMINAL
+        c = self.ctl.get(run_id)
+        if c is not None and c.scripts:
+            return True
         entry = self.gw._run_entry(run_id)
         if entry is None:
             return False
@@ -677,13 +760,26 @@ class Supervisor:
         if rec.state in ENDED:
             return {"run": run_id, "state": rec.state}
         rec.event("stop", by=by)
-        if rec.state in ("running", "waiting_scientist") and rec.doc.get("session"):
+        c = self.ctl.get(run_id)
+        cleanup = (f"[{now()}] stop: {by} stopped the run. Do the charter's cleanup now, write what you have to out/ "
+                   "and notebook.md, and do not start anything new.")
+        if c is not None and c.live is not None and c.live.alive() and c.live_phase == "work" \
+                and c.live_lock.acquire(timeout=5):
+            try:                                     # the run's own session cleans up, with its tools still open
+                r = c.live.send(cleanup, timeout_s=cleanup_timeout_s)
+                rec.event("turn", ok=r.ok, reason=r.reason, cost_usd=r.cost_usd, said=(r.text or "")[:2000], cleanup=True)
+                self._close_live(c, f"stopped by {by}", locked=True)
+            finally:
+                c.live_lock.release()
+        elif rec.state in ("running", "waiting_scientist") and rec.doc.get("session"):
+            if c is not None and c.live is not None:            # busy mid-reply: end it, then clean up on the conversation
+                c.live.close(wait_s=1)
+                c.live = None
             work = rec.public_folder() / "work"
             adapter = self.adapters[rec.doc.get("harness", "claude-code")]
-            r = run_turn(adapter, Turn(prompt=f"[{now()}] stop: {by} stopped the run. Do the charter's cleanup now, write what "
-                                       "you have to out/ and notebook.md, and do not start anything new.",
+            r = run_turn(adapter, Turn(prompt=cleanup,
                                        workdir=work, session=rec.doc.get("session"), mcp_config=work / ".mcp-run.json",
-                                       max_turns=15, timeout_s=cleanup_timeout_s, env={"OPENMHP_RUN_ID": run_id, **self.llm_env()},
+                                       max_turns=15, timeout_s=cleanup_timeout_s, env={"OPENMHP_RUN_ID": run_id},
                                        run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
             rec.event("turn", ok=r.ok, reason=r.reason, cost_usd=r.cost_usd, said=(r.text or "")[:2000], cleanup=True)
         self.gw.end_run(run_id)
@@ -810,6 +906,7 @@ class Supervisor:
             except Exception as e:                       # noqa: BLE001  a bad request must not stop supervision
                 print(f"supervisor: {type(e).__name__}: {e}", file=_sys.stderr)
             self.stop_event.wait(self.poll_s)
+        self.shutdown()
 
     def start(self) -> threading.Thread:
         recover(self.runs_dir, self.lab_root)

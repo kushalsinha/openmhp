@@ -3,10 +3,9 @@ own optimizer; the gateway plans, asks, rehearses, gets approval, runs the loop 
 and the results come home. Everything runs on this machine, in a temporary folder:
 
     python examples/gateway_closed_loop/demo.py                       a scripted agent (free, no model)
-    python examples/gateway_closed_loop/demo.py --harness claude-code Claude Code as the planner and run agent
-                                                                      (needs ANTHROPIC_API_KEY; it costs money)
-    ... --harness claude-code --use-this-machines-login                Claude Code signed in on this machine instead
-                                                                      of a key (a one-machine trial only)
+    python examples/gateway_closed_loop/demo.py --harness claude-code Claude Code as the planner and run agent,
+                                                                      as installed and signed in on this machine
+                                                                      (it costs money)
 
 What is real: the gateway, its charter checks, the run token, the supervisor, the lab PC relaying a simulated
 chromatograph, mhp-gw (called as the gateway's SSH forced command would call it), the manifest check and the
@@ -46,8 +45,7 @@ ANSWER = ("Use the request as written: the sample is exactly acetone, ethanol, i
           "optimizer for every next condition; no deadline; nobody needs to be in the lab, and no bake-out.")
 
 
-def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False, local_login: bool = False,
-        timeout_s: float = 1800) -> dict:
+def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False, timeout_s: float = 1800) -> dict:
     home = Path(home or tempfile.mkdtemp(prefix="openmhp-demo-"))
     setup_env(home)
     from openmhp import gateway as G, gw_shell as GW, harness as H, relay as R, scientists as S, watcher as W
@@ -78,14 +76,10 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
     while time.time() < end and "gc-01" not in getattr(gw.nodes.get("bench"), "devices", {}):
         time.sleep(0.05)
     adapters = {"scripted": H.Command([sys.executable, str(HERE / "scripted_agent.py")]), "claude-code": H.ClaudeCode()}
-    sup = Supervisor(gw, lab_root=S.lab_root(), runs_dir=G.RUNS_DIR, adapters=adapters, poll_s=0.1, local_login=local_login)
-    if harness == "claude-code" and not local_login:
-        key = os.environ.get("ANTHROPIC_API_KEY")
-        if not key:
-            raise SystemExit("--harness claude-code needs ANTHROPIC_API_KEY (the gateway's key for runs), "
-                             "or --use-this-machines-login for a one-machine trial")
-        (G.GW_DIR / "llm.env").write_text(f"ANTHROPIC_API_KEY={key}\n")
-        os.chmod(G.GW_DIR / "llm.env", 0o600)
+    sup = Supervisor(gw, lab_root=S.lab_root(), runs_dir=G.RUNS_DIR, adapters=adapters, poll_s=0.1)
+    ok, why = adapters[harness].ready()
+    if not ok:
+        raise SystemExit(why)
     sup.start()
     S.create("alice")
     tell("gateway", f"up on https://127.0.0.1:{port}; lab PC 'bench' serves a simulated chromatograph (gc-01)")
@@ -152,7 +146,7 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
     end = time.time() + 10
     while time.time() < end and not (S.load_run("alice", rid) or {}).get("purged"):
         time.sleep(0.1)
-    sup.stop_event.set()
+    sup.shutdown()
     node.close()
     return {"run": rid, "state": meta["state"], "injections": len(history), "best": best, "verified": not bad,
             "acknowledged": bool(ack.get("ok")), "purged": bool((S.load_run("alice", rid) or {}).get("purged")),
@@ -163,9 +157,7 @@ def run(harness: str = "scripted", home: Path | None = None, quiet: bool = False
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--harness", default="scripted", choices=["scripted", "claude-code"])
-    ap.add_argument("--use-this-machines-login", action="store_true",
-                    help="(claude-code) use Claude Code's sign-in on this machine instead of ANTHROPIC_API_KEY")
     ap.add_argument("--timeout", type=float, default=1800, help="seconds to wait for the plan and the run")
     a = ap.parse_args()
-    out = run(a.harness, local_login=a.use_this_machines_login, timeout_s=a.timeout)
+    out = run(a.harness, timeout_s=a.timeout)
     print(json.dumps(out, indent=1))

@@ -139,26 +139,24 @@ def test_harness_adapters():
     assert not missing.ok and missing.reason == "not installed"
 
 
-def test_runs_get_the_gateways_llm_key_and_no_other_credential():
+def test_runs_use_the_harness_as_installed():
     from openmhp import harness as H
-    keep = {k: os.environ.get(k) for k in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")}
-    os.environ.update(ANTHROPIC_AUTH_TOKEN="operator-login", ANTHROPIC_API_KEY="operator-key", CLAUDE_CODE_OAUTH_TOKEN="x")
+    # a run inherits the gateway's environment, so the harness signs in as the admin set it up; only the markers of
+    # a harness session the gateway itself was started from are left out
+    keep = {k: os.environ.get(k) for k in ("ANTHROPIC_API_KEY", "CLAUDECODE")}
+    os.environ.update(ANTHROPIC_API_KEY="the-labs-key", CLAUDECODE="1")
     try:
-        env = H.run_environment({"ANTHROPIC_API_KEY": "gateway-runs-key", "OPENMHP_RUN_ID": "R-1"})
-        assert env["ANTHROPIC_API_KEY"] == "gateway-runs-key" and "ANTHROPIC_AUTH_TOKEN" not in env
-        assert "CLAUDE_CODE_OAUTH_TOKEN" not in env and env["OPENMHP_RUN_ID"] == "R-1" and env.get("PATH")
-        assert "ANTHROPIC_API_KEY" not in H.run_environment({})
+        env = H.run_environment({"OPENMHP_RUN_ID": "R-1"})
+        assert env["ANTHROPIC_API_KEY"] == "the-labs-key" and "CLAUDECODE" not in env
+        assert env["OPENMHP_RUN_ID"] == "R-1" and env.get("PATH")
     finally:
         for k, v in keep.items():
             if v is None:
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
-    f = Path(tempfile.mkdtemp()) / "llm.env"
-    f.write_text("# runs\nANTHROPIC_API_KEY = sk-test\n\nbad line\n")
-    assert H.llm_env(f) == {"ANTHROPIC_API_KEY": "sk-test"} and H.llm_env(f.with_name("none")) == {}
 
-    # a Claude Code run cannot be proposed on a gateway without a key for runs
+    # a run cannot be proposed when the gateway's harness is missing or not signed in; the scientist hears why
     from openmhp import gateway as G
 
     class FakeGW:
@@ -168,11 +166,28 @@ def test_runs_get_the_gateways_llm_key_and_no_other_credential():
     rid = S.open_run("kim")["id"]
     ch = {"version": 1, "run": rid, "owner": "kim", "objective": "x", "instruments": {"tc": "bench/thermocycler-01"},
           "envelope": {"tc": {"actions": {}, "settings": {}}}}
+    bindir = Path(tempfile.mkdtemp(prefix="bin-"))
+    fake = bindir / "claude"
+    fake.write_text("#!/bin/sh\necho '{\"loggedIn\": '\"$FAKE_LOGGED_IN\"', \"authMethod\": \"api_key\", "
+                    "\"apiProvider\": \"firstParty\"}'\n")
+    fake.chmod(0o755)
+    sup.adapters = {"claude-code": H.ClaudeCode(), "missing": H.Command(["no-such-harness-here"])}
     with raises(ValueError) as e:
-        sup.propose(rid, "kim", ch, harness="claude-code")
-    assert "mhp gateway llm-key" in str(e.value)
-    (sup.runs_dir.parent / "llm.env").write_text("ANTHROPIC_API_KEY=sk-test\n")
-    assert sup.propose(rid, "kim", ch, harness="claude-code").startswith("sha256:")
+        sup.propose(rid, "kim", ch, harness="missing")
+    assert "not installed on the lab gateway" in str(e.value)
+    if os.name != "nt":                                              # the stand-in claude is a shell script
+        old = os.environ["PATH"]
+        os.environ["PATH"] = f"{bindir}{os.pathsep}{old}"
+        try:
+            os.environ["FAKE_LOGGED_IN"] = "false"
+            with raises(ValueError) as e:
+                sup.propose(rid, "kim", ch, harness="claude-code")
+            assert "not signed in" in str(e.value) and "lab's API key" in str(e.value)
+            os.environ["FAKE_LOGGED_IN"] = "true"
+            assert sup.propose(rid, "kim", ch, harness="claude-code").startswith("sha256:")
+        finally:
+            os.environ["PATH"] = old
+            os.environ.pop("FAKE_LOGGED_IN", None)
 
 
 def test_a_run_scoped_bridge_cannot_add_or_scan_instruments():
@@ -247,6 +262,41 @@ if busy and "] start:" in prompt:
 elif busy:
     post("/runs/finish", {"summary": "protocol done", "outcome": "objective met"})
 print(json.dumps({"ok": True, "session": session, "text": "I set things up and will wait.", "cost_usd": 0.0, "tokens": 1}))
+"""
+
+
+LIVE = r"""
+import json, os, ssl, sys, threading, time, urllib.request
+# A stand-in for Claude Code's streaming mode: one process for the whole run, one JSON line per message on stdin,
+# one result line per reply on stdout, costs reported as totals for the process. It records its pid per message.
+args = sys.argv[1:]
+session, work = args[args.index("--session") + 1], args[args.index("--workdir") + 1]
+resumed = "--resume" in args
+env = json.load(open(os.path.join(work, ".mcp-run.json")))["mcpServers"]["run"]["env"]
+ctx = ssl.create_default_context(cafile=env["SSL_CERT_FILE"]); ctx.check_hostname = False
+def post(path, body):
+    req = urllib.request.Request(env["OPENMHP_GATEWAY"] + path, data=json.dumps(body).encode(), method="POST",
+                                 headers={"Authorization": "Bearer " + env["OPENMHP_RUN_TOKEN"], "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, context=ctx, timeout=30) as r:
+        return json.loads(r.read())
+charter = json.load(open(os.path.join(work, "..", "charter.json")))
+total = 0.0
+def later():            # a background script that ends a moment after the reply, while the session is idle
+    time.sleep(1.0)
+    post("/runs/script", {"event": "ended", "script": "s1", "name": "ramp sweep", "state": "done"})
+for line in sys.stdin:
+    prompt = json.loads(line)["message"]["content"]
+    with open(os.path.join(work, "live.log"), "a") as f:
+        f.write(json.dumps({"pid": os.getpid(), "resumed": resumed, "prompt": prompt.split(chr(10))[0][:120]}) + chr(10))
+    if "script" in charter["objective"] and "] start:" in prompt:
+        post("/runs/script", {"event": "started", "script": "s1", "name": "ramp sweep"})
+        threading.Thread(target=later).start()
+    elif "] script:" in prompt or "] message:" in prompt:
+        post("/runs/finish", {"summary": "done in one session", "outcome": "objective met"})
+    total += 0.01
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "working"}]}}), flush=True)
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "replied",
+                      "session_id": session, "total_cost_usd": round(total, 4)}), flush=True)
 """
 
 
@@ -379,7 +429,42 @@ def test_supervised_run_from_approval_to_results():
     job_done = time.time()
     wait_until(lambda: sup.record(rid4).state == "finished", timeout=60, what="run 4 to finish")
     assert all(e["ts"] >= job_done - 0.5 for e in sup.record(rid4).events() if e["kind"] == "idle")   # never while busy
-    sup.stop_event.set()
+
+    # ---- run 5: one session for the whole run; a background script keeps it busy, and its end wakes it ------
+    live = agent.parent / "live.py"
+    live.write_text(LIVE)
+    sup.adapters["live"] = H.Command([sys.executable, str(live)], live=True)
+    rid5 = gw_cmd("mhp-gw open")[1]["run"]
+    c5 = charter(rid5, "sweep the ramp with a background script")
+    assert gw_cmd(f"mhp-gw approve {rid5} --charter-digest {sup.propose(rid5, 'alice', c5, harness='live')}")[0] == GW.OK
+    wait_until(lambda: sup.record(rid5).state == "finished", what="run 5 to finish")
+    # finish arrives during the session's reply; the supervisor records the reply and closes the session after it
+    wait_until(lambda: any(e["kind"] == "session" and e["action"] == "closed" for e in sup.record(rid5).events()),
+               what="run 5's session to close")
+    log5 = [json.loads(l) for l in (S.run_folder("alice", rid5) / "work" / "live.log").read_text().splitlines()]
+    assert len(log5) == 2 and log5[0]["pid"] == log5[1]["pid"], log5              # both messages, one process
+    assert "] start:" in log5[0]["prompt"] and "] script: your background script ramp sweep (s1) ended" in log5[1]["prompt"]
+    ev5 = sup.record(rid5).events()
+    assert not any(e["kind"] == "idle" for e in ev5)                               # busy while the script ran
+    assert [e["action"] for e in ev5 if e["kind"] == "session"] == ["started", "closed"]
+    assert [e["cost_usd"] for e in ev5 if e["kind"] == "turn"] == [0.01, 0.01]    # process totals, charged per reply
+    assert sup.record(rid5).doc["spent_usd"] == 0.02 and sup.ctl[rid5].live is None
+
+    # ---- run 6: the session dies between messages; the next message starts it again on the same conversation --
+    rid6 = gw_cmd("mhp-gw open")[1]["run"]
+    c6 = charter(rid6, "hold the block")
+    assert gw_cmd(f"mhp-gw approve {rid6} --charter-digest {sup.propose(rid6, 'alice', c6, harness='live')}")[0] == GW.OK
+    work6 = S.run_folder("alice", rid6) / "work"
+    wait_until(lambda: (work6 / "live.log").is_file() and sup.ctl[rid6].live is not None, what="run 6's session")
+    first_pid = json.loads((work6 / "live.log").read_text().splitlines()[0])["pid"]
+    os.kill(first_pid, 9)
+    wait_until(lambda: not sup.ctl[rid6].live.alive(), what="the session to die")
+    assert gw_cmd(f"mhp-gw message {rid6} please wrap up")[0] == GW.OK
+    wait_until(lambda: sup.record(rid6).state == "finished", what="run 6 to finish")
+    log6 = [json.loads(l) for l in (work6 / "live.log").read_text().splitlines()]
+    assert log6[-1]["pid"] != first_pid and log6[-1]["resumed"] is True and "please wrap up" in log6[-1]["prompt"], log6
+    assert [e.get("resumed") for e in sup.record(rid6).events() if e["kind"] == "session" and e["action"] == "started"][-1]
+    sup.shutdown()
     node.close()
 
 

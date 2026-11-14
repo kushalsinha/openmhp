@@ -127,7 +127,7 @@ def start(home: Path | None = None, claude: bool = False, feed: bool = True):
         node = R.RelayClient(R.join(f"https://127.0.0.1:{port}", code, {"gc-01": gc}, name="bench", quiet=True), {"gc-01": gc})
         node.start()
     stand_in = H.Command([sys.executable, str(HERE / "scripted_agent.py")])
-    sup = Supervisor(gw, lab_root=S.lab_root(), runs_dir=G.RUNS_DIR, poll_s=0.2, local_login=claude,
+    sup = Supervisor(gw, lab_root=S.lab_root(), runs_dir=G.RUNS_DIR, poll_s=0.2,
                      adapters={"scripted": stand_in, "claude-code": H.ClaudeCode() if claude else stand_in})
     sup.start()
     S.create("alice")
@@ -140,7 +140,7 @@ def start(home: Path | None = None, claude: bool = False, feed: bool = True):
 
     def close():
         stop.set()
-        sup.stop_event.set()
+        sup.shutdown()
         node.close()
         srv.shutdown()
     return home, b, port, close

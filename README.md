@@ -465,8 +465,21 @@ starts, unless someone edited them (`mhp skills status` shows which).
 
 The same channel carries whole experiments: a scientist's request in plain English, a planner on the
 gateway that rehearses and proposes a charter, approval, a supervised agent session that runs the loop
-within that charter, and the results back home. `examples/gateway_closed_loop/` runs it end to end on
-a simulated chromatograph.
+within that charter, and the results back home.
+
+Each run is one Claude Code session for the whole run, started when the scientist approves it and fed
+each piece of news (an instrument job finished, a background script ended, the scientist answered) as a
+new message. Between experiments it can read the literature, model the mechanism and update the
+scientist's optimizer; its mhp tools and background scripts stay up the whole time. If it dies, or the
+gateway restarts, it picks up the same conversation.
+
+The admin installs the agent harness on the gateway (Claude Code, signed in however the lab's company does
+it) and the gateway starts a new session of it, as installed, for each run. Before a run is planned the
+gateway checks the harness is there and signed in, and tells the scientist if it is not. (With one Linux
+user per scientist, sessions run as that user, so the harness must be set up for them too, for example
+with the lab's key set system-wide.)
+
+`examples/gateway_closed_loop/` runs it end to end on a simulated chromatograph.
 
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of

@@ -10,7 +10,6 @@ command either finishes the job or prints the one thing to do next.
     mhp gateway add-agent <name>      let one agent machine through by hand; prints the token to paste there
     mhp gateway status | check        what is connected, which lab PCs run an old OpenMHP, and what to fix
     mhp gateway ssh [users] [apply]   let scientists' machines run mhp-gw and copy files over SSH (keys arrive at pairing)
-    mhp gateway llm-key               the LLM key runs use (read from stdin; kept in this gateway's own folder)
 
 Agent face (bearer = agent token):  POST /agent/join (code, no token)    GET /    GET /<node>/<device>/mhp.json    POST /<node>/<device>/rpc
                                     GET /<node>/<device>/events (SSE)         /directory/{rpc,mhp.json}
@@ -605,7 +604,8 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
             if agent is None:
                 return self._json(401, {"error": AGENT_401})
             gate = gw.gate_for(self._auth())               # a run token: only its instruments, only its charter
-            if len(parts) == 2 and parts[0] == "runs" and parts[1] in ("ask_scientist", "report", "finish", "propose_charter"):
+            if len(parts) == 2 and parts[0] == "runs" and parts[1] in ("ask_scientist", "report", "finish", "propose_charter",
+                                                                         "script"):
                 if gate is None or gw.supervisor is None:
                     return self._json(403, {"ok": False, "error": "only a run's own token, on a supervising gateway"})
                 planning = getattr(gate, "planning", False)
@@ -621,6 +621,10 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
                                      needs_lab=b.get("needs_lab") is True)
                     elif parts[1] == "report":
                         ans = sv.report(gate.run, str(b.get("text", "")))
+                    elif parts[1] == "script":
+                        ans = sv.script_event(gate.run, str(b.get("event", "")), str(b.get("script", "")),
+                                              str(b.get("name", ""))[:200], str(b.get("state", ""))[:40],
+                                              str(b.get("error", ""))[:500])
                     else:
                         ans = sv.finish(gate.run, str(b.get("summary", "")), str(b.get("outcome", "objective met")),
                                         [str(x) for x in (b.get("next_experiments") or [])])
@@ -1008,30 +1012,6 @@ def check() -> int:
     return 0 if not problems else 1
 
 
-def llm_key(words: list[str]) -> int:
-    """`mhp gateway llm-key [VAR]`: store the key agent sessions for runs use, read from stdin so it never lands
-    in shell history or a process list. VAR defaults to ANTHROPIC_API_KEY."""
-    var = words[0] if words else "ANTHROPIC_API_KEY"
-    if not re.fullmatch(r"[A-Z][A-Z0-9_]*", var):
-        say(f"{var!r} is not an environment variable name")
-        return 2
-    if sys.stdin.isatty():
-        import getpass
-        key = getpass.getpass(f"{var} for runs on this gateway: ").strip()
-    else:
-        key = sys.stdin.read().strip()
-    if not key or "\n" in key:
-        say("no key given (one line on stdin)")
-        return 2
-    GW_DIR.mkdir(parents=True, exist_ok=True)
-    path = GW_DIR / "llm.env"
-    lines = [l for l in (path.read_text(encoding="utf-8").splitlines() if path.is_file() else []) if not l.startswith(var + "=")]
-    path.write_text("\n".join(lines + [f"{var}={key}"]) + "\n", encoding="utf-8")
-    os.chmod(path, 0o600)
-    say(f"saved {var} for runs in {path} (this account only). Agent sessions get it and no other credential.")
-    return 0
-
-
 def ssh_setup(words: list[str]) -> int:
     """`mhp gateway ssh [users] [login=NAME] [port=N] [host=NAME] [host-key=FILE] [apply]`: turn on SSH access
     for scientists' machines. Without `apply` it records the settings and prints what to install; with
@@ -1127,7 +1107,5 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
         return check()
     if verb == "ssh":
         return ssh_setup(args)
-    if verb == "llm-key":
-        return llm_key(args)
-    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh, llm-key")
+    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh")
     return 2
