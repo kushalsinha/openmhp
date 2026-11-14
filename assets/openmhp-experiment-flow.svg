@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 730" role="img" aria-labelledby="title desc">
+  <title id="title">How an experiment flows</title>
+  <desc id="desc">A timeline in three lanes: Alice and her agent, the lab gateway, and the chromatograph. 1, ask: Alice asks in plain English and her agent hands over her model, BO skill and data; the gateway opens her run. 2, plan: the planner reads them, finds the chromatograph, rehearses an injection as a dry run in which nothing moves, and asks Alice what only she can say. 3, propose: a charter and a preview of the data; her agent reads her the plan in plain words. 4, approve: Alice says yes; the gateway leases the chromatograph, gives her the run ID, and starts the run's session. 5, the loop: the session starts an injection, which passes the charter check; the chromatograph runs it; the finished job wakes the session, which fits her model, asks her BO skill for the next condition, and starts the next injection, until a stop condition holds; progress and any questions go to Alice. 6, results home: the results and a manifest go to out; Alice's machine brings them home, checks them and acknowledges; the gateway deletes its copy.</desc>
+  <style>
+    :root{--bg:#edf1ef;--grid:#dbe2de;--card:#f8faf9;--line:#c7d1cc;--ink:#172126;--mute:#63737a;--green:#087665;--green-bg:#dcefe9;--amber:#a9600d;--amber-bg:#f7e8d2;--wire:#84958e;--lane:#e3e9e6}
+    @media(prefers-color-scheme:dark){:root{--bg:#171d20;--grid:#252e31;--card:#1e272a;--line:#354246;--ink:#e6ece9;--mute:#93a19c;--green:#4bc1a5;--green-bg:#17332d;--amber:#e5a14b;--amber-bg:#38291a;--wire:#84958e;--lane:#1b2326}}
+    text{font-family:"Instrument Sans","Helvetica Neue",Arial,sans-serif;fill:var(--ink)}
+    .head{font-size:15px;font-weight:700}.sub{font-size:13.5px;fill:var(--mute)}
+    .micro{font-size:12.5px;fill:var(--mute)}.lanel{font-size:12.5px;font-weight:700;letter-spacing:.07em;fill:var(--mute)}
+    .colh{font-size:15px;font-weight:700}
+    .mono{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.5px}
+    .step{font-size:13px;font-weight:700;fill:#fff}
+    .card{fill:var(--card);stroke:var(--line)}.hot{fill:var(--green-bg);stroke:var(--green)}.gate{fill:var(--amber-bg);stroke:var(--amber)}
+    .w{fill:none;stroke:var(--wire);stroke-width:2}.g{fill:none;stroke:var(--green);stroke-width:2.2}
+  </style>
+  <defs>
+    <pattern id="grid" width="46" height="46" patternUnits="userSpaceOnUse"><path d="M46 0H0V46" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="var(--wire)"/></marker>
+    <marker id="arrowg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10Z" fill="var(--green)"/></marker>
+  </defs>
+  <rect x="1" y="1" width="1198" height="728" rx="18" fill="var(--bg)" stroke="var(--line)"/>
+  <rect x="1" y="1" width="1198" height="728" rx="18" fill="url(#grid)"/>
+
+  <!-- lanes -->
+  <rect x="20" y="78" width="1160" height="150" rx="12" fill="var(--lane)"/>
+  <rect x="20" y="240" width="1160" height="290" rx="12" fill="var(--lane)"/>
+  <rect x="20" y="542" width="1160" height="168" rx="12" fill="var(--lane)"/>
+  <text class="lanel" x="34" y="100">ALICE + HER AGENT</text>
+  <text class="lanel" x="34" y="262">LAB GATEWAY</text>
+  <text class="lanel" x="34" y="564">CHROMATOGRAPH</text>
+
+  <!-- column heads -->
+  <g>
+    <circle cx="44" cy="44" r="12" fill="var(--green)"/><text class="step" x="44" y="49" text-anchor="middle">1</text><text class="colh" x="62" y="49">Ask</text>
+    <circle cx="214" cy="44" r="12" fill="var(--green)"/><text class="step" x="214" y="49" text-anchor="middle">2</text><text class="colh" x="232" y="49">Plan</text>
+    <circle cx="384" cy="44" r="12" fill="var(--green)"/><text class="step" x="384" y="49" text-anchor="middle">3</text><text class="colh" x="402" y="49">Propose</text>
+    <circle cx="554" cy="44" r="12" fill="var(--green)"/><text class="step" x="554" y="49" text-anchor="middle">4</text><text class="colh" x="572" y="49">Approve</text>
+    <circle cx="724" cy="44" r="12" fill="var(--green)"/><text class="step" x="724" y="49" text-anchor="middle">5</text><text class="colh" x="742" y="49">The loop</text>
+    <circle cx="1024" cy="44" r="12" fill="var(--green)"/><text class="step" x="1024" y="49" text-anchor="middle">6</text><text class="colh" x="1042" y="49">Results home</text>
+  </g>
+
+  <!-- 1 Ask -->
+  <rect class="card" x="34" y="112" width="158" height="96" rx="10"/>
+  <text class="head" x="48" y="136">Asks in plain</text>
+  <text class="head" x="48" y="154">English</text>
+  <text class="micro" x="48" y="176">hands over her model,</text>
+  <text class="micro" x="48" y="193">BO skill and data</text>
+  <path class="g" d="M176 210V290" marker-end="url(#arrowg)"/>
+  <rect class="card" x="34" y="294" width="158" height="84" rx="10"/>
+  <text class="head" x="48" y="318">Run opened</text>
+  <text class="mono" x="48" y="340">R-2611-0001</text>
+  <text class="micro" x="48" y="362">her files in its in/</text>
+
+  <!-- 2 Plan -->
+  <rect class="card" x="204" y="294" width="158" height="104" rx="10"/>
+  <text class="head" x="218" y="318">Planner</text>
+  <text class="micro" x="218" y="340">reads her request and</text>
+  <text class="micro" x="218" y="357">tools, finds the GC,</text>
+  <text class="micro" x="218" y="374">rehearses one injection</text>
+  <path class="w" d="M283 400V600" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+  <rect class="card" x="204" y="604" width="158" height="74" rx="10"/>
+  <text class="head" x="218" y="628">Dry run</text>
+  <text class="micro" x="218" y="650">checked by the driver;</text>
+  <text class="micro" x="218" y="667">nothing moves</text>
+  <path class="g" d="M262 292V212" marker-end="url(#arrowg)"/>
+  <path class="g" d="M304 212V292" marker-end="url(#arrowg)"/>
+  <rect class="card" x="204" y="112" width="158" height="96" rx="10"/>
+  <text class="head" x="218" y="136">Questions</text>
+  <text class="micro" x="218" y="158">only she can answer:</text>
+  <text class="micro" x="218" y="175">sample, amounts, who</text>
+  <text class="micro" x="218" y="192">needs to be in the lab</text>
+
+  <!-- 3 Propose -->
+  <rect class="card" x="374" y="294" width="158" height="104" rx="10"/>
+  <text class="head" x="388" y="318">Charter + preview</text>
+  <text class="micro" x="388" y="340">what the run may do,</text>
+  <text class="micro" x="388" y="357">its limits and stops;</text>
+  <text class="micro" x="388" y="374">the data it will return</text>
+  <path class="g" d="M453 292V212" marker-end="url(#arrowg)"/>
+  <rect class="card" x="374" y="112" width="158" height="96" rx="10"/>
+  <text class="head" x="388" y="136">The plan, in</text>
+  <text class="head" x="388" y="154">plain words</text>
+  <text class="micro" x="388" y="176">and the preview files,</text>
+  <text class="micro" x="388" y="193">to approve or change</text>
+
+  <!-- 4 Approve -->
+  <rect class="hot" x="544" y="112" width="158" height="96" rx="10"/>
+  <text class="head" x="558" y="140">"Yes."</text>
+  <text class="micro" x="558" y="162">her agent approves that</text>
+  <text class="micro" x="558" y="179">exact charter, by its</text>
+  <text class="micro" x="558" y="196">digest</text>
+  <path class="g" d="M602 210V290" marker-end="url(#arrowg)"/>
+  <path class="w" d="M650 292V212" marker-end="url(#arrow)"/>
+  <rect class="card" x="544" y="294" width="158" height="120" rx="10"/>
+  <text class="head" x="558" y="318">Run starts</text>
+  <text class="micro" x="558" y="340">leases the GC (every</text>
+  <text class="micro" x="558" y="357">instrument, together);</text>
+  <text class="micro" x="558" y="374">run ID to Alice;</text>
+  <text class="micro" x="558" y="391">one session starts</text>
+
+  <!-- 5 The loop -->
+  <rect class="card" x="714" y="112" width="290" height="96" rx="10" stroke-dasharray="6 5"/>
+  <text class="head" x="728" y="136">Progress, and questions</text>
+  <text class="micro" x="728" y="158">reports as it goes; asks her when it</text>
+  <text class="micro" x="728" y="175">needs a decision, or someone in the</text>
+  <text class="micro" x="728" y="192">lab; she can change her mind</text>
+  <path class="w" d="M860 292V212" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+
+  <rect class="hot" x="714" y="294" width="290" height="220" rx="12"/>
+  <text class="head" x="728" y="318">The run's session</text>
+  <text class="micro" x="728" y="338">one session for the whole run</text>
+  <rect class="card" x="728" y="352" width="122" height="62" rx="8"/>
+  <text class="head" x="740" y="374">Start the</text>
+  <text class="head" x="740" y="392">injection</text>
+  <text class="mono" x="740" y="408" fill="var(--green)">mhp_invoke</text>
+  <rect class="card" x="868" y="352" width="122" height="62" rx="8"/>
+  <text class="head" x="880" y="374">Fit her model,</text>
+  <text class="head" x="880" y="392">ask her BO</text>
+  <text class="micro" x="880" y="408">for the next one</text>
+  <path class="g" d="M900 416V448H800V418" marker-end="url(#arrowg)"/>
+  <text class="micro" x="812" y="472">next condition, until</text>
+  <text class="micro" x="812" y="488">a stop condition holds</text>
+
+  <!-- to the instrument and back -->
+  <path class="g" d="M752 416V600" marker-end="url(#arrowg)"/>
+  <rect class="gate" x="700" y="522" width="104" height="28" rx="14"/>
+  <text class="micro" x="752" y="541" fill="var(--amber)" text-anchor="middle">charter check</text>
+  <rect class="card" x="714" y="604" width="140" height="74" rx="10"/>
+  <text class="head" x="728" y="628">Injection runs</text>
+  <text class="micro" x="728" y="650">carrier flow, oven</text>
+  <text class="micro" x="728" y="667">program, 1 µL</text>
+  <path class="g" d="M856 641H880"/>
+  <rect class="card" x="884" y="604" width="120" height="74" rx="10"/>
+  <text class="head" x="898" y="628">Job finished</text>
+  <text class="micro" x="898" y="650">chromatogram,</text>
+  <text class="micro" x="898" y="667">resolution</text>
+  <path class="g" d="M966 602V418" marker-end="url(#arrowg)"/>
+  <text class="micro" x="974" y="580">wakes the</text>
+  <text class="micro" x="974" y="596">session</text>
+
+  <!-- 6 Results home -->
+  <rect class="card" x="1022" y="294" width="148" height="120" rx="10"/>
+  <text class="head" x="1036" y="318">out/ + manifest</text>
+  <text class="micro" x="1036" y="340">data, notebook,</text>
+  <text class="micro" x="1036" y="357">report, suggested</text>
+  <text class="micro" x="1036" y="374">next experiments;</text>
+  <text class="micro" x="1036" y="391">instruments released</text>
+  <path class="g" d="M1096 292V212" marker-end="url(#arrowg)" stroke-dasharray="7 5"/>
+  <rect class="hot" x="1022" y="112" width="148" height="96" rx="10"/>
+  <text class="head" x="1036" y="136">Results home</text>
+  <text class="micro" x="1036" y="158">checked, then ack;</text>
+  <text class="micro" x="1036" y="175">the gateway deletes</text>
+  <text class="micro" x="1036" y="192">its copy</text>
+  <path class="g" d="M1006 404H1018" marker-end="url(#arrowg)"/>
+</svg>

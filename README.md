@@ -16,7 +16,7 @@ response. OpenMHP extends that model for physical work that may run for minutes,
 [![license](https://img.shields.io/badge/license-Apache%202.0-1f1f1f.svg)](LICENSE)
 [![docs](https://img.shields.io/badge/docs-openmhp.com-2B8F78)](https://openmhp.com)
 
-[Quickstart](https://openmhp.com/quickstart) · [Design](https://openmhp.com/design) · [Architecture](https://openmhp.com/architecture) · [Roadmap](https://openmhp.com/roadmap) · [Specification](SPEC.md) · [Contributing](CONTRIBUTING.md)
+[Quickstart](https://openmhp.com/quickstart) · [Experiment flow](https://openmhp.com/experiment-flow) · [Design](https://openmhp.com/design) · [Architecture](https://openmhp.com/architecture) · [Roadmap](https://openmhp.com/roadmap) · [Specification](SPEC.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -172,6 +172,7 @@ Talk to the agent in terms of the work you want done:
 | “Watch the incubator overnight.” | Runs a background monitor and stores readings and alerts with the run. |
 | “Which GC method should I use for ethanol?” | Searches versioned methods associated with the device and project. |
 | “Stop everything now.” | Requests e-stop for every device touched by the session. |
+| “Get the lab to find GC conditions that separate ethanol from isopropanol, using my retention model and BO skill.” | Hands your request, model and optimizer to the lab gateway, relays its questions, reads you its plan, and once you approve, the gateway runs the closed loop and the results come home. |
 
 You can use the same protocol without an agent:
 
@@ -441,45 +442,56 @@ lab PC's token never leaves it, and the gateway is the approval boundary. `mhp g
 prints `OK` or `FIX` for the gateway, each lab PC and each instrument. The wire-level rules
 are in `SPEC.md` (transports).
 
-**Scientists' folders on the gateway (preview).** A gateway can also keep one folder per
-scientist, which their machine reaches over SSH with plain commands. Turn it on once on the
-gateway; machines that pair afterwards get access with no keys to paste:
+### Experiments on the lab gateway
+
+A scientist asks for an experiment in plain English, from their own agent on their own laptop, and
+hands over whatever makes the work theirs: a Bayesian optimization routine, a mechanistic model,
+analysis scripts, skills, data. A planner on the gateway works it out with them, asks what only they
+can answer, rehearses it as a dry run, and proposes a **charter**: what the run may do, on which
+instruments, within which limits, with a preview of the data it will return. Once they approve, one
+agent session runs the closed loop on the lab's instruments, using their tools to choose each next
+experiment, and the results come home to their machine, checked.
+
+![An experiment in six steps across three lanes, Alice and her agent, the lab gateway and the chromatograph: ask, plan with a dry run, propose a charter and data preview, approve, the loop (start an injection, the finished job wakes the session, fit her model, ask her BO for the next condition), and results home, checked and acknowledged.](assets/openmhp-experiment-flow.svg)
+
+- **One session for the whole run.** The run's agent is a single Claude Code session, started at
+  approval and fed each piece of news as a message: a job finished, a background script ended, the
+  scientist answered. Between experiments it can read the literature, refit the model and decide what
+  to try next. Its mhp tools stay up the whole run; if it dies, it picks up the same conversation.
+- **The gateway enforces the charter** on every instrument call, before the lab PC sees it: only the
+  run's instruments, only the approved actions, values in range (including inside structured
+  parameters such as each step of an oven program), experiment and consumable budgets, a deadline,
+  and steps that always come back to the scientist.
+- **The scientist never types a command.** The bundled `openmhp-lab-gateway` skill, installed when
+  their machine pairs, makes their agent the go-between: it turns what they say into gateway commands,
+  and every answer carries a `say` line, the same news in plain English. A question that needs someone
+  in the lab says so; a session that goes quiet is followed up.
+- **Runs share the lab.** Each scientist has their own folder and runs; a run leases all its
+  instruments together or waits its turn. Results stay on the gateway until the scientist's machine
+  brings them home and checks them against the run's manifest, or for 7 days.
+
+The story, figures and what it makes possible are on [Experiment flow](https://openmhp.com/experiment-flow).
+To set it up, turn on scientists' folders once on the gateway; machines that pair afterwards get
+access with no keys to paste:
 
 ```bash
 mhp gateway ssh                      # then, as root: mhp gateway ssh apply, and reload sshd
                                      # (`mhp gateway ssh users` gives each scientist their own Linux user)
+mhp gateway pair-agent               # a one-time code for a scientist's machine
 
-# on a paired scientist's machine
-ssh mhp-gateway mhp-gw open                                   # a new run in your folder; prints its ID
-rsync -a ./my-analysis/ mhp-gateway:runs/R-2611-0001/in/      # hand over scripts, skills and data
-rsync -a mhp-gateway:runs/R-2611-0001/out/ ./results/         # bring results home
+# on the scientist's machine
+mhp agent --join https://<gateway> <code>
+mhp agent watch --install-service    # news and results, even when no agent is open
 ```
 
-The SSH server runs `mhp-gw` for every scientist's key, so the only things a machine can do are
-its verbs and copies into a run's `in/` and out of its `preview/` and `out/`. The scientist never
-types these: the bundled `openmhp-lab-gateway` skill, installed when the machine pairs, makes their
-agent the go-between. It turns what the scientist says into commands, and every answer from the
-gateway carries a `say` line, the same news in plain English, which the agent passes on. Installed
-skills follow the package: after an upgrade they are replaced the next time an agent or the watcher
-starts, unless someone edited them (`mhp skills status` shows which).
+The SSH server runs `mhp-gw` for every scientist's key, so the only things a machine can do are its
+verbs and copies into a run's `in/` and out of its `preview/` and `out/`. The admin installs the
+agent harness on the gateway (Claude Code, signed in however the company does it); each run gets a new
+session of it, as installed. With one Linux user per scientist, sessions run as that user, so the
+harness must be set up for them too, for example with the lab's key set system-wide.
 
-The same channel carries whole experiments: a scientist's request in plain English, a planner on the
-gateway that rehearses and proposes a charter, approval, a supervised agent session that runs the loop
-within that charter, and the results back home.
-
-Each run is one Claude Code session for the whole run, started when the scientist approves it and fed
-each piece of news (an instrument job finished, a background script ended, the scientist answered) as a
-new message. Between experiments it can read the literature, model the mechanism and update the
-scientist's optimizer; its mhp tools and background scripts stay up the whole time. If it dies, or the
-gateway restarts, it picks up the same conversation.
-
-The admin installs the agent harness on the gateway (Claude Code, signed in however the lab's company does
-it) and the gateway starts a new session of it, as installed, for each run. Before a run is planned the
-gateway checks the harness is there and signed in, and tells the scientist if it is not. (With one Linux
-user per scientist, sessions run as that user, so the harness must be set up for them too, for example
-with the lab's key set system-wide.)
-
-`examples/gateway_closed_loop/` runs it end to end on a simulated chromatograph.
+`examples/gateway_closed_loop/` runs the whole story on one machine against a simulated
+chromatograph, and `playground.py` there gives a gateway with a live feed for a second terminal.
 
 Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
 interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of
