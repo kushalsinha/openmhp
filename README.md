@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/hero-dark.svg">
-  <img src="assets/hero.svg" alt="OpenMHP" width="480">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/hero-dark.svg">
+  <img src="https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/hero.svg" alt="OpenMHP" width="480">
 </picture>
 
 ### Give AI agents a safe, shared interface to physical devices
@@ -13,10 +13,10 @@ response. OpenMHP extends that model for physical work that may run for minutes,
 
 [![npm](https://img.shields.io/npm/v/openmhp-cli?label=openmhp-cli&color=3FB59A)](https://www.npmjs.com/package/openmhp-cli)
 [![PyPI](https://img.shields.io/pypi/v/openmhp?label=openmhp&color=3FB59A)](https://pypi.org/project/openmhp/)
-[![license](https://img.shields.io/badge/license-Apache%202.0-1f1f1f.svg)](LICENSE)
+[![license](https://img.shields.io/badge/license-Apache%202.0-1f1f1f.svg)](https://github.com/kushalsinha/openmhp/blob/main/LICENSE)
 [![docs](https://img.shields.io/badge/docs-openmhp.com-2B8F78)](https://openmhp.com)
 
-[Quickstart](https://openmhp.com/quickstart) · [Experiment flow](https://openmhp.com/experiment-flow) · [Design](https://openmhp.com/design) · [Architecture](https://openmhp.com/architecture) · [Roadmap](https://openmhp.com/roadmap) · [Specification](SPEC.md) · [Contributing](CONTRIBUTING.md)
+[Quickstart](https://openmhp.com/quickstart) · [Experiment flow](https://openmhp.com/experiment-flow) · [Design](https://openmhp.com/design) · [Architecture](https://openmhp.com/architecture) · [Roadmap](https://openmhp.com/roadmap) · [Specification](https://github.com/kushalsinha/openmhp/blob/main/SPEC.md) · [Contributing](https://github.com/kushalsinha/openmhp/blob/main/CONTRIBUTING.md)
 
 </div>
 
@@ -31,138 +31,53 @@ MCP:      request ────────────────────�
 OpenMHP:  lease ─► job ─► live telemetry and events ─► result ─► release
 ```
 
-![AI agents connect through MCP and OpenMHP to physical devices such as lab instruments, robots and existing control stacks (OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT), with safety enforced at the device and live telemetry flowing back. A dashed line marks the lab firewall: lab PCs dial out through it, nothing is opened inbound.](assets/openmhp-overview.svg)
+![AI agents connect through MCP and OpenMHP to physical devices such as lab instruments, robots and existing control stacks (OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT), with safety enforced at the device and live telemetry flowing back. A dashed line marks the lab firewall: lab PCs dial out through it, nothing is opened inbound.](https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/openmhp-overview.svg)
 
 ## Why OpenMHP?
 
-Connecting an AI agent to a database or ticketing system is mostly an API problem: send a
-request and receive data. Connecting one to a centrifuge, robot arm, microscope, or PLC is a
-long-horizon coordination problem:
+Connecting an agent to a centrifuge, robot arm, microscope, or PLC is not an API call. The work
+lasts hours, the instrument talks back while it runs, the know-how lives in manuals and
+operators, a bad request can waste a sample, and every vendor is different. OpenMHP gives these
+devices one agent-facing layer without replacing the control systems underneath:
 
-- physical work lasts minutes or hours, well beyond one tool call;
-- instruments produce telemetry, progress, files, and safety events while they run;
-- the useful operating knowledge lives in manuals, SOPs, and experienced operators;
-- a malformed request can waste a sample or move real hardware; and
-- every vendor exposes a different control surface.
+- **Jobs for long-running work:** progress, results, and files survive the agent leaving.
+- **Pushed observations:** signals, progress, and safety events come to the agent; no polling.
+- **Progressive context:** a small card first, full instructions only for the device chosen.
+- **Safety at the edge:** the server beside the instrument checks limits, interlocks, approvals,
+  leases, and state before any vendor code runs.
+- **Wrap what the lab has:** OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, and MQTT stay in place.
 
-OpenMHP gives these devices a common agent-facing layer without replacing the control systems
-already underneath them. The job records what the instrument is doing, the lease prevents a
-second agent from interleaving commands, and the event stream keeps the agent informed without
-making it continuously poll the device.
-
-The design follows a few rules:
-
-- **Use jobs for long-running work.** An action returns immediately; progress, results, and
-  files remain available even if the agent leaves and comes back.
-- **Push observations.** Signal changes, job progress, completion, and safety events flow back
-  to the bridge rather than forcing the agent into a polling loop.
-- **Load context progressively.** Agents first see a small card, then instructions and exact
-  capabilities only for the device they select.
-- **Keep safety at the edge.** The server beside the instrument checks state, approvals,
-  interlocks, typed parameters, leases, and busy state before calling vendor code.
-- **Wrap what the lab already has.** OpenMHP is an agent-facing layer over existing drivers and
-  control systems such as OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, and MQTT. It preserves
-  those investments instead of replacing them.
-
-An agent may propose an action. The device server decides whether it is allowed to run.
-OpenMHP complements hardwired e-stops, light curtains, PLC safety logic, and normal lab
-procedures; it does not replace them.
+An agent may propose an action; the device server decides whether it runs. OpenMHP complements
+hardwired e-stops, PLC safety logic, and lab procedures; it does not replace them. More in the
+[design principles](https://openmhp.com/design).
 
 ## Try it in five minutes
 
-You need Node.js 18+ and Python 3.10+.
-
-### 1. Install OpenMHP
-
-Open Claude Code or Codex and ask your agent:
+You need Node.js 18+ and Python 3.10+. Open Claude Code or Codex and ask:
 
 ```text
 Install OpenMHP for me by running `npx openmhp-cli setup`, then tell me when it is ready.
 ```
 
-The agent will run:
-
-```bash
-npx openmhp-cli setup
-```
-
-The launcher installs an isolated runtime under `~/.openmhp`, installs the bundled Agent
-Skills, and registers the MCP server with Claude Code and Codex. Restart the agent after setup
-if it does not immediately show the OpenMHP tools.
-
-For another MCP client, use:
-
-```json
-{
-  "mcpServers": {
-    "openmhp": {
-      "command": "npx",
-      "args": ["-y", "openmhp-cli"]
-    }
-  }
-}
-```
-
-Prefer Python directly? Install the runtime with:
-
-```bash
-pip install "openmhp[all]"
-```
-
-**Updating.** When a new version is out, the OpenMHP server tells your agent once per session,
-along with the command for your install. To update yourself, run one of these and restart the
-agent:
-
-```bash
-npx -y openmhp-cli@latest update                     # installed with npx: upgrades the runtime and the skills
-pip install -U "openmhp[all]" && mhp skills install  # installed with pip
-```
-
-An instrument PC running `mhp node` says so in its log and in `mhp node --service-status`, and the
-gateway's `mhp gateway status` lists every lab PC that is behind, with the command to run on it.
-A lab PC with no internet hears of a release from its gateway. Nothing updates itself, so a
-qualified instrument PC changes only when someone runs, on that PC:
-
-```bash
-npx -y openmhp-cli@latest node <devices folder>      # set up with npx; restarts the service on the new version
-pip install -U "openmhp[node]" && mhp node <devices folder> --install-service   # set up with pip
-```
-
-The check reads PyPI at most once a day and sends nothing but the package name. Set
-`OPENMHP_NO_UPDATE_CHECK=1` to turn it off.
-
-### 2. Add the simulated lab
+Setup installs a runtime under `~/.openmhp`, the bundled Agent Skills, and the MCP server for
+Claude Code and Codex. Any other MCP client takes
+`{"mcpServers": {"openmhp": {"command": "npx", "args": ["-y", "openmhp-cli"]}}}`, and Python
+users can `pip install "openmhp[all]"`. Then add two simulated instruments and ask for something
+concrete:
 
 ```bash
 npx openmhp-cli demo
-npx openmhp-cli list
 ```
-
-This adds a simulated thermocycler and plate-handling arm. They use the same discovery,
-description, safety, job, and event paths as real devices.
-
-### 3. Ask your agent to do something concrete
 
 ```text
 Find a thermocycler, show me its operating instructions, and rehearse a
 3-cycle PCR at 95/58/72 °C before running it.
 ```
 
-The normal operating loop is:
+Ask for a 200 °C setpoint too: the driver refuses it and returns the allowed range. To update
+later, run `npx -y openmhp-cli@latest update`; see [Updating](https://openmhp.com/quickstart#updating).
 
-1. **Find** a suitable device from a plain-language request.
-2. **Describe** it and read the owner's operating procedure.
-3. **Check** live signals and interlocks.
-4. **Plan** or dry-run the procedure through its safety gates.
-5. **Run** it as a job and follow progress or pushed events.
-6. **Verify** the result from measurements, not from the requested setpoint.
-
-Try asking for a 200 °C thermocycler setpoint. The driver should refuse it and return the
-allowed range.
-
-## What using it looks like
-
-Talk to the agent in terms of the work you want done:
+## What you can ask for
 
 | You ask | OpenMHP does |
 |---|---|
@@ -174,133 +89,40 @@ Talk to the agent in terms of the work you want done:
 | “Stop everything now.” | Requests e-stop for every device touched by the session. |
 | “Get the lab to find GC conditions that separate ethanol from isopropanol, using my retention model and BO skill.” | Hands your request, model and optimizer to the lab gateway, relays its questions, reads you its plan, and once you approve, the gateway runs the closed loop and the results come home. |
 
-You can use the same protocol without an agent:
-
-```bash
-mhp http://localhost:18921 describe summary
-mhp http://localhost:18921 read block_temperature lid_closed
-mhp http://localhost:18921 write target_temperature 95 --dry-run
-mhp http://localhost:18921 invoke run_protocol \
-  '{"steps":[{"temp":95,"hold_s":5}],"cycles":3}' --wait
-mhp http://localhost:18921 estop "operator requested stop"
-```
-
 ## How it works
 
-An OpenMHP deployment has three parts:
-
-1. **Device package** — a card, operating instructions, machine-readable descriptor,
+1. **Device package:** a card, operating instructions, a machine-readable descriptor,
    references, scripts, and a driver or adapter.
-2. **Device server or lab node** — runs beside the instrument, translates OpenMHP calls into
-   the native control API, publishes events, and enforces the device boundary.
-3. **MCP bridge** — gives an agent a fixed set of OpenMHP tools regardless of whether the lab
-   has two devices or two thousand.
-4. **Gateway** (optional) — for labs whose network nothing outside may enter. Bench PCs dial
-   out to it and register their instruments; agents reach them there. Nothing is opened inbound.
+2. **Device server or lab node:** runs beside the instrument, translates calls into the native
+   control API, publishes events, and enforces the device boundary.
+3. **MCP bridge:** gives an agent one fixed set of tools whether the lab has two devices or two
+   thousand.
+4. **Gateway** (optional): for lab networks nothing outside may enter. Bench PCs dial out to it.
 
-```text
-agent harness
-    │
-    │ MCP: find, describe, read, write, invoke, job, run, data, lab, method, estop
-    ▼
-OpenMHP bridge ───── directory of compact device cards
-    │
-    │ MHP over stdio or HTTP/SSE
-    ▼
-device server / lab node
-    │
-    │ vendor SDK, serial, OPC UA, ROS 2, SiLA 2, MQTT, ...
-    ▼
-physical instrument
-```
+Adapters map OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, and MQTT onto the same job, lease,
+telemetry, and safety contract ([adapter guide](https://openmhp.com/adapters)). The
+[architecture guide](https://openmhp.com/architecture) describes the components, and
+[SPEC.md](https://github.com/kushalsinha/openmhp/blob/main/SPEC.md) is the normative protocol.
 
-When the bench PC sits behind a lab firewall, the step between the bridge and the lab node
-runs through the relay instead: the node dials out to a gateway over HTTPS and the bridge talks
-to the gateway. See [Instruments behind the lab firewall](#instruments-behind-the-lab-firewall).
+### Device packages
 
-### Built to bridge the automation stack you already have
+A device package works like an [Agent Skill](https://agentskills.io): the agent loads more
+detail only as the task narrows, from a card while searching, to operating instructions once it
+picks a device, to exact signals, actions, and tested scripts when it acts.
 
-Labs have invested years in control systems such as **ROS 2, OPC UA, SiLA 2, MADSci,
-PyLabRobot, and MQTT**. OpenMHP does not ask them to replace that work. It adds a common
-agent-facing layer above it:
+![A device package loads progressively: a compact card during search, operating instructions after selection, and exact specifications or procedures on demand](https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/device-as-agent-skill.png)
 
-- OPC UA variables and methods become OpenMHP signals, settings, and actions.
-- ROS 2 topics, services, and actions keep their native feedback and control paths.
-- SiLA 2 properties and commands retain observable progress and cancellation.
-- MADSci nodes expose their existing actions, status, and safety controls.
-- PyLabRobot machines expose their existing operations through the same job model.
-- MQTT topics, the way many labs already stream time-varying sensor data, become signals
-  with a staleness window; command topics become settings and actions.
+In the 2,000-device scale demo, finding five candidates, opening one, and loading what it needs
+takes about 1,270 tokens instead of 1.22 million. The model's context helps it reason; it is not
+the safety boundary. The driver checks every call, and only the device's owner can change a
+package's limits.
 
-The adapter translates each technology into the same discovery, job, lease, telemetry, and
-safety contract. The agent gets one way to interact with the lab while the lab keeps its
-existing drivers, orchestration, and operational knowledge. See the
-[adapter guide](https://openmhp.com/adapters) for the supported mappings.
+## Supported devices
 
-Read the rationale in the [design principles](https://openmhp.com/design), see the components
-in the [architecture guide](https://openmhp.com/architecture), and use [SPEC.md](SPEC.md) as the
-normative protocol contract.
-
-## Device packages
-
-OpenMHP treats each device package the way Anthropic's
-[Agent Skills](https://agentskills.io) treat procedural knowledge: the agent loads more detail
-only as the task narrows. The package can hold everything the instrument owner wants an agent
-to know without placing all of it in the model's context at once.
-
-The package loads in three levels:
-
-1. **Search the lab:** the agent sees only a compact device card: what the instrument is,
-   where it is, and when to use it.
-2. **Choose a device:** the agent loads that device's operating instructions: how to run it,
-   what to watch, and what never to do.
-3. **Prepare an action:** the agent requests only the exact signals, settings, actions,
-   references, or tested scripts needed for the task.
-
-![A device package loads progressively: a compact card during search, operating instructions after selection, and exact specifications or procedures on demand](assets/device-as-agent-skill.png)
-
-This progressive disclosure keeps context small as the lab grows. In the included 2,000-device
-scale demo, finding five candidates, opening one device, and loading the two items used takes
-about 1,270 tokens, compared with about 1.22 million tokens for loading every descriptor up
-front.
-
-A package keeps human guidance and machine-enforced behavior together:
-
-```text
-devices/hotplate-01/
-├── DEVICE.md          searchable card + operating instructions
-├── descriptor.yaml    signals, settings, actions, limits, interlocks, safety
-├── driver.py          native driver, BoundDriver, or adapter
-├── sim.py             simulated twin (recommended)
-├── references/        SOPs, manual excerpts, calibration notes
-├── scripts/           tested end-to-end procedures
-└── methods/           optional versioned methods for named procedures
-```
-
-`DEVICE.md` is readable by people and agents. `descriptor.yaml` contains the parts the runtime
-can validate and enforce. The driver implements the hardware-specific hooks while the base
-driver supplies the common protocol, job handling, notifications, and safety gates.
-
-The model's context helps it reason; it is not the safety boundary. The driver remains beside
-the hardware and checks limits, interlocks, approvals, leases, and device state on every call,
-whether or not those rules are currently in the model's context.
-
-Because the package is the rulebook, changing one is not the agent's to do either. The lab records
-which package files were accepted for each device, refuses to operate a device whose files are not
-those, and puts any change to a limit, interlock, or approval level to the owner with the exact diff
-before it is enforced. `mhp lab accept <id>` is the owner's own way to accept one.
-
-### Supported devices
-
-[`supported-devices`](supported-devices) holds ready-made packages for instruments that talk to
-OpenMHP directly: a driver, a simulated twin, operating instructions and a setup note each. Add
-one to a lab with `mhp lab add github:kushalsinha/openmhp/supported-devices/<name>` (append
-`--sim` for the twin), then set the limits to your own rig. The
-[list](supported-devices/README.md) says, per device, whether the driver has been run on real
-hardware or only against its twin, and carries a self-assessed score against the twelve
-device-level criteria of Gottstein et al.'s autonomous-ready procurement profile (`mhp rubric
-<folder>` shows the evidence). The full table with scores and setup routes is on
-[openmhp.com/instruments](https://openmhp.com/instruments); in brief:
+[`supported-devices`](https://github.com/kushalsinha/openmhp/tree/main/supported-devices) holds 81 ready-made packages, each with a driver, a
+simulated twin, operating instructions, a setup note, and a self-assessed score against the
+device-level criteria of Gottstein et al.'s autonomous-ready procurement profile. Full table:
+[openmhp.com/instruments](https://openmhp.com/instruments).
 
 | Field | Packages | Instruments |
 |---|---|---|
@@ -314,133 +136,37 @@ device-level criteria of Gottstein et al.'s autonomous-ready procurement profile
 | Physics | 6 | Keithley 2400 SMU; Lake Shore 33x/350; Pfeiffer TPG gauges; SRS SR830 lock-in; SRS RGA; Thorlabs PM100D |
 | Engineering | 5 | Alicat flow controllers; LabJack T-series; NI-DAQmx; Rigol DP8xx supply; Rigol DS1000Z scope |
 
-Three declarative drivers cover most bench
-instruments with no package code at all: `serial_ascii` (text commands over USB or RS-232),
-`scpi_visa` (SCPI over VISA, a raw socket or serial) and `modbus` (TCP or RTU registers); the
-command map lives in `descriptor.yaml`. Every instrument that is not operator-run also answers
-the reserved self-state signals (`calibration_status`, `qualification_status`, `usage_count`,
-SPEC §4.6) and the runtime ones (`state`, `busy`, `connected`), so an agent asks every device
-the same question about fitness for use.
-
-A package carries the instrument's capabilities; the limits, interlocks and procedures are your
-lab's. Keep your edited copies, your recipes and your SOPs in your lab's repository, review limit
-changes like code, and deploy them to the bench computers that serve those devices. The packages
-in [`openmhp/devices`](openmhp/devices) are simulated reference devices for learning and testing
-the protocol.
-
 ## Connect a real instrument
 
-Start with the route that matches the hardware:
-
-| Instrument today | Recommended route |
-|---|---|
-| Already exposes OpenMHP | Scan and add its URL |
-| Operated by a person | Use the manual driver so it can join procedures while preserving operator steps |
-| Uses serial/USB text commands | Declare the commands in `descriptor.yaml`; no custom protocol code is needed |
-| Already uses OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, or MQTT | Use the matching adapter |
-| Has a vendor Python SDK or another API | Subclass `Driver` or bind existing Python callables with `BoundDriver` |
-
-From an agent, say:
-
-```text
-Onboard my IKA hotplate. I have the manual and can confirm its limits and stop procedure.
-```
-
-To serve packages from the bench computer attached to the instruments:
-
-```bash
-npx openmhp-cli node
-```
-
-Or use Python directly. The person at the bench knows which instrument they are standing next
-to, so they name it; the package carries the vendor route and the node serves whatever packages
-are in its folder:
-
-```bash
-pip install "openmhp[node]"       # the `node` extra adds serial, MQTT and mDNS, which a bench PC needs
-mhp node add                      # lists the ready-made packages
-mhp node add waters-empower-hplc  # fetches it, then asks the questions and leaves the node running
-```
-
-`add` downloads the package from this repository over HTTPS (no git on the lab PC), installs the
-vendor client, and asks only what a person knows, with an example beside each question: the
-Empower address, the user (its password goes to the OS keyring, never into a file), the project,
-the node and system picked from a list the server gives. It writes `config.json`, proves the answers
-against the instrument where the driver can (`Empower reachable, Arc_HPLC_1 idle`), asks for the
-gateway pairing line if the lab has one, and either installs the background service or serves in
-that window. Numbers and limits keep their defaults; the file is still plain JSON to edit.
-
-```bash
-mhp node setup waters-empower-hplc            # the same questions again (a port moved, a new address)
-mhp node add ika-c-mag-hs7 --yes --set port=COM4 --no-pip   # scripted: no questions, defaults and --set
-mhp node --check                              # what is still missing, in words; serves nothing
-mhp node                                      # serves ~/.openmhp/devices; --install-service keeps it running
-```
-
-With no terminal (`--yes`, piped input) nothing is asked and what still needs an answer is said.
-`--from <folder or .tar.gz>` takes a copied package instead of downloading, for a PC with no internet.
-A package adds its questions in `config.schema.json` and can give its driver `discover` (choices
-from the instrument) and `probe` (the one-line proof); without them the example's text fields are
-asked, with `references/setup.md` as the help.
-
-A node listens on `127.0.0.1` only, so by default no other machine can reach its ports; agents
-beyond the lab reach it through the relay (`--join`), which opens nothing
-inbound. To serve agents on the same network directly, pass `--host <this PC's LAN address>`: the
-node then generates a token the first time it starts (`~/.openmhp/device_token`) and requires
-`Authorization: Bearer <token>` on `/rpc` and `/events`. Copy it to the machine running the bridge
-(`export OPENMHP_DEVICE_TOKEN=...`); discovery stays open, so `mhp lab scan` still finds the
-devices. `--no-auth` serves the network without one, and callers from off the machine can then no
-longer confirm approval-gated operations.
-
-### An instrument PC that only has Python
-
-A bench PC needs no Node, no agent and no second environment. Python 3.10 or newer and one
-install are enough. The node pulls its package from this repository's `main`; `add` asks for the
-gateway pairing line (from `mhp gateway pair` on the gateway) and offers to keep the node running:
+On the PC wired to the instrument, name the package; `add` fetches it, asks only what a person
+knows, checks the answers against the instrument, and keeps it running:
 
 ```bash
 pip install "openmhp[node]"
-mhp node add waters-empower-hplc          # fetch, configure, pair with the gateway, install the service
-mhp node --join https://gw.office ab12-cd34 --install-service   # or, for packages already in the folder
+mhp node add                       # lists the ready-made packages
+mhp node add waters-empower-hplc
 ```
 
-`npx openmhp-cli node` does the same through a prompt, for a PC that already has Node; it needs a
-folder that already holds a package, so run `npx openmhp-cli mhp node add` first to see the
-supported instruments and fetch one. Packages are downloaded when you add one, not shipped in the
-wheel, so a package merged to `main` can be added before the next release, and
-`pip install -U openmhp` is what refreshes the list `mhp node add` shows.
+For anything not on the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”*
+Guides: [Add an instrument](https://openmhp.com/add-a-device), [Lab nodes](https://openmhp.com/lab-nodes).
 
 ### Instruments behind the lab firewall
 
-In most companies the instrument network is one nothing outside may enter, and IT will not open
-a port for a lab PC. OpenMHP does not need one. The bench PC connects **outward** over HTTPS to
-a gateway on the company network and registers its instruments; agents talk to the gateway. The
-lab PC needs no AI agent and no network change, and working from home over the VPN is the same
-as being at your desk.
+The bench PC connects **outward** over HTTPS to a gateway on the company network; agents talk to
+the gateway. No port is opened, and working from home over the VPN is the same as at your desk.
 
-![Bench PCs on the lab network dial out through the firewall to one gateway on the company network; agent machines in the office or on the VPN reach the same gateway with an agent token. Every arrow points at the gateway, none enters the lab.](assets/openmhp-gateway.svg)
+![Bench PCs on the lab network dial out through the firewall to one gateway on the company network; agent machines in the office or on the VPN reach the same gateway with an agent token. Every arrow points at the gateway, none enters the lab.](https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/openmhp-gateway.svg)
 
 ```bash
-# on the gateway machine, once
-mhp gateway init
-mhp gateway serve --install-service
-mhp gateway pair                    # one-time code for one lab PC (15 minutes)
-mhp gateway pair-agent              # one-time code for one agent machine (1 hour); send it in chat
-
-# on the lab PC: `mhp node add <package>` asks for this line; or, for packages already there, once:
-mhp node --join https://gw.office ab12-cd34
-
-# on the agent machine, once; after that plain `mhp-mcp` reaches every instrument behind the gateway
-mhp agent --join https://gw.office ef56-ab78
+mhp gateway init && mhp gateway serve --install-service   # on the gateway, once
+mhp node --join https://gw.office ab12-cd34                # on the lab PC, with a code from `mhp gateway pair`
+mhp agent --join https://gw.office ef56-ab78               # on the agent machine, with a code from `mhp gateway pair-agent`
 ```
 
-![One call through the relay: the lab PC holds a long-poll open on the gateway; the agent posts its request with its token; the gateway queues it under the agent's name and hands it to the open poll once; the driver runs it on the bench with every limit enforced; the reply comes back the same way. Offline means 503 at once, no answer means 504, and nothing is re-sent.](assets/openmhp-relay-flow.svg)
+![One call through the relay: the lab PC holds a long-poll open on the gateway; the agent posts its request with its token; the gateway queues it under the agent's name and hands it to the open poll once; the driver runs it on the bench with every limit enforced; the reply comes back the same way. Offline means 503 at once, no answer means 504, and nothing is re-sent.](https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/openmhp-relay-flow.svg)
 
-Every connection is outbound. A request is handed to the lab PC once or not at all: if the PC
-is offline the agent gets a one-line error, never a silent retry. Agents hold agent tokens, the
-lab PC's token never leaves it, and the gateway is the approval boundary. `mhp gateway check`
-prints `OK` or `FIX` for the gateway, each lab PC and each instrument. The wire-level rules
-are in `SPEC.md` (transports).
+A request reaches the lab PC once or not at all, and the gateway is the approval boundary. More:
+[Gateway and relay](https://openmhp.com/gateway).
 
 ### Experiments on the lab gateway
 
@@ -448,109 +174,29 @@ A scientist asks for an experiment in plain English, from their own agent, and h
 models, optimizer and skills; the gateway plans it with them and, once they approve, runs the closed
 loop on the lab's instruments.
 
-![An experiment in six steps across three lanes, Alice and her agent, the lab gateway and the chromatograph: ask, plan with a dry run, propose a charter and data preview, approve, the loop (start an injection, the finished job wakes the session, fit her model, ask her BO for the next condition), and results home, checked and acknowledged.](assets/openmhp-experiment-flow.svg)
+![An experiment in six steps across three lanes, Alice and her agent, the lab gateway and the chromatograph: ask, plan with a dry run, propose a charter and data preview, approve, the loop (start an injection, the finished job wakes the session, fit her model, ask her BO for the next condition), and results home, checked and acknowledged.](https://raw.githubusercontent.com/kushalsinha/openmhp/main/assets/openmhp-experiment-flow.svg)
 
 The story, what it makes possible and how to set it up: [Experiment flow](https://openmhp.com/experiment-flow).
-`examples/gateway_closed_loop/` runs it on one machine against a simulated chromatograph.
-
-Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
-interlocks against the manual, prove out-of-range requests are refused, test e-stop and loss of
-contact behavior, and keep the manufacturer's safety systems in place. OpenMHP is currently an
-experimental preview tested primarily with simulators and fake vendor clients; supervise real
-hardware deployments.
-
-The full walkthrough is [Add an instrument](https://openmhp.com/add-a-device). For a lab with
-many existing devices, see [Adapters](https://openmhp.com/adapters) and
-[Lab nodes](https://openmhp.com/lab-nodes); for a closed instrument network, [Gateway and relay](https://openmhp.com/gateway).
+[`examples/gateway_closed_loop/`](https://github.com/kushalsinha/openmhp/tree/main/examples/gateway_closed_loop) runs it on one machine against a simulated chromatograph.
 
 ## Contributing
 
-OpenMHP is developed like a protocol project. Contributions should make the protocol clearer,
-more interoperable, easier to implement, or better tested. A package for an instrument others
-also own is welcome in [`supported-devices`](supported-devices); lab-specific limits, private
-SOPs, and recipes belong in the lab's own repository rather than upstream.
-
-Useful contributions include:
-
-- proposals that resolve an open protocol or architecture question;
-- work on items in the [published roadmap](https://openmhp.com/roadmap);
-- improvements to the reference server, client, MCP bridge, discovery, jobs, events, leases,
-  or safety behavior;
-- adapter and interoperability improvements for ROS 2, OPC UA, SiLA 2, MADSci, PyLabRobot,
-  MQTT, and other established automation systems;
-- conformance tests that help independent OpenMHP implementations agree on behavior; and
-- documentation, examples, and security reviews that make the protocol easier to implement
-  correctly.
-
-Before starting a substantial change, open an issue describing the protocol problem, the
-affected implementations, and the behavior you propose. This gives the design discussion a
-place to happen before code fixes one interpretation into the reference implementation.
-
-### Set up a development checkout
-
-```bash
-git clone https://github.com/kushalsinha/openmhp.git
-cd openmhp
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[all]"
-```
-
-Run the test suite:
-
-```bash
-python tests/test_adapters.py
-python tests/test_runs.py
-python tests/test_safety_gates.py
-python tests/test_inclusion.py
-python tests/test_methods.py
-```
-
-### Contribution principles
-
-- Start from a protocol or interoperability need, not a one-off lab customization.
-- Keep the specification, reference implementation, and conformance tests aligned.
-- Fail closed when hardware state or command outcome is uncertain.
-- Preserve the fixed, device-independent tool surface.
-- Add regression coverage for changes to safety, state, concurrency, or transport behavior.
-- Document compatibility expectations for every adapter or wire-level change.
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for proposal and pull-request expectations. Protocol
-questions, roadmap work, interoperability gaps, bugs, and design proposals belong in
-[GitHub Issues](https://github.com/kushalsinha/openmhp/issues).
-
-## Repository guide
-
-| Path | Purpose |
-|---|---|
-| `openmhp/driver.py` | Driver base class, state machine, jobs, safety gates, and notifications |
-| `openmhp/package.py` | Device-package loading and progressive description tiers |
-| `openmhp/mcp_bridge.py` | Fixed MCP tool surface over a lab or directory |
-| `openmhp/client.py` | Python client and multi-device `Lab` API |
-| `openmhp/runs.py` | Plans, background runs, logs, and run artifacts |
-| `openmhp/methods.py` | Versioned instrument methods and project history |
-| `openmhp/adapters/` | OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT, and callable bindings |
-| `openmhp/drivers/` | Declarative drivers with no package code: `serial_ascii`, `scpi_visa`, `modbus`, and `manual` for operator-run instruments |
-| `openmhp/rubric.py` | `mhp rubric`: scores a package against the device-level autonomous-ready procurement criteria |
-| `scripts/build_registry.py` | Refreshes `openmhp/registry.json` and the supported-devices table (classes, twins, rubric scores) |
-| `openmhp/devices/` | Bundled reference devices and simulated twins |
-| `openmhp/recipes/` | Reusable multi-step procedures |
-| `supported-devices/` | Ready-made device packages for specific instruments, each with a simulated twin |
-| `openmhp/gateway.py` | `mhp gateway`: the relay agents reach when lab PCs sit behind a firewall |
-| `openmhp/relay.py` | Node side of the relay: `mhp node --join` dials out and serves through the gateway |
-| `openmhp/node_add.py` | `mhp node add <package>`: puts a ready-made device package on the instrument PC |
-| `openmhp/node_setup.py` | `mhp node setup`: the questions (from `config.schema.json`), `config.json`, the driver's probe, gateway pairing, the service |
-| `tests/` | Simulator and fake-client coverage, plus a relay end-to-end test |
+Contributions that make the protocol clearer, more interoperable, or better tested are welcome,
+as are packages for instruments others also own. Open an issue before a substantial change.
+[CONTRIBUTING.md](https://github.com/kushalsinha/openmhp/blob/main/CONTRIBUTING.md) has the development setup, the repository guide, and
+pull-request expectations; the [roadmap](https://openmhp.com/roadmap) lists open work.
 
 ## Project status
 
-OpenMHP is a pre-1.0 experimental protocol. Expect breaking changes between minor versions.
-The [roadmap](https://openmhp.com/roadmap) tracks what is implemented and what remains out of
-scope. Use real hardware only with qualified supervision and independent safety controls.
+OpenMHP is a pre-1.0 experimental protocol; expect breaking changes between minor versions.
+Before real operation, have the instrument owner review `DEVICE.md`, verify limits and
+interlocks against the manual, prove out-of-range requests are refused, test e-stop and
+loss-of-contact behavior, and keep the manufacturer's safety systems in place. Supervise real
+hardware deployments.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](https://github.com/kushalsinha/openmhp/blob/main/LICENSE).
 
 OpenMHP is an independent, community-driven project. It is not affiliated with, endorsed by,
 or sponsored by Anthropic, the OPC Foundation, Open Robotics, the SiLA Consortium, MADSci,
