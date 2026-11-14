@@ -362,6 +362,15 @@ def main(argv=None):
             else serve_stdio(d)
 
     v, x = a.verb, a.args
+    if not a.target.startswith(("http://", "https://", "stdio:", "local:", "pkg:", "sim:")):
+        from . import __version__
+        from .update_check import upgrade_command
+        print(f"mhp: {a.target!r} is not a command of OpenMHP {__version__} here, nor a device address "
+              "(http://host:port, pkg:<folder>, ...).\n"
+              "Commands: agent, gateway, node, lab, serve, serve-directory, skills, validate, inclusion, rubric, log, "
+              "conformance.\nIf the instructions you follow are newer than this install, update it:  "
+              + upgrade_command(), file=sys.stderr)
+        return 2
     try:
         dev = connect(a.target, token=a.token)
         if v == "find":      out = dev.call("directory/search", {"query": " ".join(x)})["results"]

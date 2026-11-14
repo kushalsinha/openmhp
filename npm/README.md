@@ -26,8 +26,10 @@ If your lab has a gateway, join it once with the code its admin gives you
 (from `mhp gateway pair-agent`):
 
 ```bash
-npx -y openmhp-cli@latest mhp agent --join https://<gateway> <code>
+npx -y openmhp-cli@latest mhp agent --join https://<gateway> <code> --name <your name, e.g. alice>
 ```
+
+The name becomes your folder on the gateway (unless the admin already chose it when making the code).
 
 Through the gateway you can also ask the lab for a whole experiment in plain English and hand over
 your own models and optimizer: see [Experiment flow](https://openmhp.com/experiment-flow).

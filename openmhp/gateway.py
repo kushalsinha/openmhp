@@ -854,9 +854,19 @@ def pair_agent(name: str | None = None) -> int:
         entry["name"] = re.sub(r"[^A-Za-z0-9._-]", "-", name)
     state.setdefault("codes", {})[code] = entry
     save(state)
+    url = agent_url(state).rstrip('/')
+    if name or not ssh:
+        join_line, about_name = f"  mhp agent --join {url} {code}", []
+        if name and ssh:
+            about_name = [f"They join as scientist '{entry['name']}'; their runs and files go in that folder here.", ""]
+    else:                                          # the name becomes their scientist folder: have them choose it
+        join_line = f"  mhp agent --join {url} {code} --name <their name, e.g. alice>"
+        about_name = ["The name becomes their scientist folder on this gateway (lower-case letters, digits, '-' and '_',",
+                      "starting with a letter). Without --name it is their computer's name. To fix it from here instead:",
+                      "  mhp gateway pair-agent alice", ""]
     say(f"agent code (1 hour, one machine{', named ' + entry['name'] if name else ''}):  {code}", "",
         "Send it to the person. On their machine, once:", "",
-        f"  mhp agent --join {agent_url(state).rstrip('/')} {code}", "",
+        join_line, "", *about_name,
         f"It will show the gateway certificate fingerprint {fingerprint_of(state['cert'])}; they should stop if it differs.",
         "From then on `mhp-mcp` on that machine reaches every instrument behind this gateway. Nothing to paste.")
     return 0

@@ -30,13 +30,18 @@ function tool(n) {
 }
 
 function ensureRuntime({ upgrade = false, source = SOURCE } = {}) {
-  if (fs.existsSync(tool("mhp-mcp")) && !upgrade) return;
+  if (fs.existsSync(tool("mhp-mcp")) && fs.existsSync(tool("python")) && !upgrade) return;
   const py = findPython();
   if (!py) {
     log("Python 3.10 or newer is required. Install it from https://www.python.org/downloads/ and run this again.");
     process.exit(1);
   }
   fs.mkdirSync(HOME, { recursive: true });
+  if (fs.existsSync(VENV) && !fs.existsSync(tool("python"))) {
+    // the Python this runtime was made from is gone (uninstalled, or a conda env removed): start it again
+    log(`${VENV} lost its Python; making it again`);
+    fs.rmSync(VENV, { recursive: true, force: true });
+  }
   if (!fs.existsSync(VENV)) {
     log(`creating ${VENV}`);
     if (spawnSync(py, ["-m", "venv", VENV], { stdio: ["ignore", "inherit", "inherit"] }).status !== 0) process.exit(1);
