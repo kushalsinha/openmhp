@@ -50,7 +50,12 @@ function ensureRuntime({ upgrade = false, source = SOURCE } = {}) {
     const have = runtimeVersion();
     if (have && !older(have, LAUNCHER)) return;
     const tried = path.join(HOME, ".upgraded-for");          // once per launcher version: a lagging mirror must not
-    try { if (fs.readFileSync(tried, "utf8").trim() === LAUNCHER) return; } catch { /* not tried yet */ }  // slow every run
+    try {                                                                                  // slow every run
+      if (fs.readFileSync(tried, "utf8").trim() === LAUNCHER) {
+        log(`OpenMHP ${have} here, older than this launcher (${LAUNCHER}): your package index has nothing newer yet.`);
+        return;
+      }
+    } catch { /* not tried yet */ }
     try { fs.writeFileSync(tried, LAUNCHER); } catch { /* read-only home: try every time */ }
     log(`the runtime in ${VENV} is OpenMHP ${have || "of unknown version"}; this launcher is ${LAUNCHER}. Updating it.`);
     upgrade = true;
@@ -76,7 +81,35 @@ function ensureRuntime({ upgrade = false, source = SOURCE } = {}) {
   args.push(source);
   const r = spawnSync(tool("python"), args, { stdio: ["ignore", "inherit", "inherit"] });
   if (r.status !== 0) { log("install failed"); process.exit(1); }
+  const got = runtimeVersion();
+  if (got && older(got, LAUNCHER) && /^openmhp(\[|$)/.test(source)) mirrorBehind(got);
   log("runtime ready");
+}
+
+// Where pip looks for packages, as a host name only: an index URL can carry a user and token.
+function indexHost() {
+  let url = process.env.PIP_INDEX_URL || "";
+  if (!url) {
+    const r = spawnSync(tool("python"), ["-m", "pip", "config", "list"], { encoding: "utf8" });
+    const m = /index-url\s*=\s*'?([^'\s]+)/.exec(r.stdout || "");
+    url = m ? m[1] : "";
+  }
+  try { return url ? new URL(url).host : null; } catch { return null; }
+}
+
+// pip upgraded as far as it could and is still behind: the package index offers nothing newer. In an
+// enterprise that is usually an internal mirror; say what to ask for instead of carrying on silently.
+function mirrorBehind(got) {
+  try { fs.writeFileSync(path.join(HOME, ".upgraded-for"), LAUNCHER); } catch { /* read-only home */ }
+  const host = indexHost();
+  log("");
+  log(`the newest OpenMHP your Python package index offers is ${got}; this launcher is ${LAUNCHER}.`);
+  log(host && host !== "pypi.org"
+    ? `pip installs from ${host}, which looks like an internal mirror: ask whoever runs it to add openmhp ${LAUNCHER}`
+    : `ask whoever manages Python packages on this machine for openmhp ${LAUNCHER}`);
+  log("  (https://pypi.org/project/openmhp/, with pyyaml, zeroconf, pyserial and paho-mqtt).");
+  log(`until then OpenMHP ${got} runs here, without what came later (joining a gateway needs 0.10.0 or newer).`);
+  log("");
 }
 
 function run(cmd, args, opts = {}) {
