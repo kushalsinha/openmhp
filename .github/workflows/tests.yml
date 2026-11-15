@@ -41,6 +41,7 @@ jobs:
           python tests/test_safety_gates.py
           python tests/test_inclusion.py
           python tests/test_methods.py
+          python tests/test_write_face.py
           python tests/test_relay.py
           python tests/test_gateway_runs.py
           python tests/test_gateway_charter.py

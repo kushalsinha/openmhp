@@ -6,9 +6,11 @@ send (weak tool-calling models emit typed JSON reliably only when the schema off
 
     PYTHONPATH=. python tests/test_write_face.py
 """
+import json
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 sys.path.insert(0, ".")
 os.environ["OPENMHP_HOME"] = tempfile.mkdtemp(prefix="openmhp-write-face-tests-")
@@ -41,6 +43,35 @@ def refused(bridge, dev, name, value):
         return None
     except RemoteError as e:
         return e
+
+
+def last_write_restore_entry():
+    """The most recent `write/restore` classification from the runlog under OPENMHP_HOME."""
+    log_dir = Path(os.environ["OPENMHP_HOME"]) / "log"
+    files = sorted(log_dir.glob("*.jsonl"))
+    if not files:
+        return None
+    lines = files[-1].read_text(encoding="utf-8").strip().split("\n")
+    for line in reversed(lines):
+        ev = json.loads(line)
+        if ev.get("kind") == "write/restore":
+            return ev
+    return None
+
+
+class TypeGateDev(FakeDev):
+    """A device whose write gate refuses a correctly restored value: the descriptor said integer,
+    the restore sent an integer, and the gate still refuses -- the synthetic shape of a descriptor
+    lie or a restore defect, which is exactly what the device_type_error counter exists to catch."""
+
+    SETTINGS = {"glitch": "integer"}
+
+    def call(self, method, payload=None):
+        if method == "settings/write":
+            err = RemoteError("expected integer, got str", {"type": "integer"})
+            err.code = -32014
+            raise err
+        return super().call(method, payload)
 
 
 def test_typed_face_schema_is_unchanged():
@@ -101,6 +132,54 @@ def test_unknown_face_rejected_at_construction():
         raise AssertionError("construction should refuse an unknown face")
     except ValueError:
         pass
+
+
+def test_value_json_is_refused_on_wrapped_face():
+    b, dev = mb.Bridge(write_face="wrapped"), FakeDev()
+    try:
+        b._write_wrapped(dev, {"device": "d", "name": "ch1_enabled", "value_json": "true"})
+        raise AssertionError("value_json must not pass on the wrapped face")
+    except RemoteError as e:
+        assert e.code == -32602 and e.data["category"] == "form_mismatch"
+        assert "no value_json parameter" in e.message
+        assert dev.written == []                    # nothing reached the device
+
+
+def test_missing_value_is_form_mismatch():
+    e = refused(mb.Bridge(write_face="wrapped"), FakeDev(), "ch1_enabled", None)
+    assert e is not None and e.data["category"] == "form_mismatch"
+    assert "no value" in e.message
+
+
+def test_wrapped_face_with_scripts_off():
+    tools = mb.Bridge(write_face="wrapped", scripts=False).tools()
+    names = [t["name"] for t in tools]
+    assert "mhp_run" not in names
+    w = [t for t in tools if t["name"] == "mhp_write"][0]
+    assert w["inputSchema"]["properties"]["value"]["type"] == "string"
+
+
+def test_restored_attempt_is_classified_in_the_runlog():
+    b, dev = mb.Bridge(write_face="wrapped"), FakeDev()
+    b._write_wrapped(dev, {"device": "d", "name": "trigger_coupling", "value": "DC"})
+    ev = last_write_restore_entry()
+    assert ev is not None
+    assert ev["category"] == "restored"
+    assert ev["declared_type"] == "string" and ev["wrapped"] == "DC" and ev["value"] == "DC"
+
+
+def test_device_type_error_is_classified_as_bridge_defect():
+    # the restore picked the type, so a device-side type refusal is counted against the bridge,
+    # not the model -- the classification is the acceptance signal for restore correctness
+    b, dev = mb.Bridge(write_face="wrapped"), TypeGateDev()
+    try:
+        b._write_wrapped(dev, {"device": "d", "name": "glitch", "value": "10"})
+        raise AssertionError("the device refusal should surface")
+    except RemoteError as e:
+        assert e.code == -32014
+    ev = last_write_restore_entry()
+    assert ev is not None and ev["category"] == "device_type_error"
+    assert ev["declared_type"] == "integer"
 
 
 if __name__ == "__main__":
