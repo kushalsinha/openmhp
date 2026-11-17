@@ -923,7 +923,8 @@ def _live() -> dict | None:
     state = load()
     ctx = ssl.create_default_context(cafile=state["cert"]) if state.get("self_signed") else ssl.create_default_context()
     ctx.check_hostname = False
-    req = urllib.request.Request(f"https://127.0.0.1:{state.get('listen', 443)}/relay/status",
+    host = bind_address(state) or "127.0.0.1"             # where `serve` listens: the init name's address, not loopback
+    req = urllib.request.Request(f"https://{host}:{state.get('listen', 443)}/relay/status",
                                  headers={"Authorization": f"Bearer {state['admin_token']}"})
     try:
         with urllib.request.urlopen(req, context=ctx, timeout=5) as r:
