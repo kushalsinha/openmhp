@@ -7,7 +7,7 @@ contain. `mhp guide` reads these files there. Run this whenever the website's pa
 
 Pages are converted to plain Markdown: headings, paragraphs, lists, tables, code, links made absolute
 (https://openmhp.com/...), figures replaced by their written description. Hand-written pages in openmhp/guide
-(troubleshooting.md) are left alone.
+(troubleshooting.md) are left alone. instruments.md is generated from openmhp/registry.json.
 """
 from __future__ import annotations
 
@@ -204,6 +204,41 @@ def convert(html: str) -> str:
     return p.result()
 
 
+def instruments() -> str:
+    """The ready-made packages, from openmhp/registry.json: every one ships in the wheel and installs offline."""
+    import json
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from build_registry import CATEGORIES
+    entries = json.loads((ROOT / "openmhp" / "registry.json").read_text(encoding="utf-8"))["packages"]
+    out = ["<!-- generated from openmhp/registry.json by scripts/build_guide.py -->", "", "# Instruments supported", "",
+           f"{len(entries)} ready-made device packages. Every one ships inside the OpenMHP package, so installing one "
+           "needs no web or git access.", "",
+           "- On the instrument PC (the computer wired to the instrument): `mhp node add <package>` copies the package, "
+           "asks its questions, pairs with the gateway and keeps it running. `mhp node add` alone lists them.",
+           "- On an agent machine, to rehearse with the simulated twin: `mhp lab add <package> --sim`, or in an agent, "
+           "`mhp_lab op='add' target='<package>' sim=true`.",
+           "- With npx: `npx -y openmhp-cli@latest node add <package>`.", "",
+           "**twin tested**: the package and its simulated twin pass the checks; not yet run against the hardware. "
+           "**template**: the vendor's protocol is not public, so commands are placeholders to fill in from the manual. "
+           "Host *Windows* means the vendor software it drives runs only on Windows. For an instrument not listed, see "
+           "`mhp guide add-a-device`.", ""]
+    groups: dict[str, list] = {}
+    for e in entries:
+        groups.setdefault(str(e.get("category") or "other"), []).append(e)
+    names = dict(CATEGORIES)
+    for key in [k for k, _ in CATEGORIES if k in groups] + sorted(k for k in groups if k not in names):
+        out += [f"## {names.get(key, key)}", "", "| Package | Instrument | Class | Talks through | Host | Status |",
+                "|---|---|---|---|---|---|"]
+        for e in sorted(groups[key], key=lambda x: x["name"]):
+            cell = lambda v: str(v or "").replace("|", "\\|")
+            out.append(f"| `{e['name']}` | {cell(e.get('make'))} {cell(e.get('model'))} | {cell(e.get('class'))} "
+                       f"| {cell(e.get('via') or e.get('kind'))} | {'Windows' if e.get('os') == 'windows' else 'any'} "
+                       f"| {cell(e.get('status'))} |")
+        out.append("")
+    return "\n".join(out)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--site", default=str(ROOT.parent / "openMHP-website" / "src"), help="the website's src folder")
@@ -224,6 +259,8 @@ def main() -> int:
         head = f"<!-- generated from {SITE}/{'' if page == 'index' else page} by scripts/build_guide.py; edit the website, not this file -->\n\n"
         (OUT / f"{topic}.md").write_text(head + md, encoding="utf-8")
         written.append(topic)
+    (OUT / "instruments.md").write_text(instruments(), encoding="utf-8")
+    written.append("instruments")
     shutil.copyfile(ROOT / "SPEC.md", OUT / "spec.md")
     written.append("spec")
     print(f"wrote {len(written)} topics to {OUT.relative_to(ROOT)}: {', '.join(written)}")

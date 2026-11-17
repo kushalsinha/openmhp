@@ -180,7 +180,8 @@ mhp node add                       # lists the ready-made packages
 mhp node add waters-empower-hplc
 ```
 
-With Node instead: `npx -y openmhp-cli@latest node add waters-empower-hplc`. For anything not on
+Every ready-made package ships inside OpenMHP, so this needs no web or git access
+(`mhp guide instruments` lists them). With Node instead: `npx -y openmhp-cli@latest node add waters-empower-hplc`. For anything not on
 the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Guides:
 [Add an instrument](https://openmhp.com/add-a-device), [Lab nodes](https://openmhp.com/lab-nodes).
 

@@ -28,7 +28,7 @@ def run(fn, *a, **kw):
 def test_the_guide_ships_with_the_package():
     from openmhp import guide as G
     ts = G.topics()
-    for t in ("troubleshooting", "quickstart", "gateway", "lab-nodes", "experiment-flow", "add-a-device", "spec"):
+    for t in ("troubleshooting", "quickstart", "instruments", "gateway", "lab-nodes", "experiment-flow", "add-a-device", "spec"):
         assert t in ts, t
     assert ts[0] == "troubleshooting"
     assert '"guide/*.md"' in Path("pyproject.toml").read_text()            # in the wheel, not only the checkout
@@ -37,6 +37,18 @@ def test_the_guide_ships_with_the_package():
         assert len(text) > 500, t
         prose = re.sub(r"```.*?```", "", text, flags=re.S)                  # code may show HTML; prose must not
         assert not re.search(r"</?(p|div|span|table|td|li|h[1-4]|code|pre|figure)\b[^>]*>", prose), t
+
+
+def test_the_wheel_lists_every_package_and_the_device_packages():
+    """pyproject lists packages by hand (supported-devices ships as openmhp.supported_devices): none may be missed."""
+    text = Path("pyproject.toml").read_text()
+    listed = set(re.findall(r'"(openmhp(?:\.[a-z_]+)*)"', text.split("[tool.setuptools.package-dir]")[0].split("packages =")[1]))
+    have = {".".join(p.parent.parts) for p in Path("openmhp").rglob("__init__.py") if "__pycache__" not in p.parts}
+    assert have <= listed, f"add to [tool.setuptools] packages: {sorted(have - listed)}"
+    assert '"openmhp.supported_devices" = "supported-devices"' in text
+    from openmhp import guide as G
+    code, out = run(G.main, ["instruments"])
+    assert code == 0 and "`ika-c-mag-hs7`" in out and "no web or git access" in out
 
 
 def test_mhp_guide_lists_reads_and_searches():

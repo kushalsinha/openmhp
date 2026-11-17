@@ -84,6 +84,7 @@ python tests/test_guide_and_versions.py
 | `openmhp/guide.py`, `openmhp/guide/` | `mhp guide`: the user guide shipped in the wheel, for machines with no web access. The pages are generated from the website by `scripts/build_guide.py`; `troubleshooting.md` is written here |
 | `openmhp/versions.py` | `mhp --version`, and `mhp gateway\|node\|agent --version`: what the running service or the joined gateway runs |
 | `openmhp/node_add.py` | `mhp node add <package>`: puts a ready-made device package on the instrument PC |
+| `openmhp/bundled.py` | The ready-made packages shipped in the wheel: `supported-devices/` installs as `openmhp/supported_devices`, so `node add` and `lab add` need no download. `pyproject.toml` lists the Python packages by hand for this; add a new one there |
 | `openmhp/node_setup.py` | `mhp node setup`: the questions (from `config.schema.json`), `config.json`, the driver's probe, gateway pairing, the service |
 | `tests/` | Simulator and fake-client coverage, plus relay and gateway end-to-end tests |
 

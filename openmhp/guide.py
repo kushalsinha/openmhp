@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 GUIDE = Path(__file__).resolve().parent / "guide"
-ORDER = ["troubleshooting", "quickstart", "introduction", "gateway", "lab-nodes", "experiment-flow", "add-a-device",
+ORDER = ["troubleshooting", "quickstart", "instruments", "introduction", "gateway", "lab-nodes", "experiment-flow", "add-a-device",
          "cookbook", "recipes", "adapters", "architecture", "features", "design", "roadmap", "spec"]
 
 
