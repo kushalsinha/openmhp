@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -288,3 +289,177 @@ def status() -> dict:
         result["running"] = None
         result["note"] = "installed but the OS service manager isn't on PATH to check"
     return result
+
+
+# ---- any service by label (the gateway, the watcher): restart, what it runs, stray copies ------------------
+def _short(label: str) -> str:
+    return "node" if label == LABEL else label.removeprefix("openmhp-")
+
+
+def service_python(label: str = LABEL) -> str | None:
+    """The Python an installed service starts: the first word of its command. None when not installed."""
+    try:
+        text = target_path(label).read_text(encoding="utf-8", errors="replace")
+    except (OSError, NotImplementedError):
+        return None
+    import re as _re
+    m = (_re.search(r"^ExecStart=(\S+)", text, _re.M) or _re.search(r"<array>\s*<string>([^<]+)</string>", text)
+         or _re.search(r'/min\s+(?:"([^"]+)"|(\S+))', text))
+    return next((g for g in m.groups() if g), None) if m else None
+
+
+def openmhp_version_of(python: str | None) -> str | None:
+    """The OpenMHP a given Python imports (isolated, so the current folder cannot shadow it)."""
+    if not python:
+        return None
+    try:
+        r = subprocess.run([python, "-I", "-c", "import openmhp;print(openmhp.__version__)"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def service_state(label: str = LABEL) -> dict:
+    """installed, running (True, False or None when the OS cannot say), main_pid, python."""
+    system = platform.system()
+    try:
+        path = target_path(label)
+    except NotImplementedError:
+        return {"installed": False, "running": None, "path": "", "main_pid": None, "python": None}
+    out = {"installed": path.is_file(), "running": None, "path": str(path), "main_pid": None, "python": service_python(label)}
+    if not out["installed"]:
+        return out
+    try:
+        if system == "Linux":
+            r = subprocess.run(["systemctl", "--user", "show", "-p", "ActiveState", "-p", "MainPID", f"{label}.service"],
+                               capture_output=True, text=True, timeout=10)
+            kv = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
+            out["running"] = kv.get("ActiveState") == "active"
+            out["main_pid"] = int(kv.get("MainPID") or 0) or None
+        elif system == "Darwin":
+            r = subprocess.run(["launchctl", "list", f"com.openmhp.{_short(label)}"], capture_output=True, text=True, timeout=10)
+            import re as _re
+            m = _re.search(r'"PID"\s*=\s*(\d+)', r.stdout)
+            out["main_pid"] = int(m.group(1)) if m else None
+            out["running"] = out["main_pid"] is not None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    return out
+
+
+def restart_service(label: str = LABEL) -> dict:
+    """Restart an installed service through the OS's own manager. Windows has none: the Startup file is run again."""
+    system = platform.system()
+    path = target_path(label)
+    if not path.is_file():
+        return {"ok": False, "steps": [], "error": f"no service installed ({path})"}
+    try:
+        if system == "Linux":
+            cmd = ["systemctl", "--user", "restart", f"{label}.service"]
+        elif system == "Darwin":
+            cmd = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.openmhp.{_short(label)}"]
+        elif system == "Windows":
+            subprocess.Popen(["cmd", "/c", str(path)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return {"ok": True, "steps": [f"ran {path}"]}
+        else:
+            return {"ok": False, "steps": [], "error": f"no service integration for {system!r}"}
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        return {"ok": r.returncode == 0, "steps": [" ".join(cmd) + (": ok" if r.returncode == 0 else f": {r.stderr.strip()[:200]}")],
+                "error": None if r.returncode == 0 else (r.stderr.strip()[:200] or f"exit {r.returncode}")}
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {"ok": False, "steps": [], "error": f"{type(e).__name__}: {e}"}
+
+
+def is_openmhp_command(words: list[str], verb: tuple[str, ...]) -> bool:
+    """True when the program itself is `mhp <verb...>`, `python [-flags] <path>/mhp <verb...>` or
+    `python [-flags] -m openmhp.cli <verb...>`. Never a shell or grep whose arguments merely mention it
+    (macOS joins a process's arguments into one line, so `zsh -c "... mhp gateway serve"` must not match)."""
+    from pathlib import PureWindowsPath                    # splits on / and \ alike, whatever this OS is
+    name = lambda w: PureWindowsPath(w).name.lower()
+    n = len(verb)
+    i = 0
+    if words and re.match(r"(python[\d.]*|py)(\.exe)?$", name(words[0])):
+        i = 1
+        while i < len(words) and words[i].startswith("-") and words[i] != "-m":
+            i += 1                                         # interpreter flags such as -I or -u
+        if i < len(words) and words[i] == "-m":
+            if i + 1 >= len(words) or words[i + 1] != "openmhp.cli":
+                return False
+            i += 2
+        elif i < len(words) and name(words[i]) in ("mhp", "mhp.exe", "mhp-script.py"):
+            i += 1
+        else:
+            return False
+    elif words and name(words[0]) in ("mhp", "mhp.exe"):
+        i = 1
+    else:
+        return False
+    return tuple(words[i:i + n]) == verb
+
+
+def find_processes(verb: tuple[str, ...]) -> list[tuple[int, str]]:
+    """This user's processes running `mhp <verb...>`: (pid, command line). Empty where the OS will not say."""
+    system, found, me = platform.system(), [], os.getpid()
+    try:
+        if system == "Linux":
+            uid = os.getuid()
+            for d in Path("/proc").iterdir():
+                if not d.name.isdigit() or int(d.name) == me:
+                    continue
+                try:
+                    if d.stat().st_uid != uid:
+                        continue
+                    words = [w for w in (d / "cmdline").read_bytes().decode(errors="replace").split("\0") if w]
+                except OSError:
+                    continue
+                if is_openmhp_command(words, verb):
+                    found.append((int(d.name), " ".join(words)))
+        elif system == "Darwin":
+            r = subprocess.run(["ps", "-U", str(os.getuid()), "-o", "pid=,command="], capture_output=True, text=True, timeout=10)
+            for line in r.stdout.splitlines():
+                pid, _, cmd = line.strip().partition(" ")
+                if pid.isdigit() and int(pid) != me and is_openmhp_command(cmd.split(), verb):
+                    found.append((int(pid), cmd.strip()))
+        elif system == "Windows":
+            ps = ("Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }")
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=30)
+            for line in r.stdout.splitlines():
+                pid, _, cmd = line.partition("\t")
+                words = [w.strip('"') for w in cmd.split()]
+                if pid.strip().isdigit() and int(pid) != me and is_openmhp_command(words, verb):
+                    found.append((int(pid), cmd.strip()))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return found
+
+
+def stop_process(pid: int, wait_s: float = 8.0) -> bool:
+    """Ask a process to stop, then insist. True once it is gone."""
+    import signal
+    import time as _t
+    if platform.system() == "Windows":
+        r = subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, text=True)
+        return r.returncode == 0
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    end = _t.time() + wait_s
+    while _t.time() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        _t.sleep(0.2)
+    try:
+        os.kill(pid, signal.SIGKILL)
+        _t.sleep(0.5)
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False

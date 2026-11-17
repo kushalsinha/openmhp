@@ -5,6 +5,7 @@ command either finishes the job or prints the one thing to do next.
 
     mhp gateway init                  make this machine the gateway (asks name and port; makes a certificate)
     mhp gateway serve                 run it (add --install-service to keep it running across reboots)
+    mhp gateway restart               stop a gateway started by hand, restart the service, wait until it answers
     mhp gateway pair                  print a one-time code for a lab PC:  mhp node <dir> --join <this url> <code>
     mhp gateway pair-agent [name]     print a one-time code for an agent machine:  mhp agent --join <this url> <code>
     mhp gateway add-agent <name>      let one agent machine through by hand; prints the token to paste there
@@ -673,7 +674,8 @@ def make_server(gw: Gateway, host: str, port: int) -> ThreadingHTTPServer:
                 return self._json(401, {"error": AGENT_401})
             gate = gw.gate_for(self._auth())
             if not parts:
-                return self._json(200, {"mhp_gateway": gw.state["server_name"], "directory": agent_url(gw.state, "directory"),
+                return self._json(200, {"mhp_gateway": gw.state["server_name"], "openmhp": __version__,
+                                        "directory": agent_url(gw.state, "directory"),
                                         "devices": sorted(f"{n}/{d}" for n, node in gw.nodes.items() for d in node.devices
                                                           if not gate or gate.allows_device(f"{n}/{d}"))})
             if parts == ["directory", "mhp.json"]:
@@ -755,7 +757,8 @@ def serve(host: str | None = None, port: int | None = None) -> int:
                 "  The gateway listens only on the address it was named with, so run it on that machine, or",
                 f"  re-run `mhp gateway init --name <this machine's name or IP>` here.  (`--host <address>` overrides for one run.)")
             return 1
-        say(f"cannot listen on {host}:{port}: {e}. Is another `mhp gateway serve` running?")
+        say(f"cannot listen on {host}:{port}: {e}. Is another `mhp gateway serve` running?",
+            "  `mhp gateway restart` stops one started by hand and restarts the installed service.")
         return 1
     say(f"MHP gateway '{state['server_name']}' listening on https://{host}:{port}",
         f"  lab PCs join with:   mhp node <devices folder> --join {agent_url(state).rstrip('/')} <code from `mhp gateway pair`>",
@@ -766,7 +769,7 @@ def serve(host: str | None = None, port: int | None = None) -> int:
     Supervisor(gw, lab_root=Path(ssh.get("lab_root") or S.lab_root()), runs_dir=RUNS_DIR,
                run_as_users=ssh.get("mode") == "users").start()
     U.watch(lambda v: say(f"OpenMHP {v} is out (this gateway runs {__version__}). `mhp gateway status` lists the lab PCs "
-                          f"that are behind. To update the gateway itself: pip install -U openmhp, then restart `mhp gateway serve`."))
+                          f"that are behind. To update the gateway itself: pip install -U openmhp, then:  mhp gateway restart."))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -937,6 +940,93 @@ NODE_UPGRADE_GENERIC = ('npx -y openmhp-cli@latest node <devices folder>   (or: 
                         'mhp node <devices folder> --install-service)')     # for a node too old to say its own
 
 
+SERVICE = "openmhp-gateway"
+
+
+def _wait_live(seconds: float) -> dict | None:
+    end = time.time() + seconds
+    while True:
+        live = _live()
+        if live or time.time() > end:
+            return live
+        time.sleep(0.5)
+
+
+def _log_hint() -> str:
+    if platform.system() == "Linux":
+        return f"journalctl --user -u {SERVICE} -n 30"
+    if platform.system() == "Darwin":
+        return f"tail -30 {Path.home() / '.openmhp' / 'gateway.log'}"
+    return "run `mhp gateway serve` in a terminal to see why it stops"
+
+
+def restart() -> int:
+    """Stop every `mhp gateway serve` on this machine that is not the service (one started by hand keeps the port and
+    the old code), then restart the service and wait until it answers."""
+    state = load()
+    if state is None:
+        say("no gateway on this machine yet. Run `mhp gateway init` first.")
+        return 1
+    from . import service as svc
+    before = svc.service_state(SERVICE)
+    if not before["installed"]:                            # nothing would start it again: stop nothing
+        by_hand = [pid for pid, _ in svc.find_processes(("gateway", "serve"))]
+        say("no gateway service is installed on this machine, so `restart` has nothing to start again.",
+            *([f"  The gateway running now (process {', '.join(map(str, by_hand))}) was started by hand. To make it a "
+               f"service, stop it (`kill {by_hand[0]}`) and run the line below."] if by_hand else []),
+            "  mhp gateway serve --install-service      (starts it now and after every reboot)")
+        return 1
+    for pid, cmd in svc.find_processes(("gateway", "serve")):
+        if pid == before["main_pid"]:
+            continue
+        if svc.stop_process(pid):
+            say(f"stopped a `mhp gateway serve` the service did not start (process {pid}): {cmd[:140]}")
+        else:
+            say(f"could not stop process {pid} ({cmd[:140]}). Stop it yourself (`kill {pid}`, or end it in Task Manager), "
+                "then run `mhp gateway restart` again.")
+            return 1
+    r = svc.restart_service(SERVICE)
+    for step in r["steps"]:
+        say(f"  {step}")
+    if not r["ok"]:
+        say(f"the service did not restart: {r.get('error')}", f"  why:  {_log_hint()}")
+        return 1
+    live = _wait_live(20)
+    if not live:
+        say(f"restarted, but nothing answers at {agent_url(state)} after 20 s.", f"  why:  {_log_hint()}")
+        return 1
+    running = live.get("openmhp")
+    say(f"gateway {agent_url(state)} is running OpenMHP {running or 'an older version'}.")
+    if running != __version__:
+        py = svc.service_python(SERVICE)
+        say(f"this `mhp` is OpenMHP {__version__}, but the service starts {py or 'another Python'}, which has "
+            f"{running or 'an older OpenMHP'}. Point the service at this one:  mhp gateway serve --install-service")
+    return 0
+
+
+def service_line(live: dict | None) -> list[str]:
+    """What runs the gateway on this machine, and what to do when that is not the code installed here."""
+    from . import service as svc
+    st = svc.service_state(SERVICE)
+    lines = []
+    if st["installed"]:
+        word = {True: "running", False: "stopped", None: "installed"}[st["running"]]
+        lines.append(f"service: {word} ({st['path']}); restart it with:  mhp gateway restart")
+    else:
+        lines.append("service: not installed; to keep the gateway running across reboots:  mhp gateway serve --install-service")
+    others = [p for p, _ in svc.find_processes(("gateway", "serve")) if p != st["main_pid"]]
+    if others and st["installed"]:
+        lines.append(f"also running by hand: process {', '.join(map(str, others))}. Only one gateway can hold the port: "
+                     "`mhp gateway restart` stops the extra one and restarts the service.")
+    elif others:
+        lines.append(f"running by hand as process {', '.join(map(str, others))}: it stops when that terminal closes or "
+                     "the machine restarts.")
+    if live and live.get("openmhp") != __version__:
+        lines.append(f"the running gateway is OpenMHP {live.get('openmhp') or 'an older version'}, not this {__version__}: "
+                     "it was started before the update. Load the new version with:  mhp gateway restart")
+    return lines
+
+
 def status() -> int:
     state = load()
     if state is None:
@@ -945,10 +1035,11 @@ def status() -> int:
     live = _live()
     U.refresh()                                            # at most once a day; quiet when offline
     latest = U.latest_known((live or {}).get("latest"))
-    say(f"gateway {agent_url(state)}   ({'running' if live else 'NOT running: mhp gateway serve'})   OpenMHP {__version__}",
-        f"settings: {STATE}", f"certificate: {'self-signed, ' if state.get('self_signed') else ''}{state['cert']}", "")
+    say(f"gateway {agent_url(state)}   ({'running' if live else 'NOT running: mhp gateway restart, or mhp gateway serve'})   OpenMHP {__version__}",
+        f"settings: {STATE}", f"certificate: {'self-signed, ' if state.get('self_signed') else ''}{state['cert']}",
+        *service_line(live), "")
     if U.newer(latest):
-        say(f"OpenMHP {latest} is out. Update this gateway with:  pip install -U openmhp   then restart `mhp gateway serve`.", "")
+        say(f"OpenMHP {latest} is out. Update this gateway with:  pip install -U openmhp   then:  mhp gateway restart", "")
     behind = []
     if not state["nodes"]:
         say("lab PCs: none joined yet. `mhp gateway pair`, then run the printed line on the lab PC.")
@@ -996,7 +1087,7 @@ def check() -> int:
     say("gateway check", "")
     live = _live()
     if live is None:
-        fix(f"nothing answers on port {state.get('listen', 443)}", "start it:  mhp gateway serve   (or mhp gateway serve --install-service)")
+        fix(f"nothing answers on port {state.get('listen', 443)}", "start it:  mhp gateway restart   (installed service)   or  mhp gateway serve --install-service")
     else:
         ok(f"gateway is running on port {state.get('listen', 443)}")
         for name in sorted(state["nodes"]):
@@ -1117,7 +1208,9 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
         return remove(verb.split("-")[1], args[0])
     if verb == "check":
         return check()
+    if verb == "restart":
+        return restart()
     if verb == "ssh":
         return ssh_setup(args)
-    say(f"unknown gateway command {verb!r}. One of: init, serve, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh")
+    say(f"unknown gateway command {verb!r}. One of: init, serve, restart, pair, pair-agent, add-agent, remove-agent, remove-node, status, check, ssh")
     return 2

@@ -144,7 +144,12 @@ OpenMHP runs on up to three kinds of machine. Trying it needs only the first.
 
 Always start npx as `npx -y openmhp-cli@latest`, and pip as `pip install -U`: plain
 `npx openmhp-cli` reuses whatever version npx cached the first time, and plain `pip install` keeps
-whatever version is already installed.
+whatever version is already installed. `mhp --version` says which OpenMHP a machine has; on the
+gateway, an instrument PC or an agent machine, `mhp gateway --version`, `mhp node --version` or
+`mhp agent --version` also says what its running service, or the gateway it joined, runs.
+
+The whole user guide ships inside the package, for machines (and agents) with no web or git access:
+`mhp guide`, `mhp guide <topic>`, `mhp guide search <words>`. Start with `mhp guide troubleshooting`.
 
 ### Agent machine
 
@@ -185,6 +190,7 @@ the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Gu
 pip install -U openmhp
 mhp gateway init                      # the address others will use, and a certificate
 mhp gateway serve --install-service   # runs now and after every reboot
+mhp gateway restart                   # after an update: restarts the service, stops any copy started by hand
 mhp gateway pair                      # a one-time code for an instrument PC (15 minutes)
 mhp gateway pair-agent                # a one-time code for an agent machine (1 hour)
 ```

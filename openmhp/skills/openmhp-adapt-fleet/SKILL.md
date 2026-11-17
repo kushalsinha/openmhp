@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Requires Python 3.10+ and openmhp. Vendor client libraries (sila2, pylabrobot, asyncua or opcua, rclpy) are needed only at run time on the machine that talks to the hardware.
 metadata:
   author: openmhp
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Bring a fleet under OpenMHP
@@ -102,3 +102,17 @@ followed by `reset`. Record the results next to the manifest.
 - [ ] energetic actions have interlocks or `approval: confirm`; estop wired or explicitly declined
 - [ ] directory finds each device by a plain-language query; live state reflects a busy device
 - [ ] `mhp-mcp` shows exactly eight tools; `mhp_find` then `mhp_describe` reach every device
+
+## When the web is out of reach
+
+On many company machines an agent has no web or git access. Everything on openmhp.com ships inside the installed
+package, so read it there instead of guessing:
+
+- `mhp guide`: the topics. `mhp guide <topic>` reads one (troubleshooting, quickstart, gateway, lab-nodes,
+  experiment-flow, add-a-device, cookbook, adapters, spec, ...). `mhp guide search <words>` finds the lines that
+  mention them.
+- `mhp --version`: which OpenMHP is installed. `mhp gateway --version`, `mhp node --version` and
+  `mhp agent --version` also say what the running gateway, the instrument PC's service, or the joined gateway runs.
+- Installed with npx only: the same commands as `npx -y openmhp-cli@latest mhp guide ...`.
+
+When a command is refused or answers oddly, check the versions first, then `mhp guide troubleshooting`.

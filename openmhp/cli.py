@@ -37,9 +37,10 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", help="lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("target", nargs="?", help="guide | lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
+    ap.add_argument("--version", "-V", action="store_true", help="this OpenMHP's version; with gateway, node or agent, also what the running service or the joined gateway runs")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
     ap.add_argument("--approved", action="store_true", help="assert human confirmation was obtained")
     ap.add_argument("--dry-run", action="store_true")
@@ -67,6 +68,16 @@ def main(argv=None):
     ap.add_argument("--no-pip", action="store_true", help="(node add|setup) do not install the vendor client; name it instead")
     ap.add_argument("--from", dest="from_", metavar="FOLDER|ARCHIVE", help="(node add) take the package from a local checkout, a copied folder or a .tar.gz instead of downloading it")
     a = ap.parse_args(argv)
+    if a.version:                           # mhp --version | mhp gateway|node|agent --version
+        from . import versions
+        return versions.main(a.target)
+    if not a.target:
+        ap.print_help()
+        print("\nThe user guide ships with this package, for machines without web access:  mhp guide", file=sys.stderr)
+        return 2
+    if a.target == "guide":                 # mhp guide [topic | search <words> | path]
+        from . import guide
+        return guide.main(([a.verb] if a.verb else []) + a.args)
 
     def _serve_token():
         """What the operator asked for: a token of their own, none at all, or the default (one is
@@ -367,7 +378,7 @@ def main(argv=None):
         from .update_check import upgrade_command
         print(f"mhp: {a.target!r} is not a command of OpenMHP {__version__} here, nor a device address "
               "(http://host:port, pkg:<folder>, ...).\n"
-              "Commands: agent, gateway, node, lab, serve, serve-directory, skills, validate, inclusion, rubric, log, "
+              "Commands: guide, agent, gateway, node, lab, serve, serve-directory, skills, validate, inclusion, rubric, log, "
               "conformance.\nIf the instructions you follow are newer than this install, update it:  "
               + upgrade_command(), file=sys.stderr)
         return 2

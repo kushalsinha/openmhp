@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs a shell with ssh and rsync, and a machine paired with `mhp agent --join` on a gateway that has SSH access turned on. Works in any harness that can run shell commands.
 metadata:
   author: openmhp
-  version: "0.3"
+  version: "0.4"
 ---
 
 # Being the scientist's go-between with the lab gateway
@@ -169,3 +169,17 @@ gateway expects (`skill.version`). If it is newer than the `version` at the top 
 the scientist in one sentence that the lab gateway is newer than their OpenMHP, and offer to update
 it (`npx -y openmhp-cli@latest update`, or `pip install -U "openmhp[all]" && mhp skills install`). Until then, run
 `mhp-gw help` and use the verbs it lists as it explains them.
+
+## When the web is out of reach
+
+On many company machines an agent has no web or git access. Everything on openmhp.com ships inside the installed
+package, so read it there instead of guessing:
+
+- `mhp guide`: the topics. `mhp guide <topic>` reads one (troubleshooting, quickstart, gateway, lab-nodes,
+  experiment-flow, add-a-device, cookbook, adapters, spec, ...). `mhp guide search <words>` finds the lines that
+  mention them.
+- `mhp --version`: which OpenMHP is installed. `mhp gateway --version`, `mhp node --version` and
+  `mhp agent --version` also say what the running gateway, the instrument PC's service, or the joined gateway runs.
+- Installed with npx only: the same commands as `npx -y openmhp-cli@latest mhp guide ...`.
+
+When a command is refused or answers oddly, check the versions first, then `mhp guide troubleshooting`.
