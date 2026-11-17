@@ -197,9 +197,9 @@ mhp gateway pair-agent                # a one-time code for an agent machine (1 
 ```
 
 The instrument PC pastes its code when `mhp node add` asks (or runs
-`mhp node --join https://gw.office <code>`). The agent machine runs
-`mhp agent --join https://gw.office <code> --name alice` (after an npx setup:
-`npx -y openmhp-cli@latest join https://gw.office <code> --name alice`); the name becomes the scientist's folder on the gateway, or the operator sets it
+`mhp node --join https://gw.office:8443 <code>`). The agent machine runs
+`mhp agent --join https://gw.office:8443 <code> --name alice` (after an npx setup:
+`npx -y openmhp-cli@latest join https://gw.office:8443 <code> --name alice`); the name becomes the scientist's folder on the gateway, or the operator sets it
 with `mhp gateway pair-agent alice`. For experiments run through the gateway, also run `mhp gateway ssh` there and
 install the agent harness on the gateway, signed in as the lab's. Guide:
 [Gateway and relay](https://openmhp.com/gateway).

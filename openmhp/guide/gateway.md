@@ -12,7 +12,7 @@ Three kinds of machine, and every connection between them points at the one in t
 
 *Every arrow points at the gateway. The lab firewall sees only outbound HTTPS from the bench PCs, which is what it already allows for a web browser.*
 
-- **The bench PC** runs `mhp node` exactly as on a [lab node](https://openmhp.com/lab-nodes), serving its instruments locally. Once joined, it also keeps a connection open to the gateway and takes requests from it. It needs `pip install -U openmhp` and one command, nothing else.
+- **The bench PC** runs `mhp node` exactly as on a [lab node](https://openmhp.com/lab-nodes), serving its instruments locally. Once joined, it also keeps a connection open to the gateway and takes requests from it. It needs `pip install -U "openmhp[node]"` and one command, nothing else.
 
 - **The gateway** is one Python process, `mhp gateway serve`, on any always-on desktop or small VM on the company network. It listens on one address and one port, over HTTPS. Bench PCs register with it; agents reach every registered instrument through it at the same URL shapes a device has on a LAN, so no client code changes.
 
@@ -57,11 +57,11 @@ Three commands set it up, and each one hands out a different secret to a differe
 Any always-on desktop or small VM on the company network. `pip install -U openmhp`, then:
 
 ```
-mhp gateway init                      # asks for the address others will use and a port; makes a certificate
+mhp gateway init                      # asks for the address others will use and a port (8443); makes a certificate
 mhp gateway serve --install-service   # runs now and after every reboot
 ```
 
-The gateway listens on that one address only, never on every interface. If IT gives you a certificate, pass `--cert` and `--key` to `init`; otherwise it makes one, and every machine that joins pins it. TLS 1.2 is the oldest it will speak.
+The gateway listens on that one address and port only, never on every interface. Take the port `init` suggests, 8443: a background service runs as an ordinary user, and on Linux an ordinary user cannot open 443. Every machine then uses the address with its port, such as `https://gw.office:8443`; `mhp gateway status` prints it. If IT gives you a certificate, pass `--cert` and `--key` to `init`; otherwise it makes one, and every machine that joins pins it. TLS 1.2 is the oldest it will speak.
 
 ### For each lab PC
 
@@ -72,15 +72,15 @@ pip install -U "openmhp[node]"
 mhp node add waters-empower-hplc
 ```
 
-It asks the instrument's own questions, then *Does your lab have an OpenMHP gateway? Paste the line from mhp gateway pair*. Pasting it joins; the last question installs the background service. `mhp node add` alone lists the ready-made packages; each carries its own vendor route (a serial protocol, a Web API, a COM SDK). A PC that already serves packages joins once with `mhp node --join https://gw.office ab12-cd34`. Joining shows the gateway's certificate fingerprint so you can compare it with what `pair` printed. From then on plain `mhp node` reconnects by itself. If the gateway is down the node retries quietly and the instruments keep working for anyone on the lab network. If a package is not set up or a port is taken, it says so in words, and which `mhp node setup` to run, before it serves anything.
+It asks the instrument's own questions, then *Does your lab have an OpenMHP gateway? Paste the line from mhp gateway pair*. Pasting it joins; the last question installs the background service. `mhp node add` alone lists the ready-made packages; each carries its own vendor route (a serial protocol, a Web API, a COM SDK). A PC set up earlier joins once with `mhp node --join https://gw.office:8443 ab12-cd34` (add its folder if the packages live elsewhere than where `mhp node add` put them); if it runs the background service, the service restarts connected to the gateway. `mhp gateway pair` prints each of these forms. Joining shows the gateway's certificate fingerprint so you can compare it with what `pair` printed. From then on plain `mhp node` reconnects by itself. If the gateway is down the node retries quietly and the instruments keep working for anyone on the lab network. If a package is not set up or a port is taken, it says so in words, and which `mhp node setup` to run, before it serves anything.
 
 ### For each agent machine
 
 On the gateway, `mhp gateway pair-agent` prints a one-time code that lasts an hour. Send it to the person in chat. On their machine, once:
 
 ```
-mhp agent --join https://gw.office ef56-ab78 --name alice                      # installed with pip
-npx -y openmhp-cli@latest join https://gw.office ef56-ab78 --name alice      # installed with npx
+mhp agent --join https://gw.office:8443 ef56-ab78 --name alice                      # installed with pip
+npx -y openmhp-cli@latest join https://gw.office:8443 ef56-ab78 --name alice      # installed with npx
 ```
 
 With npx, run OpenMHP's commands through the launcher (`npx -y openmhp-cli@latest mhp ...`): its `mhp` is not put on your PATH, and a bare `mhp` may be an older pip install.
@@ -92,7 +92,7 @@ It shows the gateway's certificate fingerprint to compare with what `pair-agent`
 ## Day to day
 
 ```
-mhp gateway status                # which lab PCs are connected, what they serve, each agent's URL
+mhp gateway status                # the service, which lab PCs are connected, what they serve, the URL agents use for each device
 mhp gateway check                 # OK or FIX for the gateway, each lab PC and each instrument, with the fix spelled out
 mhp gateway restart               # after pip install -U openmhp: restarts the service, stops a copy started by hand
 mhp gateway --version             # this install, what the service starts, and what the running gateway answers

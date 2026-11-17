@@ -39,9 +39,9 @@ saved ~/.openmhp/devices/waters-empower-hplc/config.json
 checking ...
   waters-empower-hplc is ready: Empower at https://emp01.acme.local:3076 answers; Arc_HPLC_1 is idle
 
-Does your lab have an OpenMHP gateway? Paste the line from `mhp gateway pair` there, or Enter to skip
-  > https://gw.acme.local ab12-cd34
-paired with https://gw.acme.local as 'hplc-pc-3'
+Does your lab have an OpenMHP gateway? Paste the line from `mhp gateway pair` there (address and code), or Enter to skip
+  > https://gw.acme.local:8443 ab12-cd34
+paired with https://gw.acme.local:8443 as 'hplc-pc-3'
 Run in the background from now on, also after reboots? [Y/n] > y
 installed; running now, and at every login. Agents can find this PC's instruments through the gateway now.
 ```
@@ -153,7 +153,7 @@ If the answer to the firewall question is "IT will not open it", stop here and u
 In most companies the instrument network is one nothing outside may enter, and IT will not add a rule for a lab PC. OpenMHP does not need one: the bench PC dials **out** over HTTPS to a **gateway** on the company network and takes its work from there, and your agent talks to the gateway. `mhp node add` asks for the pairing line; a PC that already serves packages joins once:
 
 ```
-mhp node --join https://gw.office ab12-cd34
+mhp node --join https://gw.office:8443 ab12-cd34
 ```
 
 How it works, how to set up the three machines, and what the relay guarantees are on their own page: [gateway and relay](https://openmhp.com/gateway).
@@ -167,7 +167,7 @@ npx -y openmhp-cli@latest node <devices folder>                                 
 pip install -U "openmhp[node]" && mhp node <devices folder> --install-service   # set up with pip
 ```
 
-Packages are downloaded when you add one, not shipped in the wheel, so a package merged to `main` can be added before the next release; `pip install -U openmhp` refreshes the list `mhp node add` shows. Set `OPENMHP_NO_UPDATE_CHECK=1` to turn the check off.
+Every ready-made package ships inside OpenMHP, so `mhp node add` needs no download and installs the version tested with the OpenMHP on that PC; `pip install -U openmhp` brings the newer packages and the longer list. A package added to the repository after your release is taken with `mhp node add <name> --from github:kushalsinha/openmhp/supported-devices/<name>`. Set `OPENMHP_NO_UPDATE_CHECK=1` to turn the check off.
 
 ## Next
 

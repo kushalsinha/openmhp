@@ -26,7 +26,7 @@ If your lab has a gateway, join it once with the code its admin gives you
 (from `mhp gateway pair-agent`):
 
 ```bash
-npx -y openmhp-cli@latest join https://<gateway> <code> --name <your name, e.g. alice>
+npx -y openmhp-cli@latest join https://<gateway>:<port> <code> --name <your name, e.g. alice>
 ```
 
 The name becomes your folder on the gateway (unless the admin already chose it when making the code).

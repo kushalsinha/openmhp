@@ -784,7 +784,8 @@ def init(*, server_name: str | None = None, listen: int | None = None, cert: str
     fqdn = socket.getfqdn()
     name = server_name or state.get("server_name") or ask(
         "Address lab PCs and agents will use for this gateway (a DNS name from IT, or this machine's IP)", fqdn if "." in fqdn else ip)
-    port = int(listen or state.get("listen") or ask("Port to listen on (443 needs administrator rights; 8443 does not)", "443"))
+    port = int(listen or state.get("listen") or ask("Port to listen on (8443 works for a background service; 443 needs administrator rights, which a "
+                                                               "per-user service does not have)", "8443"))
     if cert and key:
         crt, k = Path(cert), Path(key)
         if not (crt.is_file() and k.is_file()):
@@ -824,10 +825,14 @@ def pair() -> int:
     code = new_code()
     state.setdefault("codes", {})[code] = {"expires": time.time() + CODE_TTL_S}
     save(state)
-    say(f"pairing code (15 minutes, one lab PC):  {code}", "", "On the lab PC, in the folder that holds the device packages, run once:", "",
-        f"  mhp node <devices folder> --join {agent_url(state).rstrip('/')} {code}", "",
+    url = agent_url(state).rstrip('/')
+    say(f"pairing code (15 minutes, one lab PC):  {code}", "", "On the lab PC, once, whichever fits:", "",
+        f"  {url} {code}", "      paste this line when `mhp node add` asks about a gateway",
+        f"  mhp node --join {url} {code}", "      a PC set up with `mhp node add`: joins, and restarts its background service if it has one",
+        f"  mhp node <devices folder> --join {url} {code}", "      packages kept in a folder of their own",
+        f"  npx -y openmhp-cli@latest node --join {url} {code}", "      a PC set up with npx", "",
         f"It will show the gateway certificate fingerprint {fingerprint_of(state['cert'])}; stop if it differs.",
-        "From then on `mhp node <devices folder>` connects by itself.")
+        "From then on the lab PC reconnects by itself.")
     return 0
 
 
@@ -858,14 +863,17 @@ def pair_agent(name: str | None = None) -> int:
     state.setdefault("codes", {})[code] = entry
     save(state)
     url = agent_url(state).rstrip('/')
-    if name or not ssh:
-        join_line, about_name = f"  mhp agent --join {url} {code}", []
-        if name and ssh:
-            about_name = [f"They join as scientist '{entry['name']}'; their runs and files go in that folder here.", ""]
-    else:                                          # the name becomes their scientist folder: have them choose it
+    if name:                                       # the operator chose the name: the join line needs none
+        join_line = f"  mhp agent --join {url} {code}"
+        about_name = ([f"They join as scientist '{entry['name']}'; their runs and files go in that folder here.", ""] if ssh
+                      else [f"They join as '{entry['name']}': the name this gateway shows for their machine.", ""])
+    else:                                          # the scientist names themself when they join
         join_line = f"  mhp agent --join {url} {code} --name <their name, e.g. alice>"
-        about_name = ["The name becomes their scientist folder on this gateway (lower-case letters, digits, '-' and '_',",
-                      "starting with a letter). Without --name it is their computer's name. To fix it from here instead:",
+        what = ("their scientist folder on this gateway" if ssh else
+                "how this gateway lists their machine (`mhp gateway status`), and their folder here if SSH access is "
+                "turned on later")
+        about_name = [f"The name becomes {what}: lower-case letters, digits, '-' and '_', starting with a letter.",
+                      "Without --name it is their computer's name. To set it from here instead, so they type none:",
                       "  mhp gateway pair-agent alice", ""]
     say(f"agent code (1 hour, one machine{', named ' + entry['name'] if name else ''}):  {code}", "",
         "Send it to the person. On their machine, once:", "",
@@ -1104,7 +1112,7 @@ def check() -> int:
         ctx.check_hostname = False
         for name, n in live["nodes"].items():
             for did in n.get("devices", {}):
-                req = urllib.request.Request(f"https://127.0.0.1:{state.get('listen', 443)}/{name}/{did}/mhp.json",
+                req = urllib.request.Request(f"https://{bind_address(state) or '127.0.0.1'}:{state.get('listen', 443)}/{name}/{did}/mhp.json",
                                              headers={"Authorization": f"Bearer {tok}"})
                 try:
                     with urllib.request.urlopen(req, context=ctx, timeout=5) as r:

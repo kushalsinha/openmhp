@@ -78,7 +78,7 @@ It names the gateway and, when SSH access is set up, the scientist name this mac
 Pairing added a host called `mhp-gateway` to the SSH configuration, so no address, user or key is
 ever needed. If the machine is not paired, the scientist needs a code from whoever runs the
 gateway (`mhp gateway pair-agent` there), and then you run
-`mhp agent --join https://<gateway> <code> --name <scientist's name>`. Ask the scientist which name to use
+`mhp agent --join https://<gateway>:<port> <code> --name <scientist's name>`. Ask the scientist which name to use
 unless the operator already set one: it becomes their folder on the gateway (lower-case letters, digits,
 `-` and `_`). Without `--name` it is this computer's name.
 

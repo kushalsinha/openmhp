@@ -136,6 +136,39 @@ def test_shipped_packages_install_with_no_web_or_git():
         assert "ready-made package's name" in str(e)
 
 
+def test_join_on_a_pc_whose_node_runs_as_a_service():
+    """`mhp node --join <url> <code>` where the background service holds the ports: join without serving, then restart
+    the service (it connects by itself). With --install-service, join first, then install. Never only one of the two."""
+    import contextlib, io
+    from openmhp import cli, relay as R, service as svc
+    calls = []
+    saved = (R.join, svc.status, svc.installed_record, svc.restart, svc.install)
+    R.join = lambda url, code, drivers, name=None, **kw: calls.append(("join", url, code, drivers)) or \
+        {"gateway": url, "name": "bench-1"}
+    svc.status = lambda: {"installed": True, "running": True, "path": "/x"}
+    svc.installed_record = lambda: {"folder": "/srv/devices", "http": 19000, "python": sys.executable}
+    svc.restart = lambda folder, base: calls.append(("restart", str(folder), base)) or {"ok": True, "steps": []}
+    svc.install = lambda folder, base, dry_run=False: calls.append(("install", str(folder), base)) or \
+        {"ok": True, "steps": [], "path": "/x", "content": "", "dry_run": False}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            dev = pathlib.Path(td) / "devices"
+            node_add.add("ika-c-mag-hs7", dev)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = cli.main(["node", str(dev), "--join", "https://gw:8443", "ab12-cd34"])
+            assert code == 0, err.getvalue()
+            assert calls == [("join", "https://gw:8443", "ab12-cd34", {}), ("restart", "/srv/devices", 19000)], calls
+            assert "joined gateway https://gw:8443 as 'bench-1'" in err.getvalue()
+            calls.clear()
+            svc.status = lambda: {"installed": False, "running": None, "path": "/x"}
+            with contextlib.redirect_stderr(io.StringIO()):
+                code = cli.main(["node", str(dev), "--join", "https://gw:8443", "ab12-cd34", "--install-service"])
+            assert code == 0 and [c[0] for c in calls] == ["join", "install"], calls
+    finally:
+        R.join, svc.status, svc.installed_record, svc.restart, svc.install = saved
+
+
 def test_unknown_names_and_bad_sources_are_refused_in_words():
     with tempfile.TemporaryDirectory() as td:
         dest = pathlib.Path(td)

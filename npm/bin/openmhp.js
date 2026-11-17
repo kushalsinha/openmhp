@@ -151,7 +151,7 @@ function main() {
     case "mhp": ensureRuntime(); process.exit(run("mhp", rest));
     case "join":                                       // pair this machine with a lab gateway
       ensureRuntime();
-      if (rest.length < 2) { log("usage: npx -y openmhp-cli@latest join https://<gateway> <code> --name <your name>"); process.exit(2); }
+      if (rest.length < 2) { log("usage: npx -y openmhp-cli@latest join https://<gateway>:<port> <code> --name <your name>"); process.exit(2); }
       process.exit(run("mhp", ["agent", "--join", rest[0], rest[1], ...rest.slice(2)]));
     case "guide": ensureRuntime(); process.exit(run("mhp", ["guide", ...rest]));
     case "-V": case "--version": case "version":

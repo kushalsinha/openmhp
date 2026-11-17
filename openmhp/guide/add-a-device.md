@@ -224,7 +224,7 @@ print("reflux done; plate at", hp.read("plate_temperature"), "degC")
 ### Validate and serve
 
 ```
-python skills/openmhp-onboard-device/scripts/validate_package.py devices/hotplate-01
+mhp validate devices/hotplate-01
 mhp serve pkg:devices/hotplate-01 --http 18923
 ```
 
@@ -243,7 +243,7 @@ mhp http://localhost:18923 estop && mhp http://localhost:18923 reset
 Add the new server to the manifest and restart the directory. From then on any agent can find it by describing what it needs.
 
 ```
-python skills/openmhp-adapt-fleet/scripts/build_manifest.py fleet.json \
+python openmhp/skills/openmhp-adapt-fleet/scripts/build_manifest.py fleet.json \
     hotplate-01=http://hood2-pc:18923 thermocycler-01=http://bench3:18921 arm-01=http://bench3:18922
 mhp serve-directory fleet.json --http 18900
 mhp http://localhost:18900 find heat and stir a flask in the fume hood

@@ -10,7 +10,7 @@ One command installs OpenMHP into any agent harness. Then you add instruments by
 npx -y openmhp-cli@latest setup
 ```
 
-That is the whole install for a scientist. It puts the runtime in `~/.openmhp`, installs three Agent Skills where your harness looks for them, and registers the OpenMHP MCP server with Claude Code and Codex. For any other harness (OpenClaw, Hermes, Claude Science, Open Science, or your own) it prints the one line to paste:
+That is the whole install for a scientist. It puts the runtime in `~/.openmhp`, installs four Agent Skills where your harness looks for them, and registers the OpenMHP MCP server with Claude Code and Codex. For any other harness (OpenClaw, Hermes, Claude Science, Open Science, or your own) it prints the one line to paste:
 
 ```
 {"mcpServers": {"openmhp": {"command": "npx", "args": ["-y", "openmhp-cli"]}}}
@@ -56,7 +56,7 @@ Or clone the repository and run them as network devices. For a real instrument P
 
 ```
 pip install -U "openmhp[discovery]"                              # from PyPI; or clone github.com/kushalsinha/openmhp
-mhp serve pkg:openmhp/devices/thermocycler-01 --http 18921     # advertises _mhp._tcp on the LAN
+mhp serve pkg:openmhp/devices/thermocycler-01 --http 18921     # this machine only; add --host <this PC's address> to serve the LAN
 mhp serve pkg:openmhp/devices/arm-01 --http 18922
 npx -y openmhp-cli@latest scan                                                # finds both; then: npx -y openmhp-cli@latest add http://127.0.0.1:18921
 ```
@@ -92,7 +92,7 @@ Try asking for 200 °C. The driver refuses with a `LimitViolation` that names th
 When devices are served from many bench PCs, run one directory that indexes them all and point every harness at it. The bridge then loads nothing until an agent searches.
 
 ```
-python skills/openmhp-adapt-fleet/scripts/build_manifest.py fleet.json tc=http://bench3:18921 arm=http://bench3:18922 ...
+python openmhp/skills/openmhp-adapt-fleet/scripts/build_manifest.py fleet.json tc=http://bench3:18921 arm=http://bench3:18922 ...
 mhp serve-directory fleet.json --http 18900
 mhp-mcp --directory http://lab-server:18900 --http 18800      # MCP over HTTP for remote harnesses
 ```
