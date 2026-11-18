@@ -329,7 +329,7 @@ def test_supervised_run_from_approval_to_results():
 
     def gw_cmd(command, stdin=""):
         out = io.StringIO()
-        code = GW.Shell("alice", out=out, env={"SSH_ORIGINAL_COMMAND": command}, stdin=io.StringIO(stdin), wait_s=30).run()
+        code = GW.Shell("alice", out=out, env={"SSH_ORIGINAL_COMMAND": command}, stdin=io.StringIO(stdin), wait_s=180).run()   # slow CI machines; WAITING has its own test
         return code, json.loads(out.getvalue())
 
     def charter(rid, objective):
@@ -411,7 +411,7 @@ def test_supervised_run_from_approval_to_results():
     code, ans = gw_cmd(f"mhp-gw message {rid2} keep it at 30 C overnight")
     assert code == GW.OK
     code, ans = gw_cmd(f"mhp-gw stop {rid2}")
-    assert code == GW.OK and ans["state"] == "stopped"
+    assert code == GW.OK and ans["state"] == "stopped", (code, ans, why_not(rid2))
     assert (S.run_folder("alice", rid2) / "out" / "cleanup.txt").is_file()
     assert drivers["thermocycler-01"]._lease_holder() is None
     code, ans = gw_cmd(f"mhp-gw message {rid2} hello?")
