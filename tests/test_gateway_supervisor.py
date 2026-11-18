@@ -300,7 +300,7 @@ for line in sys.stdin:
 """
 
 
-def wait_until(pred, timeout=30, what="condition"):
+def wait_until(pred, timeout=120, what="condition"):     # generous: Windows CI machines are slow
     import time
     end = time.time() + timeout
     while time.time() < end:
@@ -430,10 +430,11 @@ def test_supervised_run_from_approval_to_results():
     rid4 = gw_cmd("mhp-gw open")[1]["run"]
     c4 = charter(rid4, "run one protocol, busy")
     c4["envelope"]["tc"]["actions"] = {"run_protocol": {}}
-    approve(rid4, sup.propose(rid4, 'alice', c4, harness='quiet'))
     tc = drivers["thermocycler-01"]
-    wait_until(lambda: any(j.snapshot().get("state") not in ("done", "failed", "cancelled") for j in tc.jobs.values()),
-               what="the protocol to start")
+    jobs_before = set(tc.jobs)
+    approve(rid4, sup.propose(rid4, 'alice', c4, harness='quiet'))
+    # the agent's protocol is a new job; on a slow machine the agent itself can take a while to start
+    wait_until(lambda: bool(set(tc.jobs) - jobs_before), timeout=120, what="the protocol to start")
     wait_until(lambda: all(j.snapshot().get("state") in ("done", "failed", "cancelled") for j in tc.jobs.values()),
                timeout=120, what="the protocol to end")
     job_done = time.time()
