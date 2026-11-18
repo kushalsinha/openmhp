@@ -257,8 +257,10 @@ with open(os.path.join(work, "turns.log"), "a") as f:
     f.write(prompt.replace("\\n", " | ") + "\\n")
 busy = "busy" in charter["objective"]
 if busy and "] start:" in prompt:
-    post("/bench/thermocycler-01/rpc", {"jsonrpc": "2.0", "id": 1, "method": "actions/invoke", "params": {
+    got = post("/bench/thermocycler-01/rpc", {"jsonrpc": "2.0", "id": 1, "method": "actions/invoke", "params": {
         "name": "run_protocol", "params": {"steps": [{"temp": 40, "hold_s": 2}], "cycles": 2}}})
+    with open(os.path.join(work, "posts.log"), "a") as f:
+        f.write(json.dumps(got) + "\\n")
 elif busy:
     post("/runs/finish", {"summary": "protocol done", "outcome": "objective met"})
 print(json.dumps({"ok": True, "session": session, "text": "I set things up and will wait.", "cost_usd": 0.0, "tokens": 1}))
@@ -307,7 +309,7 @@ def wait_until(pred, timeout=120, what="condition"):     # generous: Windows CI 
         if pred():
             return
         time.sleep(0.1)
-    raise TimeoutError(what)
+    raise TimeoutError(what() if callable(what) else what)
 
 
 def test_supervised_run_from_approval_to_results():
@@ -335,6 +337,13 @@ def test_supervised_run_from_approval_to_results():
                 "instruments": {"tc": "bench/thermocycler-01"},
                 "envelope": {"tc": {"settings": {"target_temperature": {"min": 4, "max": 99}}, "actions": {}}},
                 "cleanup": "block to 4 C"}
+
+    def why_not(rid):
+        """Where a run is, for a failure message: its state, its last events, and what its agent was told."""
+        rec = sup.record(rid)
+        work = S.run_folder("alice", rid) / "work"
+        said = {f.name: f.read_text(errors="replace")[-600:] for f in (work / "turns.log", work / "posts.log") if f.is_file()}
+        return json.dumps({"state": rec.state, "events": rec.events()[-8:], **said}, default=str)[:4000]
 
     def approve(rid, digest):
         """Approve; on a slow machine mhp-gw may stop waiting first (WAITING, by design): then the run must still start."""
@@ -425,6 +434,7 @@ def test_supervised_run_from_approval_to_results():
     assert "has stopped" in q and "I set things up and will wait" in q, q
     assert [e["action"] for e in sup.record(rid3).events() if e["kind"] == "idle"] == ["nudged", "asked the scientist"]
     gw_cmd(f"mhp-gw stop {rid3}")
+    wait_until(lambda: sup.record(rid3).state == "stopped", what=lambda: f"run 3 to stop: {why_not(rid3)}")
 
     # ---- run 4: an agent waiting on a running instrument job is not stuck; the finished job wakes it ------
     rid4 = gw_cmd("mhp-gw open")[1]["run"]
@@ -434,7 +444,8 @@ def test_supervised_run_from_approval_to_results():
     jobs_before = set(tc.jobs)
     approve(rid4, sup.propose(rid4, 'alice', c4, harness='quiet'))
     # the agent's protocol is a new job; on a slow machine the agent itself can take a while to start
-    wait_until(lambda: bool(set(tc.jobs) - jobs_before), timeout=120, what="the protocol to start")
+    wait_until(lambda: bool(set(tc.jobs) - jobs_before), timeout=120,
+               what=lambda: f"the protocol to start: {why_not(rid4)}; thermocycler lease {tc._lease_holder()}")
     wait_until(lambda: all(j.snapshot().get("state") in ("done", "failed", "cancelled") for j in tc.jobs.values()),
                timeout=120, what="the protocol to end")
     job_done = time.time()
