@@ -12,6 +12,9 @@ import sys
 import tempfile
 import types
 
+import faulthandler
+faulthandler.dump_traceback_later(300, exit=True)   # a hang prints every thread's stack and fails, never runs on
+
 HERE = pathlib.Path(__file__).resolve()
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO))
@@ -225,28 +228,28 @@ def test_cli_setup_with_yes_and_set_asks_nothing_and_check_then_passes():
     with tempfile.TemporaryDirectory() as td:
         env = {**os.environ, "OPENMHP_HOME": td, "PYTHONPATH": str(REPO)}
         cli = [sys.executable, "-m", "openmhp.cli", "node"]
-        r = subprocess.run([*cli, "add", "globalfia-flopro-sampler", "--from", str(REPO)], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL)
+        r = subprocess.run([*cli, "add", "globalfia-flopro-sampler", "--from", str(REPO)], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 0 and "mhp node setup globalfia-flopro-sampler" in r.stderr, r.stderr   # no terminal: the steps are printed
         folder = pathlib.Path(td) / "devices" / "globalfia-flopro-sampler"
-        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 1 and "not set up yet" in r.stderr and "mhp node setup globalfia-flopro-sampler" in r.stderr, r.stderr
-        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 1 and "port still need an answer" in r.stderr and "--set" in r.stderr, r.stderr
         assert not (folder / "config.json").exists() or json.loads((folder / "config.json").read_text())["port"] == "COM21"
-        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip", "--set", "port=COM4"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip", "--set", "port=COM4"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 0, r.stderr
         installed = list((pathlib.Path(td) / "services").glob("*.service"))   # "installed", into this test's own folder
         assert [p.name for p in installed] == ["openmhp-node.service"], (installed, r.stderr)
         assert json.loads((folder / "config.json").read_text())["port"] == "COM4" and "saved" in r.stderr, r.stderr
         assert "pip install -U pyserial" in r.stderr, r.stderr                               # --no-pip: named, not run
-        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 0 and "ready to serve" in r.stderr, r.stderr
-        r = subprocess.run([*cli, "setup", "nope"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "setup", "nope"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 1 and "no package named nope" in r.stderr
 
 
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
-            fn(); print("ok ", name)
+            print("..  ", name, flush=True); fn(); print("ok ", name, flush=True)
     shutil.rmtree(_tmp_home, ignore_errors=True)
