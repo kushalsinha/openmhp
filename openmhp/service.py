@@ -104,7 +104,24 @@ def _windows_startup_path(label: str = LABEL) -> Path:
     return base / f"{label}.bat"
 
 
+def manager_off() -> bool:
+    """OPENMHP_SERVICE_MANAGER=none: write service files under OPENMHP_HOME and never call systemctl, launchctl or
+    the Startup folder. For tests and dry environments: nothing is installed on the machine they run on."""
+    return os.environ.get("OPENMHP_SERVICE_MANAGER", "").lower() == "none"
+
+
+def _manage(cmd: list[str], **kw):
+    """Every call to the OS service manager goes through here, so `manager_off()` stops all of them."""
+    if manager_off():
+        import types
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    return subprocess.run(cmd, **kw)
+
+
 def target_path(label: str = LABEL) -> Path:
+    if manager_off():
+        home = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp")).expanduser()
+        return home / "services" / f"{label}.service"
     system = platform.system()
     if system == "Linux":
         return _systemd_unit_path(label)
@@ -157,7 +174,7 @@ def install_command(label: str, argv: list[str], description: str, dry_run: bool
         result["steps"].append(f"wrote {path}")
         if system == "Linux":
             for cmd in (["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", f"{label}.service"]):
-                r = subprocess.run(cmd, capture_output=True, text=True)
+                r = _manage(cmd, capture_output=True, text=True)
                 result["steps"].append(f"{' '.join(cmd)}: {'ok' if r.returncode == 0 else r.stderr.strip()[:200]}")
                 if r.returncode != 0:
                     result["ok"] = False
@@ -165,7 +182,7 @@ def install_command(label: str, argv: list[str], description: str, dry_run: bool
                 result["note"] = ("running now, and at every login. On a headless machine where nobody stays logged in, "
                                   "also run: loginctl enable-linger $USER")
         elif system == "Darwin":
-            r = subprocess.run(["launchctl", "load", "-w", str(path)], capture_output=True, text=True)
+            r = _manage(["launchctl", "load", "-w", str(path)], capture_output=True, text=True)
             result["steps"].append(f"launchctl load -w: {'ok' if r.returncode == 0 else r.stderr.strip()[:200]}")
             result["ok"] = r.returncode == 0
             if result["ok"]:
@@ -208,7 +225,7 @@ def install(packages_dir: str | Path, http_base: int, dry_run: bool = False) -> 
         result["steps"].append(f"wrote {path}")
         if system == "Linux":
             for cmd in (["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "enable", "--now", f"{LABEL}.service"]):
-                r = subprocess.run(cmd, capture_output=True, text=True)
+                r = _manage(cmd, capture_output=True, text=True)
                 result["steps"].append(f"{' '.join(cmd)}: {'ok' if r.returncode == 0 else r.stderr.strip()[:200]}")
                 if r.returncode != 0:
                     result["ok"] = False
@@ -216,7 +233,7 @@ def install(packages_dir: str | Path, http_base: int, dry_run: bool = False) -> 
                 result["note"] = ("running now, and at every login. On a headless bench PC where nobody stays logged "
                                   "in, also run: loginctl enable-linger $USER")
         elif system == "Darwin":
-            r = subprocess.run(["launchctl", "load", "-w", str(path)], capture_output=True, text=True)
+            r = _manage(["launchctl", "load", "-w", str(path)], capture_output=True, text=True)
             result["steps"].append(f"launchctl load -w: {'ok' if r.returncode == 0 else r.stderr.strip()[:200]}")
             result["ok"] = r.returncode == 0
             if result["ok"]:
@@ -239,10 +256,10 @@ def uninstall() -> dict:
     result = {"system": system, "path": str(path), "ok": True, "steps": []}
     try:
         if system == "Linux" and path.is_file():
-            subprocess.run(["systemctl", "--user", "disable", "--now", f"{LABEL}.service"], capture_output=True, text=True)
+            _manage(["systemctl", "--user", "disable", "--now", f"{LABEL}.service"], capture_output=True, text=True)
             result["steps"].append("systemctl --user disable --now")
         elif system == "Darwin" and path.is_file():
-            subprocess.run(["launchctl", "unload", str(path)], capture_output=True, text=True)
+            _manage(["launchctl", "unload", str(path)], capture_output=True, text=True)
             result["steps"].append("launchctl unload")
         if path.is_file():
             path.unlink()
@@ -277,10 +294,10 @@ def status() -> dict:
         return result
     try:
         if system == "Linux":
-            r = subprocess.run(["systemctl", "--user", "is-active", f"{LABEL}.service"], capture_output=True, text=True)
+            r = _manage(["systemctl", "--user", "is-active", f"{LABEL}.service"], capture_output=True, text=True)
             result["running"] = r.stdout.strip() == "active"
         elif system == "Darwin":
-            r = subprocess.run(["launchctl", "list", "com.openmhp.node"], capture_output=True, text=True)
+            r = _manage(["launchctl", "list", "com.openmhp.node"], capture_output=True, text=True)
             result["running"] = r.returncode == 0
         elif system == "Windows":
             result["running"] = None
@@ -332,13 +349,13 @@ def service_state(label: str = LABEL) -> dict:
         return out
     try:
         if system == "Linux":
-            r = subprocess.run(["systemctl", "--user", "show", "-p", "ActiveState", "-p", "MainPID", f"{label}.service"],
+            r = _manage(["systemctl", "--user", "show", "-p", "ActiveState", "-p", "MainPID", f"{label}.service"],
                                capture_output=True, text=True, timeout=10)
             kv = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
             out["running"] = kv.get("ActiveState") == "active"
             out["main_pid"] = int(kv.get("MainPID") or 0) or None
         elif system == "Darwin":
-            r = subprocess.run(["launchctl", "list", f"com.openmhp.{_short(label)}"], capture_output=True, text=True, timeout=10)
+            r = _manage(["launchctl", "list", f"com.openmhp.{_short(label)}"], capture_output=True, text=True, timeout=10)
             import re as _re
             m = _re.search(r'"PID"\s*=\s*(\d+)', r.stdout)
             out["main_pid"] = int(m.group(1)) if m else None
@@ -360,11 +377,12 @@ def restart_service(label: str = LABEL) -> dict:
         elif system == "Darwin":
             cmd = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.openmhp.{_short(label)}"]
         elif system == "Windows":
-            subprocess.Popen(["cmd", "/c", str(path)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if not manager_off():
+                subprocess.Popen(["cmd", "/c", str(path)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             return {"ok": True, "steps": [f"ran {path}"]}
         else:
             return {"ok": False, "steps": [], "error": f"no service integration for {system!r}"}
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        r = _manage(cmd, capture_output=True, text=True, timeout=60)
         return {"ok": r.returncode == 0, "steps": [" ".join(cmd) + (": ok" if r.returncode == 0 else f": {r.stderr.strip()[:200]}")],
                 "error": None if r.returncode == 0 else (r.stderr.strip()[:200] or f"exit {r.returncode}")}
     except (OSError, subprocess.TimeoutExpired) as e:
