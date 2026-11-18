@@ -1,7 +1,15 @@
 # Troubleshooting
 
 What goes wrong when setting up OpenMHP on the three kinds of machine, and the command that settles each. Start
-with the versions: most problems are a machine, or a process, running older code than the instructions assume.
+with one command: it says what this machine is set up as, the state of each part, and the next step for each part
+that needs one.
+
+```
+mhp status                 # plain lines; exit code 1 when something needs doing
+mhp status --json          # the same, for an agent or a script
+```
+
+Then the versions: most problems are a machine, or a process, running older code than the instructions assume.
 
 ## Which version is running where
 

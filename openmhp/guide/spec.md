@@ -789,9 +789,10 @@ mhp http://bench:18921 invoke open_lid --approved      # the person at this term
 mhp http://bench:18921 estop "smoke from lid"
 mhp lab accept thermocycler-01                         # the owner accepts an edited package as this lab's rulebook
 mhp log audit                                          # is the record on disk still what was written?
+mhp status                                             # this machine: what it is set up as, each part's state, next steps
 ```
 
-The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool.
+The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool. `mhp status` (`--json` for an agent or a script) reports every part of the machine it runs on, whichever roles it has: the install, the agent machine's gateway link and skills, the instrument PC's packages, background service and gateway link, the gateway and its service. Each part that needs something names its next step, and the exit code is 1 when anything does.
 
 ### 10.3 Code files (SDK)
 

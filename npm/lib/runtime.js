@@ -30,6 +30,7 @@ function tool(n) {
 }
 
 const LAUNCHER = require("../package.json").version;
+const MARKER = path.join(HOME, ".upgraded-for");     // the launcher version pip last installed for, successfully
 
 function older(a, b) {                      // is version a older than b (x.y.z, any suffix ignored)?
   const n = (v) => String(v).split("-")[0].split(".").map(Number);
@@ -49,15 +50,17 @@ function ensureRuntime({ upgrade = false, source = SOURCE } = {}) {
     // instructions use, such as `mhp agent --join`: bring it up to date first
     const have = runtimeVersion();
     if (have && !older(have, LAUNCHER)) return;
-    const tried = path.join(HOME, ".upgraded-for");          // once per launcher version: a lagging mirror must not
-    try {                                                                                  // slow every run
-      if (fs.readFileSync(tried, "utf8").trim() === LAUNCHER) {
+    // the marker says "pip already got everything the package index has for this launcher": written only after an
+    // install that worked, so a failed or interrupted one is tried again next time, and a broken runtime is never
+    // mistaken for a lagging mirror
+    try {
+      if (have && fs.readFileSync(MARKER, "utf8").trim() === LAUNCHER) {
         log(`OpenMHP ${have} here, older than this launcher (${LAUNCHER}): your package index has nothing newer yet.`);
         return;
       }
-    } catch { /* not tried yet */ }
-    try { fs.writeFileSync(tried, LAUNCHER); } catch { /* read-only home: try every time */ }
-    log(`the runtime in ${VENV} is OpenMHP ${have || "of unknown version"}; this launcher is ${LAUNCHER}. Updating it.`);
+    } catch { /* never installed for this launcher */ }
+    log(have ? `the runtime in ${VENV} is OpenMHP ${have}; this launcher is ${LAUNCHER}. Updating it.`
+             : `the runtime in ${VENV} cannot load OpenMHP; installing it again.`);
     upgrade = true;
   }
   const py = findPython();
@@ -80,9 +83,14 @@ function ensureRuntime({ upgrade = false, source = SOURCE } = {}) {
   if (upgrade) args.push("--upgrade");
   args.push(source);
   const r = spawnSync(tool("python"), args, { stdio: ["ignore", "inherit", "inherit"] });
-  if (r.status !== 0) { log("install failed"); process.exit(1); }
+  if (r.status !== 0) {
+    log("install failed (see pip's message above). Nothing was marked as done: the next run tries again.");
+    process.exit(1);
+  }
   const got = runtimeVersion();
-  if (got && older(got, LAUNCHER) && /^openmhp(\[|$)/.test(source)) mirrorBehind(got);
+  if (!got) { log("installed, but OpenMHP still does not load in this runtime; see the messages above"); process.exit(1); }
+  try { fs.writeFileSync(MARKER, LAUNCHER); } catch { /* read-only home: try again next time */ }
+  if (older(got, LAUNCHER) && /^openmhp(\[|$)/.test(source)) mirrorBehind(got);
   log("runtime ready");
 }
 
@@ -100,7 +108,6 @@ function indexHost() {
 // pip upgraded as far as it could and is still behind: the package index offers nothing newer. In an
 // enterprise that is usually an internal mirror; say what to ask for instead of carrying on silently.
 function mirrorBehind(got) {
-  try { fs.writeFileSync(path.join(HOME, ".upgraded-for"), LAUNCHER); } catch { /* read-only home */ }
   const host = indexHost();
   log("");
   log(`the newest OpenMHP your Python package index offers is ${got}; this launcher is ${LAUNCHER}.`);
