@@ -231,7 +231,7 @@ def test_cli_setup_with_yes_and_set_asks_nothing_and_check_then_passes():
         r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip", "--set", "port=COM4"], capture_output=True, text=True, env=env, cwd=td)
         assert r.returncode == 0, r.stderr
         assert json.loads((folder / "config.json").read_text())["port"] == "COM4" and "saved" in r.stderr, r.stderr
-        assert "pip install pyserial" in r.stderr, r.stderr                               # --no-pip: named, not run
+        assert "pip install -U pyserial" in r.stderr, r.stderr                               # --no-pip: named, not run
         r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td)
         assert r.returncode == 0 and "ready to serve" in r.stderr, r.stderr
         r = subprocess.run([*cli, "setup", "nope"], capture_output=True, text=True, env=env, cwd=td)

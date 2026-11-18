@@ -44,14 +44,14 @@ class SimBackend(real.RheoCompassBackend):
         now = time.monotonic()
         for token, j in list(self.jobs.items()):
             if now >= j["read_at"] and j["path"].exists():
-                j["path"].unlink()
+                j["path"].unlink(missing_ok=True)
             if now >= j["start"]:
                 tau = 60 * self.scale
                 self.plate_c += (j["p"]["temperature_c"] - self.plate_c) * (1 - math.exp(-(now - j["start"]) / tau))
                 self._write_live(j)
             if now >= j["done_at"]:
-                self._write_result(j)
-                self.jobs.pop(token)
+                if self.jobs.pop(token, None) is not None:          # one thread claims it, however many tick
+                    self._write_result(j)
 
     def picked_up(self, token):
         self._tick()

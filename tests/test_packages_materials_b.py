@@ -122,6 +122,9 @@ def test_rigaku_smartlab_xrd_twin():
     broken_link_refuses(dev, drv, "queue_scan", {"sample_id": "x", "position": 2, "program": prog})
     assert dev.method_find("demo compound", "demo-assay")["method"]["name"] == "scan_5_60"
     j = dev.invoke("queue_scan", approved=True, sample_id="batch12_formA", position=2, program=prog)
+    end = time.time() + 1                                                          # the job thread writes the file just after invoke returns
+    while dev.read("queue_depth") == 0 and time.time() < end:
+        time.sleep(0.005)
     assert dev.read("busy") is True and dev.read("queue_depth") == 1              # the job file sits in the folder until taken
     r = dev.wait(j, poll=0.02)
     assert r["state"] == "done" and r["resultMismatch"] is None, r
@@ -218,9 +221,11 @@ def test_anton_paar_rheometer_twin():
     assert dev.method_find("demo compound", "demo-assay")["method"]["name"] == "flow_curve_0p1_1000"
     j = dev.invoke("queue_test", approved=True, **common, flow_curve=fc)
     deadline = time.time() + 5
-    while dev.read("temperature_setpoint") is None and time.time() < deadline:
+    sp = temp = None
+    while (sp is None or temp is None) and time.time() < deadline:   # keep what was read; the live export can lag the setpoint
+        sp, temp = dev.read("temperature_setpoint"), dev.read("temperature")
         time.sleep(0.005)
-    assert dev.read("temperature_setpoint") == 25.0 and 20 <= dev.read("temperature") <= 26       # measured follows the live export
+    assert sp == 25.0 and temp is not None and 20 <= temp <= 26, (sp, temp)   # measured follows the live export
     r = dev.wait(j, poll=0.02)
     assert r["state"] == "done" and r["resultMismatch"] is None, r
     res = r["result"]

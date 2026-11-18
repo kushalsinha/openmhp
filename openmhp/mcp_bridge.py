@@ -39,6 +39,7 @@ from .client import (Lab, PackageChanged, RemoteError, _inprocess, _remote, drop
                      package_fingerprint, package_folder, pin_package)
 from .directory import Directory
 from .driver import ApprovalRequired, Forbidden
+from .bundled import package as bundled_package
 from .fleet import safe_id
 from .package import declared_rulebook, rulebook_diff
 from .runs import PlanLab, RunLog, Runs
@@ -188,7 +189,8 @@ TOOLS = [
                      "produces a SAFETY CARD to read back, and tells you to op='add' it. Hand-operated ('manual') and serial/USB "
                      "('serial') instruments need no code. op='scan' finds MHP devices on the network not yet in the lab (hosts=[...] "
                      "to probe specific machines). op='add' registers a target: http://host:port, a package folder, a package id under "
-                     "~/.openmhp/devices, or github:owner/repo/path (community packages; sim=true adds its simulated twin for rehearsal). "
+                     "~/.openmhp/devices, a ready-made package's name from op='registry' (shipped with OpenMHP: nothing to download), "
+                     "or github:owner/repo/path (community packages; sim=true adds its simulated twin for rehearsal). "
                      "op='registry' searches known community packages. op='recipes' searches tested cross-instrument procedures to run "
                      "with mhp_run. op='safety_card' reviews a device before first use. op='events' returns what happened since a "
                      "sequence number (job finished, e-stop, refusals). op='location' records where an instrument stands (id, location); ask the human for it after adding a shared package, because a package cannot know. "
@@ -203,7 +205,7 @@ TOOLS = [
                                            "location", "remove", "reload", "release", "list", "new", "write", "validate", "home"]},
          "force": {"type": "boolean", "description": "remove/reload: proceed even if the device has active jobs"},
          "answers": {"type": "object", "description": "onboard: {question key: answer in the given shape}"},
-         "target": {"type": "string", "description": "add: http://host:port | pkg:/folder | folder | package id | github:owner/repo/path"},
+         "target": {"type": "string", "description": "add: http://host:port | pkg:/folder | folder | package id | ready-made package name | github:owner/repo/path"},
          "sim": {"type": "boolean", "description": "add: use the package's simulated twin"},
          "location": {"type": "string", "description": "add/location: where the instrument stands, e.g. 'bay 3, fume hood 2'"},
          "id": {"type": "string", "description": "device id (remove/new/write/validate/safety_card/onboard)"},
@@ -832,7 +834,9 @@ class Bridge:
         if op == "add":
             target = a["target"]
             if not target.startswith(("http", "pkg:", "sim:", "local:", "stdio:", "github:")) and "/" not in target and not Path(target).exists():
-                target = str(fleet.packages_dir() / safe_id(target))  # a package id under ~/.openmhp/devices
+                mine = fleet.packages_dir() / safe_id(target)          # a package id under ~/.openmhp/devices,
+                if (mine / "DEVICE.md").is_file() or not bundled_package(target):   # else a ready-made one shipped here
+                    target = str(mine)
             card = fleet.add(target, sim=bool(a.get("sim")), location=a.get("location"), accept=False)
             entry = fleet.devices[card["id"]]
             folder = package_folder(entry["target"])
@@ -912,7 +916,7 @@ class Bridge:
                             "are ordinary mhp_write/mhp_invoke calls you can make one at a time.")}
         if op == "registry":
             from .registry import search as rsearch
-            return {"packages": rsearch(a.get("query", "")), "how": "mhp_lab op='add' target='github:...' (sim=true for a rehearsal twin)"}
+            return {"packages": rsearch(a.get("query", "")), "how": "mhp_lab op='add' target='<name>' (shipped with OpenMHP, no download; sim=true for a rehearsal twin)"}
         if op == "location":
             card = fleet.set_location(a["id"], a.get("location", ""))
             if isinstance(self.lab.directory, Directory):

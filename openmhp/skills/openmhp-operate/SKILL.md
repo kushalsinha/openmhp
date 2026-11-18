@@ -107,3 +107,17 @@ print(j["result"])
   them down. A script's run ends only when the jobs it started have ended.
 - **Report** what you read, not what you intended. "Block reached 95.0 °C at 14:02" beats
   "started the protocol".
+
+## When the web is out of reach
+
+On many company machines an agent has no web or git access. Everything on openmhp.com ships inside the installed
+package, so read it there instead of guessing:
+
+- `mhp guide`: the topics. `mhp guide <topic>` reads one (troubleshooting, quickstart, gateway, lab-nodes,
+  experiment-flow, add-a-device, cookbook, adapters, spec, ...). `mhp guide search <words>` finds the lines that
+  mention them.
+- `mhp --version`: which OpenMHP is installed. `mhp gateway --version`, `mhp node --version` and
+  `mhp agent --version` also say what the running gateway, the instrument PC's service, or the joined gateway runs.
+- Installed with npx only: the same commands as `npx -y openmhp-cli@latest mhp guide ...`.
+
+When a command is refused or answers oddly, check the versions first, then `mhp guide troubleshooting`.

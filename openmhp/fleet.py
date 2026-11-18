@@ -141,6 +141,14 @@ class Fleet:
     def fetch_github(self, spec: str) -> Path:
         """github:owner/repo[/sub/path][@ref] -> local folder under ~/.openmhp/packages (shallow clone, refreshed on re-add)."""
         import shutil, subprocess
+        from . import bundled
+        shipped = bundled.for_target(spec)
+        if shipped is not None:                            # shipped in the wheel: copy it, no git needed
+            dest = self.path.parent / "packages" / "shipped" / shipped.name
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(shipped, dest, ignore=shutil.ignore_patterns("__pycache__", ".git"))
+            return dest
         spec, _, ref = spec.partition("@")
         parts = spec.strip("/").split("/")
         if len(parts) < 2:
@@ -211,7 +219,10 @@ class Fleet:
             return f"pkg:{p.resolve()}"
         if ":" in target and "/" not in target:               # host:port
             return f"http://{target}"
-        raise ValueError(f"not a device target: {target!r} (use http://host:port, a device package folder, or local:module:Class)")
+        from . import bundled
+        if "/" not in target and bundled.package(target):     # a ready-made package's name: the copy shipped here
+            return f"github:{bundled.HOME_REPO}/supported-devices/{target}"
+        raise ValueError(f"not a device target: {target!r} (use http://host:port, a device package folder, a ready-made package's name, or local:module:Class)")
 
     # ---- discovery -------------------------------------------------------
     def scan(self, hosts: list[str] | None = None, ports: list[int] | None = None) -> list[dict]:

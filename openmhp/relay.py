@@ -3,7 +3,7 @@ serves its instruments through that connection. Nothing listens for the outside;
 the node contacting the gateway over HTTPS, which also passes corporate proxies (urllib honours
 HTTPS_PROXY).
 
-    mhp node C:\\lab\\devices --join https://gw.office ab12-cd34     once, with a code from `mhp gateway pair`
+    mhp node C:\\lab\\devices --join https://gw.office:8443 ab12-cd34     once, with a code from `mhp gateway pair`
     mhp node C:\\lab\\devices                                        from then on: serves locally AND relays
 
 The gateway's certificate is pinned at join (its fingerprint is shown, and `mhp gateway pair` prints

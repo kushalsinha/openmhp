@@ -51,15 +51,22 @@ class SimBackend(real.InstronBackend):
         else:
             stress = MODULUS_MPA * YIELD_STRAIN * (1 + 0.15 * (strain - YIELD_STRAIN) / (BREAK_STRAIN - YIELD_STRAIN))
         load = stress * area * (1 + random.gauss(0, 0.002))
-        self._ext, self._load = ext, load
-        t["peak"] = max(t["peak"], load)
+        # the frame stops where a limit or the break is reached, however late this tick runs: clamp to that point,
+        # so a slow poll never reports a load past the limit the real frame would have stopped at
         done = None
         if strain >= BREAK_STRAIN:
-            done = "break"
+            done, strain = "break", BREAK_STRAIN
+            ext = strain * l0
+            stress = MODULUS_MPA * YIELD_STRAIN * 1.15
+            load = stress * area * (1 + random.gauss(0, 0.002))
         elif load >= t["limits"]["max_load_N"]:
             done = "limit"
+            load = t["limits"]["max_load_N"] * (1 + abs(random.gauss(0, 0.002)))
         elif ext >= t["limits"]["max_extension_mm"]:
             done = "limit"
+            ext = t["limits"]["max_extension_mm"]
+        self._ext, self._load = ext, load
+        t["peak"] = max(t["peak"], load)
         if done:
             self._finish(done, strain, stress, ext)
 
