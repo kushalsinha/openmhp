@@ -542,6 +542,25 @@ any write and require no lease, since they touch files, not hardware.
 
 ---
 
+### 5.9 Device states and next steps
+
+A device is always in one of four states, and moves between them only as follows:
+
+```
+idle <-> busy            a job starts / the last job ends
+idle | busy -> fault     a job failed in a way that may have reached the instrument, or the driver latched a fault
+any -> estop             safety/estop, the watchdog, a shutdown that ran out of time, or the instrument's own stop
+fault | estop -> idle    safety/reset, approved by a person who checked the instrument (§5.6)
+```
+
+A directory adds `unreachable` for a device that did not answer its ping (§3.2): a fact about the path to it, not a state the device is in.
+
+Every answer that reports the state carries the facts behind it, so nobody infers them from a state's name: `ping` returns `{ok, state, fault_reason, active_jobs, stop?, shutting_down?, next, lease, ts}`, and `device/describe` at `summary` and `full` carries the same fields (the `card` stays small for directory listings). `stop` is present in `estop`: `{source, clearable, clearance?}`, where `source` is `client`, `watchdog`, `hardware` or `fault` and `clearable: false` marks a stop latched at the instrument (§15.1). `shutting_down: {deadline}` is present while an orderly shutdown runs; new work is refused until it settles or escalates.
+
+`next` lists what can be done from here, most useful first, as `{tool?, method?, does}`: the MCP tool an agent calls, the wire method a script calls, and what it does in words. A step with neither is something a person does (check the instrument, release a stop). Every error carries `next` too: first what to do about that error (the limits to read for `LimitViolation`, the interlock to read for `InterlockOpen`), then, when the device's state is why it refused, that state's steps. `next` is advisory and additive: a server SHOULD send it, a client MUST NOT depend on it, and it never grants anything the gates of §7 would refuse. The reference implementation declares the machine and its steps once, in `openmhp/states.py`.
+
+A job that failed with a typed error keeps it: the job carries `errorDetail` `{code, message, transient, effect, recovery, motion, data?}` beside the `error` string, so a caller can tell an interlock that opened mid-run from a vendor exception.
+
 ## 6. Lifecycle
 
 ```
@@ -852,15 +871,15 @@ Packages are versioned folders checked into the lab's repository. Changing a lim
 | -32015 | MethodRequired | a method-driven action was invoked with neither `method` nor `params`; `data` carries `choice`, `candidates` and `ask` (§4.5 M7) |
 | -32020 | DeviceFault | device in `fault` (or a write's outcome is unknown, `data.outcome`); verified reset required |
 | -32021 | DeviceBusy | non-concurrent job running, or reset attempted mid-job |
-| -32022 | EStopActive | device in `estop`; reset required |
-Every error also carries a **recovery taxonomy**, so a caller branches on fields instead of reading prose: `transient` (could the identical request succeed later with nothing changed), `effect` (`none`, `partial` or `unknown`: what reached the device), `recovery` (`retry`, `retry_after`, `abort` or `operator`), `motion` (does recovering move the device, so a neighbour must stay clear) and `state` (what the device is in now). A failed job carries `recovery` for the same reason. Without these a model must infer from wording whether a fault is temporary, and on a non-idempotent operation a wrong inference means repeated actuation rather than a controlled abort.
-
-Every error carries `ts`, the device's own clock at the moment it refused, so a client can align a refusal with its own receipt time and with the `ts` on reads and the `started`/`finished` on jobs.
-
+| -32022 | EStopActive | device in `estop`; reset required (`data.clearable: false` and `data.clearance` for a stop still engaged at the instrument, §15.1) |
 | -32030 | NotLeased | another session holds the lease (`data.holder`), the lease was lost, or a watchdog device needs one (`data.reason: "lease_required"`) |
 | -32040 | UnknownName | no such signal/setting/action |
 | -32041 | JobNotFound | no such job id |
 | -32050 | NotSupported | the action does not support pause or cancel; use `safety/estop` |
+
+Every error also carries a **recovery taxonomy**, so a caller branches on fields instead of reading prose: `transient` (could the identical request succeed later with nothing changed), `effect` (`none`, `partial` or `unknown`: what reached the device), `recovery` (`retry`, `retry_after`, `abort` or `operator`), `motion` (does recovering move the device, so a neighbour must stay clear) and `state` (what the device is in now). The MCP bridge passes all of them to the agent unchanged, with `next`. A failed job carries `recovery` for the same reason. Without these a model must infer from wording whether a fault is temporary, and on a non-idempotent operation a wrong inference means repeated actuation rather than a controlled abort.
+
+Every error carries `ts`, the device's own clock at the moment it refused, so a client can align a refusal with its own receipt time and with the `ts` on reads and the `started`/`finished` on jobs, and `next`: the steps that get past it (§5.9).
 
 ---
 
@@ -1005,10 +1024,15 @@ connected device in parallel.
 A stop records **who caused it**: `client`, `watchdog`, `hardware` or `fault`. A driver that
 can detect a physical stop (a button, a light curtain, a safety relay) calls
 `latch_external_stop(reason, clearance)`, which latches like any e-stop but marks itself
-**not clearable from software**. `safety/reset` then refuses and repeats the `clearance` text
-describing what a person must do at the instrument, rather than appearing to succeed against a
-latch it has no authority over. The descriptor should declare `safety.hardware_stop` so an
-agent knows one exists before it starts.
+**not clearable from software** (`stop.clearable: false` in `ping`, §5.9). A driver that can read the
+instrument's own stop overrides `hardware_stop_engaged()`: while it returns true, `safety/reset`
+refuses with `EStopActive` and repeats the `clearance` text describing what a person must do at the
+instrument, whoever approves, rather than appearing to succeed against a latch it has no authority
+over. Once it returns false the stop is cleared by an ordinary person-approved reset. A driver that
+cannot read it returns `None`; the reset is then put to the person with the `clearance` text and
+the statement that the software cannot see the stop, because refusing for ever would leave the
+device stopped until its process restarted. The descriptor should declare `safety.hardware_stop`
+so an agent knows one exists before it starts.
 
 ### 15.2 Simulated twins and fault injection
 
