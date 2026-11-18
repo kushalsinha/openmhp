@@ -122,7 +122,7 @@ def test_agilent_openlab_hplc():
         raise AssertionError("expected the rejected command to fail the job")
     except RemoteError as e:
         assert "rejected" in str(e)
-    dev.reset()
+    dev.reset(approved=True)
     assert dev.run_method("assay-c18")["state"] == "done"
     dev.estop()
     assert dev.read("state") == "estop"
@@ -189,7 +189,7 @@ def test_metrohm_titrino_kf():
         raise AssertionError("E1 should fail the job")
     except RemoteError as e:
         assert "E1" in str(e)
-    dev.reset()
+    dev.reset(approved=True)
     assert dev.run_method("kf-std", timeout=60)["state"] == "done"
     job = dev.invoke("determine", method="KF-SOLID", sample_mass_g=0.2)
     deadline = time.time() + 5

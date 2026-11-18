@@ -7,7 +7,7 @@ searched for and the one descriptor it chose to open.
 
     mhp_find      search the directory        (deferred loading: cards, not descriptors)
     mhp_describe  open one descriptor         (card | summary | full | select one action | a resource)
-    mhp_read / mhp_write / mhp_invoke / mhp_job / mhp_estop
+    mhp_read / mhp_write / mhp_invoke / mhp_job / mhp_estop / mhp_reset
     mhp_run       run a script or recipe      (plan=true rehearses it; background=true for long runs)
     mhp_lab       the lab: status, scan, add, onboard, recipes, safety card, events
     mhp_data      runs and their files (readings, images, logs); updates pushed by devices
@@ -149,6 +149,13 @@ TOOLS = [
      "description": "EMERGENCY STOP one device, or every device this session has touched with device='*'. Always allowed. Use whenever anything looks unsafe.",
      "inputSchema": {"type": "object", "properties": {"device": {"type": "string"}, "reason": {"type": "string"}}, "required": ["device"]},
      "input_examples": [{"device": "arm-01", "reason": "person inside keep-out ring"}, {"device": "*", "reason": "smoke"}]},
+    {"name": "mhp_reset",
+     "description": ("Clear a device's e-stop or fault and return it to idle, after a person has checked the instrument. "
+                     "The server asks that person itself (elicitation); you cannot approve for them. Refused while jobs "
+                     "still run, and for a stop latched at the instrument (the answer says what must be done there). "
+                     "Tell the user what stopped it and ask them to check before you call this."),
+     "inputSchema": {"type": "object", "properties": {"device": {"type": "string"}}, "required": ["device"]},
+     "input_examples": [{"device": "thermocycler-01"}]},
     {"name": "mhp_run",
      "description": ("Run a Python orchestration script, or a named recipe, against the lab. Returns ONLY what it prints (capped), "
                      "so large intermediate data never enters your context. The script sees `lab`, `run_dir` (a folder to save "
@@ -300,7 +307,9 @@ INSTRUCTIONS = (
     "project's own). None: ask the person for the parameters, run once with them, then op='save' under the project. Adapt "
     "between runs with `overrides`; save what worked as the next version. Results are pushed: mhp_data op='updates' shows "
     "each new result (a run's events.jsonl keeps them) so you can decide the next run without polling.\n"
-    "- mhp_estop is always allowed. Use it the moment anything looks wrong. mhp_job op='pause' lets a human step in."
+    "- mhp_estop is always allowed. Use it the moment anything looks wrong. mhp_job op='pause' lets a human step in. "
+    "After a stop or fault, tell the user what stopped and ask them to check the instrument; mhp_reset then asks them to "
+    "confirm before the device returns to idle."
 )
 
 PROMPTS = {
@@ -389,6 +398,8 @@ class Bridge:
                 r = self._device(a["device"]).estop(a.get("reason", ""))
             self.notify_harness("error", f"E-STOP {a['device']}: {a.get('reason', '')}")
             return r
+        if name == "mhp_reset":
+            return self._device(a["device"]).reset()
         if name == "mhp_run":
             if not self.scripts:
                 raise _remote(Forbidden.code,
@@ -615,6 +626,12 @@ class Bridge:
         name = params.get("name")
         if method == "settings/write":
             what = f"{dev.name}: set {name} = {json.dumps(params.get('value'), default=str)}"
+        elif method == "safety/reset":
+            name = "safety/reset"
+            what = f"{dev.name}: you have checked the instrument and it is safe; clear its stop and return it to idle"
+        elif method == "session/release":
+            name = "session/release"
+            what = f"{dev.name}: force its lease open, taking it from the session that holds it"
         else:
             args = params.get("params") or {}
             what = f"{dev.name}: run {name}" + (f" with {json.dumps(args, default=str)}" if args else "")
@@ -624,7 +641,8 @@ class Bridge:
                           f"'{name}' needs a person's confirmation, and this harness has no trusted confirmation channel "
                           "(MCP elicitation). Ask the user to do this step at the instrument or from a harness that supports "
                           "elicitation.", {"approval": "confirm", "channel": "unavailable"})
-        spec = self._spec(dev, "settings" if method == "settings/write" else "actions", name)
+        spec = self._spec(dev, "settings" if method == "settings/write" else "actions", name) \
+            if method in ("settings/write", "actions/invoke") else {}
         ans = self.elicit(what + "?" + (f" Note from the owner: {spec['notes']}" if spec.get("notes") else ""))
         self.log.write("confirm", device=dev.name, name=name, answer=ans, request=params)
         return ans == "accept"
@@ -689,7 +707,7 @@ class Bridge:
                 out["error"] = res["error"]
             self.log.write("plan", name=name, verdict=summary["verdict"], steps=len(plan.plan))
             return out
-        self.lab.release_all()                   # hand this session's leases to the run's own session
+        self.lab.release_all(handover=True)      # hand this session's leases, and any running jobs, to the run's own session
         return self.runs.start(script, name=name, timeout_s=float(a.get("timeout_s", 600)),
                                background=bool(a.get("background")), params=params)
 
@@ -879,8 +897,11 @@ class Bridge:
                            was=was, now=new.get("fingerprint"))
             return {"reloaded": card, "accepted": changes or "nothing the device enforces changed"}
         if op == "release":
-            self.lab.release_all()
-            return {"released": sorted(self.lab.devices)}
+            res = self.lab.release_all()
+            kept = {n: r["error"] for n, r in res.items() if "error" in r}
+            return {"released": sorted(n for n in res if n not in kept),
+                    **({"kept": kept, "next": "wait for those jobs (mhp_job), or stop them, then release again"}
+                       if kept else {})}
         if op == "list":
             return {"devices": fleet.list(), "fleet": str(fleet.path)}
         if op == "home":

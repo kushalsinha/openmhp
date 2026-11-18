@@ -5,9 +5,8 @@ This module starts with the run record. The authoritative state and event log li
 folder (`<gateway>/runs/<id>/`), where a run cannot edit them. A copy is mirrored into the scientist's run
 folder (`meta.json`, `events.jsonl`) for them and their agent to read.
 
-    open -> planning -> waiting_approval -> queued -> running <-> waiting_scientist -> finished
-                                                         |                               stopped
-                                                         +-> interrupted (gateway restart)  failed
+The states, their moves and each state's next steps for the scientist are declared in states.py (RUN_*);
+every move here is checked there before anything else happens.
 """
 from __future__ import annotations
 
@@ -17,21 +16,10 @@ import threading
 import time
 from pathlib import Path
 
-from . import scientists as S
+from . import atomic as A, scientists as S
+from .states import RUN_ENDED as ENDED, RUN_LIVE as LIVE, RUN_TRANSITIONS as TRANSITIONS, check_run_move
 
-TRANSITIONS = {
-    "open": {"planning", "waiting_approval", "stopped"},
-    "planning": {"waiting_approval", "stopped", "failed"},
-    "waiting_approval": {"planning", "queued", "running", "stopped"},
-    "queued": {"running", "stopped", "failed"},
-    "running": {"waiting_scientist", "finished", "stopped", "failed", "interrupted"},
-    "waiting_scientist": {"running", "finished", "stopped", "failed", "interrupted"},
-    "interrupted": {"queued", "running", "stopped"},
-    "finished": set(), "stopped": set(), "failed": set(),
-}
-ENDED = {"finished", "stopped", "failed"}
 KEEP_RESULTS_S = 7 * 24 * 3600            # results stay on the gateway this long after a run ends, unless received sooner
-LIVE = {"queued", "running", "waiting_scientist"}
 
 
 def now() -> str:
@@ -50,14 +38,12 @@ class RunRecord:
     # ---- files -----------------------------------------------------------------------------
     def _load(self) -> dict | None:
         try:
-            return json.loads((self.private / "state.json").read_text(encoding="utf-8"))
+            return json.loads(A.read_text(self.private / "state.json"))
         except (OSError, ValueError):
             return None
 
     def _write(self, path: Path, obj: dict) -> None:
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(obj, indent=1, default=str), encoding="utf-8")
-        os.replace(tmp, path)
+        A.write_text(path, json.dumps(obj, indent=1, default=str))
 
     def public_folder(self) -> Path:
         return S.run_folder(self.owner, self.id, self.lab_root)
@@ -92,8 +78,7 @@ class RunRecord:
     def to(self, state: str, why: str = "", **fields) -> dict:
         with self.lock:
             cur = self.doc["state"]
-            if state not in TRANSITIONS.get(cur, set()):
-                raise ValueError(f"run {self.id} cannot go from {cur} to {state}")
+            check_run_move(self.id, cur, state)
             self.doc["state"] = state
             self.doc.update(fields)
             self.doc["history"].append({"state": state, "at": now(), "why": why})
@@ -132,13 +117,26 @@ def recover(runs_dir: Path, lab_root: Path | None = None) -> list[str]:
         return out
     for d in sorted(Path(runs_dir).iterdir()):
         try:
-            doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+            doc = json.loads(A.read_text(d / "state.json"))
         except (OSError, ValueError):
             continue
         if doc.get("state") in LIVE:
             rec = RunRecord(d, doc["id"], doc["owner"], lab_root)
-            rec.to("interrupted", "the gateway restarted; leases lapsed and instrument watchdogs acted. Check the bench "
-                   "before resuming.")
+            rec.to("interrupted", "the gateway restarted; leases lapsed and instrument watchdogs acted. Check the bench, "
+                   "then resume it or stop it.")
+            out.append(doc["id"])
+    return out
+
+
+def planning_runs(runs_dir: Path) -> list[str]:
+    """Runs whose planner was working when the gateway stopped: planning only reads and rehearses, so it goes on."""
+    out = []
+    for d in sorted(Path(runs_dir).iterdir()) if Path(runs_dir).is_dir() else []:
+        try:
+            doc = json.loads(A.read_text(d / "state.json"))
+        except (OSError, ValueError):
+            continue
+        if doc.get("state") == "planning":
             out.append(doc["id"])
     return out
 
@@ -229,8 +227,7 @@ class RunCtl:
         self.triggers: _queue.Queue = _queue.Queue()
         self.thread: threading.Thread | None = None
         self.failures = 0
-        self.spent_usd = 0.0
-        self.question_seq = 0
+        self.spent_usd = float(record.doc.get("spent_usd") or 0.0)     # kept in the record: a restart does not reset it
         self.last_report = time.time()
         self.nudged = False          # woken once already for ending a turn with nothing running
         self.live = None             # the run's harness session, open for the whole run (harness.LiveSession)
@@ -258,7 +255,10 @@ class Supervisor:
             c = self.ctl.get(run_id)
             if c is None:
                 if owner is None:
-                    doc = json.loads((self.runs_dir / run_id / "state.json").read_text(encoding="utf-8"))
+                    try:
+                        doc = json.loads(A.read_text(self.runs_dir / run_id / "state.json"))
+                    except (OSError, ValueError):
+                        raise LookupError(f"no run {run_id} on this gateway") from None
                     owner = doc["owner"]
                 c = self.ctl[run_id] = RunCtl(RunRecord(self.runs_dir / run_id, run_id, owner, self.lab_root))
             return c.record
@@ -309,11 +309,12 @@ class Supervisor:
         if C.digest(charter) != digest:
             raise ValueError("that is not the charter on record (it changed, or the digest is wrong): look again with "
                              "`mhp-gw show` and approve what it shows")
+        check_run_move(run_id, rec.state, "queued")
+        self.gw.issue_run_token(charter)               # first: an instrument it names may be gone; then nothing is recorded
         charter.update(approved_by=by, approved_at=now())
         (self.runs_dir / run_id / "charter.json").write_text(json.dumps(charter, indent=1), encoding="utf-8")
         with open(self.runs_dir / run_id / "approvals.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps({"at": now(), "by": by, "digest": digest}) + "\n")
-        self.gw.issue_run_token(charter)
         rec.to("queued", f"approved by {by}", phase="run")
         got = self.gw.allocate(run_id)
         if got["state"] == "allocated":
@@ -475,14 +476,50 @@ class Supervisor:
         with self.lock:                                 # approval and the tick may both see the instruments come free
             if rec.state != "queued":
                 return
-            self.prepare(run_id)
-            rec.to("running", "all instruments allocated")
-        self.wake(run_id, "start", "The run has started. Read the charter in your instructions and notebook.md, plan, "
-                  "rehearse, then begin.")
+            try:
+                self.prepare(run_id)
+            except Exception as e:                      # noqa: BLE001  the gateway cannot run it: say so, end it
+                why = f"the gateway could not prepare the run: {type(e).__name__}: {e}"
+                if self._claim_end(rec, "supervisor"):
+                    self._end(rec, "failed", why)
+                return
+            resumed = bool(rec.doc.get("resumed"))
+            rec.to("running", "all instruments allocated" + (" again, after the restart" if resumed else ""))
+            held = rec.doc.get("pending_messages") or []
+            rec.set(pending_messages=[], resumed=False)
+        start = ("The gateway restarted while you were running, so your instruments were released and their watchdogs "
+                 "acted. Before anything else: read every instrument's state and your notebook.md, and if anything is "
+                 "not as you left it, ask the scientist (ask_scientist). Then carry on." if resumed else
+                 "The run has started. Read the charter in your instructions and notebook.md, plan, rehearse, then begin.")
+        self.wake(run_id, "start", start + "".join(f"\n[{m['at']}] {m['kind']}: {m['text']}" for m in held))
+
+    def resume(self, run_id: str, by: str) -> dict:
+        """An interrupted run goes on: its approved charter gets a new token, it queues for its instruments again,
+        and its agent is told to check the bench before anything else."""
+        rec = self.record(run_id)
+        if by != rec.owner:
+            raise PermissionError("only the run's scientist resumes it")
+        check_run_move(run_id, rec.state, "queued")
+        if rec.state != "interrupted":
+            raise ValueError(f"run {run_id} is {rec.state}; only an interrupted run resumes")
+        self.gw.issue_run_token(self.charter(run_id))
+        rec.set(resumed=True)
+        rec.to("queued", f"resumed by {by}")
+        got = self.gw.allocate(run_id)
+        if got["state"] == "allocated":
+            self._start(run_id)
+        else:
+            rec.event("waiting_for_instruments", detail=got)
+        return {"run": run_id, "state": rec.state}
 
     # ---- wake-ups ----------------------------------------------------------------------------
     def wake(self, run_id: str, kind: str, text: str) -> None:
         c = self.ctl.get(run_id) or (self.record(run_id) and self.ctl[run_id])
+        if c.record.state in ("queued", "interrupted"):   # no agent session yet: held, delivered when the run starts
+            if kind in ("message", "answer"):
+                c.record.set(pending_messages=list(c.record.doc.get("pending_messages") or [])
+                             + [{"kind": kind, "text": text, "at": now()}])
+            return
         c.triggers.put({"kind": kind, "text": text, "at": now()})
         with self.lock:
             if c.thread is None or not c.thread.is_alive():
@@ -591,9 +628,10 @@ class Supervisor:
     def _close_live(self, c: "RunCtl", why: str, locked: bool = False) -> None:
         def close():
             if c.live is not None:
-                c.live.close()
-                c.record.event("session", action="closed", phase=c.live_phase, why=why)
-                c.live, c.scripts = None, {}
+                live, phase = c.live, c.live_phase
+                c.live, c.scripts = None, {}            # first: whoever sees the "closed" event sees no session
+                live.close()
+                c.record.event("session", action="closed", phase=phase, why=why)
         if locked:
             close()
         else:
@@ -688,29 +726,37 @@ class Supervisor:
     def ask(self, run_id: str, question: str, *, tried: str = "", meanwhile: str = "wait", needs_lab: bool = False,
             by_supervisor: bool = False) -> dict:
         c = self.ctl.get(run_id) or (self.record(run_id) and self.ctl[run_id])
-        c.question_seq += 1
-        qid = f"q{c.question_seq}"
-        ev = c.record.event("question", id=qid, question=question, tried=tried, meanwhile=meanwhile, needs_lab=needs_lab,
-                            by="supervisor" if by_supervisor else "agent")
-        open_q = dict(c.record.doc.get("open_questions") or {})
-        open_q[qid] = {"question": question, "needs_lab": needs_lab, "asked": ev["at"]}
-        c.record.set(open_questions=open_q)
-        if meanwhile == "wait" and c.record.state == "running":
-            c.record.to("waiting_scientist", f"asked {qid}")
+        rec = c.record
+        with rec.lock:                                   # numbered from the record, so a restart never reuses an id
+            if rec.state in ENDED:
+                raise ValueError(f"run {run_id} has ended ({rec.state}); there is no one to ask")
+            seq = int(rec.doc.get("question_seq") or 0) + 1
+            qid = f"q{seq}"
+            ev = rec.event("question", id=qid, question=question, tried=tried, meanwhile=meanwhile, needs_lab=needs_lab,
+                           by="supervisor" if by_supervisor else "agent")
+            open_q = dict(rec.doc.get("open_questions") or {})
+            open_q[qid] = {"question": question, "needs_lab": needs_lab, "asked": ev["at"]}
+            rec.set(open_questions=open_q, question_seq=seq)
+            if meanwhile == "wait" and rec.state == "running":
+                rec.to("waiting_scientist", f"asked {qid}")
         return {"ok": True, "question": qid, "note": "the scientist's answer will come as a later turn"}
 
     def answer(self, run_id: str, qid: str, text: str, by: str) -> dict:
         rec = self.record(run_id)
         if by != rec.owner:
             raise PermissionError("only the run's scientist answers its questions")
-        open_q = dict(rec.doc.get("open_questions") or {})
-        if qid not in open_q:
-            raise LookupError(f"no open question {qid} on run {run_id}")
-        q = open_q.pop(qid)
-        rec.set(open_questions=open_q)
-        rec.event("answer", id=qid, by=by, text=text)
-        if rec.state == "waiting_scientist" and not open_q:
-            rec.to("running", f"{by} answered {qid}")
+        with rec.lock:
+            if rec.state in ENDED:
+                raise ValueError(f"run {run_id} has ended ({rec.state}); its questions closed with it")
+            open_q = dict(rec.doc.get("open_questions") or {})
+            if qid not in open_q:
+                raise LookupError(f"no open question {qid} on run {run_id}"
+                                  + (f" (open: {', '.join(open_q)})" if open_q else " (it has no open questions)"))
+            q = open_q.pop(qid)
+            rec.set(open_questions=open_q)
+            rec.event("answer", id=qid, by=by, text=text)
+            if rec.state == "waiting_scientist" and not open_q:
+                rec.to("running", f"{by} answered {qid}")
         self.wake(run_id, "answer", f"{by} answered your question {qid} ({q['question'][:200]}): {text}")
         return {"run": run_id, "answered": qid, "state": rec.state}
 
@@ -718,23 +764,49 @@ class Supervisor:
         self.record(run_id).event("report", text=text)
         return {"ok": True}
 
+    def _claim_end(self, rec: RunRecord, by: str) -> bool:
+        """One ending per run: a stop and a finish racing each other must not both write, release and record."""
+        with rec.lock:
+            if rec.state in ENDED or rec.doc.get("ending"):
+                return False
+            rec.set(ending=by)
+            return True
+
+    def _end(self, rec: RunRecord, state: str, why: str) -> None:
+        """The last move of a run: its questions close, its instruments go back, its results get a manifest."""
+        with rec.lock:
+            open_q = rec.doc.get("open_questions") or {}
+            if open_q:
+                rec.event("questions_closed", ids=sorted(open_q), why=f"the run {state}")
+            rec.set(open_questions={}, ending=None, pending_messages=[])
+        self.gw.end_run(rec.id)
+        rec.to(state, why, ended=now(), ended_ts=time.time(), **({"failed_because": why} if state == "failed" else {}))
+        self.results_ready(rec.id)
+
     def finish(self, run_id: str, summary: str, outcome: str, next_experiments: list | None = None) -> dict:
         rec = self.record(run_id)
-        pub = rec.public_folder()
-        out = pub / "out"
-        lines = [f"# Run {run_id}: {outcome}", "", summary, ""]
-        if next_experiments:
-            lines += ["## Suggested next experiments", ""] + [f"- {x}" for x in next_experiments] + [""]
-        work = pub / "work"
-        if (work / "out").is_dir():
-            _shutil.copytree(work / "out", out, dirs_exist_ok=True)
-        if (work / "notebook.md").is_file():
-            _shutil.copyfile(work / "notebook.md", out / "notebook.md")
-        (out / "report.md").write_text("\n".join(lines), encoding="utf-8")
+        if rec.state not in ("running", "waiting_scientist"):
+            raise ValueError(f"run {run_id} is {rec.state}; finish ends a run that is running")
+        if not self._claim_end(rec, "finish"):
+            raise ValueError(f"run {run_id} is already ending (stopped by its scientist)")
+        try:
+            pub = rec.public_folder()
+            out = pub / "out"
+            lines = [f"# Run {run_id}: {outcome}", "", summary, ""]
+            if next_experiments:
+                lines += ["## Suggested next experiments", ""] + [f"- {x}" for x in next_experiments] + [""]
+            work = pub / "work"
+            if (work / "out").is_dir():
+                _shutil.copytree(work / "out", out, dirs_exist_ok=True)
+            out.mkdir(parents=True, exist_ok=True)
+            if (work / "notebook.md").is_file():
+                _shutil.copyfile(work / "notebook.md", out / "notebook.md")
+            (out / "report.md").write_text("\n".join(lines), encoding="utf-8")
+        except OSError:
+            rec.set(ending=None)
+            raise
         rec.event("finish", outcome=outcome, summary=summary, next_experiments=next_experiments or [])
-        self.gw.end_run(run_id)
-        rec.to("finished", outcome, ended=now(), ended_ts=time.time())
-        self.results_ready(run_id)
+        self._end(rec, "finished", outcome)
         return {"ok": True, "state": "finished"}
 
     # ---- the scientist's requests ------------------------------------------------------------
@@ -742,14 +814,16 @@ class Supervisor:
         rec = self.record(run_id)
         if by != rec.owner:
             raise PermissionError("only the run's scientist messages it")
-        if rec.state not in ("planning", "waiting_approval", "running", "waiting_scientist", "queued"):
-            raise ValueError(f"run {run_id} is {rec.state}")
+        if rec.state not in ("planning", "waiting_approval", "running", "waiting_scientist", "queued", "interrupted"):
+            raise ValueError(f"run {run_id} is {rec.state}; "
+                             + ("send your request first (mhp-gw request)" if rec.state == "open" else "it has ended"))
         rec.event("message", by=by, text=text)
         if rec.state == "waiting_approval":           # changes to a proposed charter: back to the planner
             rec.to("planning", f"{by} asked for changes", phase="plan")
         self.wake(run_id, "message", f"{by} says: {text}. (If this asks for something outside the charter, the gateway will "
                   "refuse it: tell them it needs a changed charter, through ask_scientist.)")
-        return {"run": run_id, "delivered": True}
+        held = rec.state in ("queued", "interrupted")
+        return {"run": run_id, "state": rec.state, "delivered": not held, **({"held": True} if held else {})}
 
     def stop(self, run_id: str, by: str, cleanup_timeout_s: float = 600) -> dict:
         """Stop now: the agent gets one turn to clean up as the charter says, then the instruments are released."""
@@ -758,7 +832,10 @@ class Supervisor:
         if by != rec.owner and by != "supervisor":
             raise PermissionError("only the run's scientist stops it")
         if rec.state in ENDED:
-            return {"run": run_id, "state": rec.state}
+            return {"run": run_id, "state": rec.state, "note": f"it had already {rec.state}"}
+        check_run_move(run_id, rec.state, "stopped")
+        if not self._claim_end(rec, f"stop by {by}"):
+            return {"run": run_id, "state": rec.state, "note": "it is already ending"}
         rec.event("stop", by=by)
         c = self.ctl.get(run_id)
         cleanup = (f"[{now()}] stop: {by} stopped the run. Do the charter's cleanup now, write what you have to out/ "
@@ -772,9 +849,9 @@ class Supervisor:
             finally:
                 c.live_lock.release()
         elif rec.state in ("running", "waiting_scientist") and rec.doc.get("session"):
-            if c is not None and c.live is not None:            # busy mid-reply: end it, then clean up on the conversation
-                c.live.close(wait_s=1)
-                c.live = None
+            live = c.live if c is not None else None
+            if live is not None:                     # busy mid-reply: end the process; the worker, which holds the
+                live.close(wait_s=1)                 # session, sees it exit and clears it; clean up on the conversation
             work = rec.public_folder() / "work"
             adapter = self.adapters[rec.doc.get("harness", "claude-code")]
             r = run_turn(adapter, Turn(prompt=cleanup,
@@ -782,12 +859,12 @@ class Supervisor:
                                        max_turns=15, timeout_s=cleanup_timeout_s, env={"OPENMHP_RUN_ID": run_id},
                                        run_as=f"mhp-{rec.owner}" if self.run_as_users else None))
             rec.event("turn", ok=r.ok, reason=r.reason, cost_usd=r.cost_usd, said=(r.text or "")[:2000], cleanup=True)
-        self.gw.end_run(run_id)
+        elif c is not None and c.live is not None:              # a planner, or a session between phases: just close it
+            self._close_live(c, f"stopped by {by}")
         pub = rec.public_folder()
         if (pub / "work" / "out").is_dir():
             _shutil.copytree(pub / "work" / "out", pub / "out", dirs_exist_ok=True)
-        rec.to("stopped", f"stopped by {by}", ended=now(), ended_ts=time.time())
-        self.results_ready(run_id)
+        self._end(rec, "stopped", f"stopped by {by}")
         return {"run": run_id, "state": "stopped"}
 
     # ---- results: a manifest, received by the scientist's machine, then deleted here ----------
@@ -835,7 +912,7 @@ class Supervisor:
         done = []
         for d in sorted(self.runs_dir.iterdir()) if self.runs_dir.is_dir() else []:
             try:
-                doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+                doc = json.loads(A.read_text(d / "state.json"))
             except (OSError, ValueError):
                 continue
             if doc.get("state") not in ENDED or doc.get("purged"):
@@ -878,6 +955,12 @@ class Supervisor:
                 try:
                     body = json.loads(req.read_text(encoding="utf-8"))
                     kind = body.get("kind")
+                    if kind == "stop":                   # a stop waits for the agent's cleanup: never hold up the others
+                        req.unlink()
+                        threading.Thread(target=self._answer_later, args=(req, lambda: self.stop(run_id, owner)),
+                                         name=f"mhp-stop-{run_id}", daemon=True).start()
+                        continue
+                    self.record(run_id, owner)
                     if kind == "request":
                         ans = self.request(run_id, owner, body.get("text", ""), body.get("harness") or "claude-code")
                     elif kind == "approve":
@@ -886,8 +969,8 @@ class Supervisor:
                         ans = self.message(run_id, body.get("text", ""), owner)
                     elif kind == "answer":
                         ans = self.answer(run_id, body.get("question", ""), body.get("text", ""), owner)
-                    elif kind == "stop":
-                        ans = self.stop(run_id, owner)
+                    elif kind == "resume":
+                        ans = self.resume(run_id, owner)
                     elif kind == "ack":
                         ans = self.ack(run_id, owner)
                     else:
@@ -898,9 +981,20 @@ class Supervisor:
                 # the request goes before its answer appears, and the answer appears whole: mhp-gw returns as soon as
                 # it reads the answer, and its next request must not be the file this one removes
                 req.unlink()
-                tmp = req.with_name(req.stem + ".done.tmp")
-                tmp.write_text(json.dumps(result, default=str), encoding="utf-8")
-                os.replace(tmp, req.with_name(req.stem + ".done.json"))
+                self._write_answer(req, result)
+
+    @staticmethod
+    def _write_answer(req: Path, result: dict) -> None:
+        A.write_text(req.with_name(req.stem + ".done.json"), json.dumps(result, default=str))
+
+    def _answer_later(self, req: Path, act) -> None:
+        try:
+            result = {"ok": True, **act()}
+        except (ValueError, LookupError, PermissionError, OSError) as e:
+            result = {"ok": False, "error": str(e), "not_found": isinstance(e, LookupError)}
+        except Exception as e:                           # noqa: BLE001  the answer always appears
+            result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        self._write_answer(req, result)
 
     def loop(self) -> None:
         while not self.stop_event.is_set():
@@ -912,7 +1006,14 @@ class Supervisor:
         self.shutdown()
 
     def start(self) -> threading.Thread:
-        recover(self.runs_dir, self.lab_root)
+        for run_id in recover(self.runs_dir, self.lab_root):
+            try:
+                self.gw.end_run(run_id)               # its tokens and instruments: they lapsed with the restart
+            except Exception:                         # noqa: BLE001
+                pass
+        for run_id in planning_runs(self.runs_dir):
+            self.wake(run_id, "restart", "The gateway restarted while you were planning. Read request.md, ../in/ and "
+                      "your notes again, and carry on where you left off.")
         t = threading.Thread(target=self.loop, name="mhp-supervisor", daemon=True)
         t.start()
         return t

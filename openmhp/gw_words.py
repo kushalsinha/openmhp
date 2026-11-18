@@ -6,6 +6,8 @@ The words come from the gateway, so a scientist hears the same thing whichever a
 """
 from __future__ import annotations
 
+from .states import RUN_ENDED as ENDED, run_next
+
 STATES = {
     "open": "is open. Nothing has been asked for yet: hand over your files and send the request.",
     "planning": "is being planned. The lab's planner is working the experiment out with you; nothing moves on the "
@@ -16,14 +18,14 @@ STATES = {
     "waiting_scientist": "is paused, waiting for your answer before it goes on.",
     "finished": "has finished.",
     "stopped": "was stopped.",
-    "failed": "failed.",
-    "interrupted": "was interrupted: the gateway restarted while it ran.",
+    "failed": "could not run: the gateway could not start or keep it going.",
+    "interrupted": "was interrupted: the gateway restarted while it ran, so its instruments were released and their "
+                   "watchdogs acted. Check the bench, then resume it or stop it.",
 }
 SHORT = {"open": "open, waiting for files and a request", "planning": "being planned",
          "waiting_approval": "waiting for your approval", "queued": "approved, waiting for instruments",
          "running": "running", "waiting_scientist": "waiting for your answer", "finished": "finished",
-         "stopped": "stopped", "failed": "failed", "interrupted": "interrupted"}
-ENDED = ("finished", "stopped", "failed", "interrupted")
+         "stopped": "stopped", "failed": "could not run", "interrupted": "interrupted, waiting for you to resume or stop it"}
 
 
 def _q(qid: str, q: dict | str) -> str:
@@ -52,6 +54,11 @@ def run_state(meta: dict) -> str:
             out.append("Its results are waiting on the gateway for your machine to bring them home (kept 7 days).")
     if meta.get("spent_usd"):
         out.append(f"The lab's agent has used ${meta['spent_usd']:.2f} of model time on it so far.")
+    if state == "failed" and meta.get("failed_because"):
+        out.append(f"Why: {meta['failed_because']}")
+    nxt = run_next(meta)
+    if nxt:
+        out.append("What you can do now: " + "; ".join(f"{n['does']} ({n['command']})" for n in nxt) + ".")
     return " ".join(out)
 
 
@@ -87,6 +94,8 @@ def event(ev: dict) -> str | None:
         return f"The gateway knows your machine has {rid}'s results."
     if k == "results_deleted":
         return f"The gateway deleted its copy of {rid}'s results ({ev.get('why')})."
+    if k == "questions_closed":
+        return f"{rid}'s open question(s) {', '.join(ev.get('ids') or [])} closed when it ended; no answer is needed."
     return None
 
 

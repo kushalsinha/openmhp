@@ -158,7 +158,13 @@ def test_elicitation_confirms_gated_action():
         assert "declined" in e.message
     b.call_tool("mhp_estop", {"device": "thermocycler-01", "reason": "test"})
     assert any(m.get("method") == "notifications/message" and "E-STOP" in m["params"]["data"] for m in sent)
-    b.lab["thermocycler-01"].reset()
+    try:                                                    # a reset is a person's call, asked through elicitation too
+        b.call_tool("mhp_reset", {"device": "thermocycler-01"}); assert False
+    except RemoteError as e:
+        assert "declined" in e.message and "safety/reset" in e.message
+    answers["accept"] = True
+    assert b.call_tool("mhp_reset", {"device": "thermocycler-01"})["state"] == "idle"
+    assert any(m.get("method") == "elicitation/create" and "clear its stop" in m["params"]["message"] for m in sent)
 
 
 def test_safety_card_registry_and_sim_twin():
@@ -187,7 +193,7 @@ def test_safety_card_registry_and_sim_twin():
     assert hits[0]["id"] == "centrifuge-01-sim"
     card2 = b.call_tool("mhp_lab", {"op": "safety_card", "id": "centrifuge-01-sim"})
     assert "requires balanced" in card2["text"]
-    assert len(TOOLS) == 11
+    assert len(TOOLS) == 12
 
 
 def test_names_use_forward_slashes_on_every_os():

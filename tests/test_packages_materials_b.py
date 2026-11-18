@@ -76,7 +76,7 @@ def fault_then_estop(dev, drv, signal="connected"):
     except RemoteError as e:
         assert "injected fault" in str(e), e
     if dev.read("state") != "idle":
-        dev.reset()
+        dev.reset(approved=True)
     assert dev.read(signal) is not None                            # once only
     dev.estop("test")
     assert dev.read("state") == "estop"

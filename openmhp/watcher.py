@@ -29,6 +29,7 @@ from .relay import HOME
 
 INBOX = HOME / "inbox"
 CURSOR = HOME / "watch-cursor.json"
+PENDING = HOME / "watch-pending.json"      # runs whose results could not be brought home yet: tried again on reconnect
 ALIAS = "mhp-gateway"
 
 
@@ -157,12 +158,41 @@ class Watcher:
                 note(run, "results", f"{run} ended; its results are in {got['folder']}.", folder=got["folder"])
                 notify(f"Lab run {run} ended", f"Results in {got['folder']}")
             else:
-                note(run, "results_failed", f"{run} ended, but its results could not be brought home: {got['error']}. "
-                     "The gateway keeps them for 7 days after the run ended.", error=got["error"])
-                notify(f"Lab run {run} ended", "Results could not be downloaded yet")
-        elif kind == "state" and ev.get("state") in ("failed", "interrupted"):
-            note(run, ev["state"], f"{run} is {ev['state']}: {ev.get('why', '')}")
-            notify(f"Lab run {run}", f"{ev['state']}: {ev.get('why', '')[:160]}")
+                self.retry_later(run)
+                note(run, "results_failed", f"{run} ended, but its results could not be brought home yet: {got['error']}. "
+                     "This machine tries again each time it reconnects; the gateway keeps them for 7 days after the "
+                     "run ended.", error=got["error"])
+                notify(f"Lab run {run} ended", "Results could not be downloaded yet; trying again")
+        elif kind == "results_deleted":
+            self.retry_later(run, done=True)
+        elif kind == "state" and ev.get("state") == "interrupted":
+            note(run, "interrupted", f"{run} was interrupted: the gateway restarted while it ran. Check the bench, then "
+                 "ask your agent to resume it or stop it.")
+            notify(f"Lab run {run}", "Interrupted by a gateway restart: resume or stop it")
+        elif kind == "state" and ev.get("state") == "failed":
+            note(run, "failed", f"{run} could not run: {ev.get('why', '')}")
+            notify(f"Lab run {run}", f"could not run: {ev.get('why', '')[:160]}")
+
+    # ---- results that could not be brought home yet: kept, and tried again ----------------------
+    def retry_later(self, run: str, done: bool = False) -> None:
+        pending = set(self.pending())
+        pending.discard(run) if done else pending.add(run)
+        HOME.mkdir(parents=True, exist_ok=True)
+        PENDING.write_text(json.dumps(sorted(pending)), encoding="utf-8")
+
+    def pending(self) -> list[str]:
+        try:
+            return list(json.loads(PENDING.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return []
+
+    def retry_pending(self) -> None:
+        for run in self.pending():
+            got = self.pull(run)
+            if got["ok"]:
+                self.retry_later(run, done=True)
+                note(run, "results", f"{run}'s results are now in {got['folder']}.", folder=got["folder"])
+                notify(f"Lab run {run}", f"Results in {got['folder']}")
 
     # ---- the long-lived stream -----------------------------------------------------------------
     def cursor(self) -> float:
@@ -204,6 +234,7 @@ class Watcher:
         while not self.stop.is_set():
             started = time.time()
             try:
+                self.retry_pending()
                 self.run_once()
             except OSError as e:
                 say(f"watch: {e}")
