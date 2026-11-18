@@ -70,10 +70,10 @@ class SimBackend(real.DataCollectorBackend):
         now = time.monotonic()
         for token, j in list(self.jobs.items()):
             if now >= j["read_at"] and j["path"].exists():
-                j["path"].unlink()
+                j["path"].unlink(missing_ok=True)
             if now >= j["done_at"]:
-                self._write_result(j)
-                self.jobs.pop(token)
+                if self.jobs.pop(token, None) is not None:          # one thread claims it, however many tick
+                    self._write_result(j)
 
     def picked_up(self, token):
         self._tick()
