@@ -114,7 +114,7 @@ def test_lcms_worklist_twin():
         raise AssertionError("an empty worklist was written")
     except RemoteError as e:
         assert "at least one sample" in str(e), e
-    dev.reset()
+    dev.reset(approved=True)
     # every other vendor renders and reads back through the same code
     for vendor, first in (("xcalibur", "Bracket Type=4"), ("masshunter", "﻿Sample Name,Barcode"),
                           ("sciexos", "Sample Name,Sample ID")):

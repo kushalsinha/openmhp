@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs an MCP connection to an mhp-mcp bridge (stdio or HTTP). Works in any harness that supports MCP tools.
 metadata:
   author: openmhp
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Operating hardware through OpenMHP
@@ -87,18 +87,23 @@ print(j["result"])
 - **Refusals.** `LimitViolation` (-32010): the value is outside physical limits; choose a value
   inside `data.min..max` or ask. `InterlockOpen` (-32011): read the named signal, tell the user
   what must change (lid, door, person in cell). `ApprovalRequired` (-32012): see above.
-  `EStopActive` / `DeviceFault`: report; call `safety/reset` only after a human agrees the
-  cause is understood.
+  `EStopActive` / `DeviceFault`: tell the user what stopped and why, and ask them to check the
+  instrument. Then `mhp_reset`: the server asks them to confirm (you cannot), and refuses while
+  jobs still run or when the stop was latched at the instrument (it says what must be done there).
 - **Methods.** Never invent parameters for a method-driven action when a method exists for the
   compound: find, then run by name so the job carries the method's project, name, version and
   hash. Adapt between runs with `overrides`; when the tuned values work, save them as the next
   version rather than leaving them only in your context. Results arrive without asking:
   `mhp_data op='updates' device=...` shows each pushed result; decide the next run from it.
-- **E-stop.** `mhp_estop` is always allowed and always succeeds. Use it the moment a reading,
-  a notification, or the user suggests something is wrong. Then report, do not resume.
+- **E-stop.** `mhp_estop` is always allowed and never waits. Use it the moment a reading,
+  a notification, or the user suggests something is wrong. Then report, do not resume. If the
+  answer says `stopped: false`, the device's own stop step failed: tell the user at once, the
+  instrument may still be moving or heating.
   `device: "*"` stops everything the lab is driving, including instruments a running script
   opened, and the result names each one; a stopped device needs a person to reset it.
 - **Leases.** Hold a lease (`with dev:` in scripts) whenever a sequence must not be
-  interleaved by another agent. Release it when done.
+  interleaved by another agent. Release it when done. A release while your jobs still run is
+  refused (it would disarm the watchdog): wait for the jobs, or release with `stop=True` to wind
+  them down. A script's run ends only when the jobs it started have ended.
 - **Report** what you read, not what you intended. "Block reached 95.0 °C at 14:02" beats
   "started the protocol".

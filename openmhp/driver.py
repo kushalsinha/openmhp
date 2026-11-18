@@ -159,6 +159,7 @@ class Job:
     cancel_requested: bool = False
     paused: bool = False
     unverified: str | None = None   # restored from disk and did not match its own digest
+    note: str | None = None         # what a person or agent must know about how it ended (e.g. a cancel that came too late)
 
     def snapshot(self) -> dict:
         return {
@@ -169,6 +170,7 @@ class Job:
             "method": self.method, "project": self.project, "defaulted": self.defaulted,
             "started": self.started, "finished": self.finished,
             **({"unverified": self.unverified} if self.unverified else {}),
+            **({"note": self.note} if self.note else {}),
         }
 
 
@@ -425,6 +427,7 @@ class Driver:
         self.stop_clearable: bool = True           # False when only a person at the device can clear it
         self.stop_clearance: str | None = None     # what that person has to do
         self._shutdown_deadline: float | None = None
+        self._stop_gen = 0                         # +1 on every e-stop or fault: a reset clears only the one it checked
         self._active: set[str] = set()
         self.subscribers: list[Callable[[dict], None]] = []
         self._lock = threading.RLock()            # serialises vendor I/O for ordinary requests
@@ -1078,6 +1081,7 @@ class Driver:
             if self.state == "estop":
                 return
             self.state, self.fault_reason = "fault", reason
+            self._stop_gen += 1
         try:
             self.on_fault(reason)
         except Exception as e:                     # noqa: BLE001
@@ -1243,6 +1247,7 @@ class Driver:
             return {"ok": True, "dryRun": True, "wouldWrite": {name: value},
                     **({"defaulted": defaulted} if defaulted else {}), **notes}
         self._sim_trip("write", pre=True)
+        self._check_state()                        # again, last thing before the instrument: an e-stop may have landed since the gate
         try:
             self._sim_trip("write")
             extra = self.on_write(name, value)
@@ -1536,20 +1541,26 @@ class Driver:
         return None
 
     def _run_job(self, job: Job):
-        with self._state_lock:
-            if job.state == "queued":
+        with self._state_lock:                     # a cancel or e-stop between admission and here: never start it
+            start = job.state == "queued" and not job.cancel_requested and self.state not in ("estop", "fault")
+            if start:
                 job.state = "running"
-        self.notify("jobs/started", {"job": job.snapshot()})
         result, error, final = None, None, "done"
-        try:
-            self._sim_trip("invoke")
-            result = self.on_invoke(job)
-            final = "cancelled" if job.cancel_requested else "done"
-            job.result_mismatch = self._check_result(job.action, result)
-        except JobCancelled:
+        if not start:
             final = "cancelled"
-        except Exception as e:                     # noqa: BLE001
-            final, error = "failed", f"{type(e).__name__}: {e}"
+            job.note = "cancelled before it started; nothing was sent to the instrument"
+        else:
+            self.notify("jobs/started", {"job": job.snapshot()})
+            try:
+                self._sim_trip("invoke")
+                result = self.on_invoke(job)
+                if job.cancel_requested:           # the action completed: report what happened, not what was asked
+                    job.note = "a cancel arrived after the action had already completed; it was not undone"
+                job.result_mismatch = self._check_result(job.action, result)
+            except JobCancelled:
+                final = "cancelled"
+            except Exception as e:                 # noqa: BLE001
+                final, error = "failed", f"{type(e).__name__}: {e}"
         fault_reason = f"job {job.id} ({job.action}) failed: {error}" if final == "failed" else None
         with self._state_lock:                     # publish completion and device state atomically
             job.result, job.error, job.state, job.waiting = result, error, final, None
@@ -1566,6 +1577,7 @@ class Driver:
                 # the device state to be published together. Latching afterwards leaves a window
                 # in which an observer sees a failed job on an idle device.
                 self.state, self.fault_reason = "fault", fault_reason
+                self._stop_gen += 1
         # The job is already published as finished, so what follows must all run: a failure in
         # one step (a record that will not serialise, a hook that raises) must not skip the rest.
         try:
@@ -1648,6 +1660,7 @@ class Driver:
         """source: client | watchdog | hardware | fault. A hardware latch is not ours to clear:
         software reset must refuse it and say what has to happen at the instrument instead."""
         self.state = "estop"
+        self._stop_gen += 1
         self.stop_source = source
         self.stop_clearable = clearable
         self.stop_clearance = clearance
@@ -1735,27 +1748,45 @@ class Driver:
         return self._run_stop_hook(client, p.get("reason"))
 
     def rpc_safety_reset(self, p, client):
+        """Clear an e-stop or a fault and return to idle. A person confirms it (approved: true, through the same
+        trusted channel as `approval: confirm`): only someone who has looked at the instrument can say it is safe.
+        The recovery check runs outside the lock, so a stop that lands meanwhile is not cleared with the old one:
+        every stop and fault has a number, and a reset clears only the one it was asked about."""
         self._check_lease(client, required=bool(self.watchdog_s))
         with self._state_lock:
+            state, reason, gen = self.state, self.fault_reason, self._stop_gen
             if self._active:
-                raise DeviceBusy(f"cannot reset while jobs are still active: {sorted(self._active)}")
-        with self._state_lock:
-            if self.state == "estop" and not self.stop_clearable:
+                raise DeviceBusy(f"cannot reset while jobs are still active: {sorted(self._active)}. Cancel them "
+                                 f"(jobs/cancel) or wait for them, then reset.", {"activeJobs": sorted(self._active)})
+            if state not in ("estop", "fault"):
+                return {"state": state, "reset": False, "note": f"nothing to reset: the device is {state}"}
+            if state == "estop" and not self.stop_clearable:
                 raise NotSupported(
                     "this stop was latched at the instrument and cannot be cleared from software; "
                     + (self.stop_clearance or "a person must clear it at the device"),
                     {"source": self.stop_source, "clearance": self.stop_clearance})
+            stopped = {"state": state, **({"reason": reason} if reason else {}),
+                       **({"source": self.stop_source} if state == "estop" else {})}
+        if p.get("approved") is not True:
+            what = "the emergency stop" if state == "estop" else f"the fault ({reason})" if reason else "the fault"
+            raise ApprovalRequired(f"resetting clears {what} and returns the device to idle; a person who has checked "
+                                   "the instrument must confirm it", {"approval": "confirm", **stopped})
         ok, detail = self.verify_recovery()
         if not ok:
             raise DeviceFault(f"recovery not verified: {detail}", {"detail": detail})
         with self._state_lock:
+            if self._stop_gen != gen or self._active:
+                now = self.state
+                err = EStopActive if now == "estop" else DeviceFault if now == "fault" else DeviceBusy
+                raise err(f"a new {'stop' if now == 'estop' else now} arrived while the reset was being checked; it is "
+                          "still in force. Check the instrument again, then reset again.",
+                          {"state": now, **({"reason": self.fault_reason} if self.fault_reason else {})})
             self.state, self.fault_reason = "idle", None
             self.stop_source = self.stop_clearance = None
             self.stop_clearable = True
         self.notify("safety/reset", {"by": client, "verified": detail})
-        return {"state": "idle", "verified": detail}
+        return {"state": "idle", "reset": True, "verified": detail}
 
-    # leases: exclusive control, renewed by the holder
     def rpc_session_acquire(self, p, client):
         ttl = p.get("ttl", 60)
         if not is_finite_number(ttl) or not 0 < ttl <= 3600:
@@ -1793,15 +1824,35 @@ class Driver:
         """
         with self._state_lock:
             holder = self._lease_holder()
-            if holder == client or holder is None:
-                if self.lease == client:
-                    self.lease = None
-                return {"holder": self._lease_holder()}
-            if p.get("force") is not True:
+            if holder is None or holder == client:
+                own_active = sorted(self._active) if holder == client and self.watchdog_s else []
+                if not own_active or p.get("handover") is True:
+                    if self.lease == client:
+                        self.lease = None
+                    return {"holder": self._lease_holder(), **({"handedOver": own_active} if own_active else {})}
+                if p.get("stop") is not True:
+                    raise DeviceBusy(
+                        f"{len(own_active)} job(s) are still running: {own_active}. Releasing now would disarm the "
+                        f"watchdog (after {self.watchdog_s}s of silence it would "
+                        f"{'stop this device' if self.watchdog_action == 'estop' else 'hand this instrument over'}), "
+                        "leaving the work running with nothing watching it. Wait for the jobs (jobs/status), release "
+                        "with stop: true to wind them down first, or with handover: true if another session takes "
+                        "the lease next.",
+                        {"activeJobs": own_active, "watchdog_s": self.watchdog_s, "watchdog_action": self.watchdog_action,
+                         "options": ["wait for the jobs", "session/release {stop: true}", "session/release {handover: true}"]})
+            elif p.get("force") is not True:
                 raise NotLeased(f"the lease is held by {holder!r}; release it from that session, "
                                 f"or force it open with force: true, which a person must confirm",
                                 {"holder": holder})
             active = sorted(self._active)
+        if holder == client:                       # your own lease, stop: true: wind the work down, then release
+            stopped = self.rpc_safety_shutdown({"within_s": p.get("within_s", 30),
+                                                "reason": "the session holding the lease released it with stop: true"},
+                                               client)
+            with self._state_lock:
+                if self.lease == client:
+                    self.lease = None
+            return {"holder": self._lease_holder(), "shutdown": stopped["shutdown"]}
 
         if p.get("approved") is not True:
             raise ApprovalRequired(
