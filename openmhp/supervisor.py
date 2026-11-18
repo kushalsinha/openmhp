@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import scientists as S
+from . import atomic as A, scientists as S
 from .states import RUN_ENDED as ENDED, RUN_LIVE as LIVE, RUN_TRANSITIONS as TRANSITIONS, check_run_move
 
 KEEP_RESULTS_S = 7 * 24 * 3600            # results stay on the gateway this long after a run ends, unless received sooner
@@ -38,14 +38,12 @@ class RunRecord:
     # ---- files -----------------------------------------------------------------------------
     def _load(self) -> dict | None:
         try:
-            return json.loads((self.private / "state.json").read_text(encoding="utf-8"))
+            return json.loads(A.read_text(self.private / "state.json"))
         except (OSError, ValueError):
             return None
 
     def _write(self, path: Path, obj: dict) -> None:
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(obj, indent=1, default=str), encoding="utf-8")
-        os.replace(tmp, path)
+        A.write_text(path, json.dumps(obj, indent=1, default=str))
 
     def public_folder(self) -> Path:
         return S.run_folder(self.owner, self.id, self.lab_root)
@@ -119,7 +117,7 @@ def recover(runs_dir: Path, lab_root: Path | None = None) -> list[str]:
         return out
     for d in sorted(Path(runs_dir).iterdir()):
         try:
-            doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+            doc = json.loads(A.read_text(d / "state.json"))
         except (OSError, ValueError):
             continue
         if doc.get("state") in LIVE:
@@ -135,7 +133,7 @@ def planning_runs(runs_dir: Path) -> list[str]:
     out = []
     for d in sorted(Path(runs_dir).iterdir()) if Path(runs_dir).is_dir() else []:
         try:
-            doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+            doc = json.loads(A.read_text(d / "state.json"))
         except (OSError, ValueError):
             continue
         if doc.get("state") == "planning":
@@ -258,7 +256,7 @@ class Supervisor:
             if c is None:
                 if owner is None:
                     try:
-                        doc = json.loads((self.runs_dir / run_id / "state.json").read_text(encoding="utf-8"))
+                        doc = json.loads(A.read_text(self.runs_dir / run_id / "state.json"))
                     except (OSError, ValueError):
                         raise LookupError(f"no run {run_id} on this gateway") from None
                     owner = doc["owner"]
@@ -914,7 +912,7 @@ class Supervisor:
         done = []
         for d in sorted(self.runs_dir.iterdir()) if self.runs_dir.is_dir() else []:
             try:
-                doc = json.loads((d / "state.json").read_text(encoding="utf-8"))
+                doc = json.loads(A.read_text(d / "state.json"))
             except (OSError, ValueError):
                 continue
             if doc.get("state") not in ENDED or doc.get("purged"):
@@ -987,9 +985,7 @@ class Supervisor:
 
     @staticmethod
     def _write_answer(req: Path, result: dict) -> None:
-        tmp = req.with_name(req.stem + ".done.tmp")
-        tmp.write_text(json.dumps(result, default=str), encoding="utf-8")
-        os.replace(tmp, req.with_name(req.stem + ".done.json"))
+        A.write_text(req.with_name(req.stem + ".done.json"), json.dumps(result, default=str))
 
     def _answer_later(self, req: Path, act) -> None:
         try:

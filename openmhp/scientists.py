@@ -18,6 +18,8 @@ import json
 import os
 import re
 import time
+
+from .atomic import read_text as atomic_read, write_text as atomic_write
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -45,9 +47,7 @@ def folder(name: str, root: Path | None = None) -> Path:
 
 
 def _write_json(path: Path, obj: dict) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+    atomic_write(path, json.dumps(obj, indent=1))
 
 
 def create(name: str, *, root: Path | None = None, ssh_key: str | None = None, agent: str | None = None) -> dict:
@@ -130,7 +130,7 @@ def open_run(name: str, root: Path | None = None) -> dict:
 
 def load_run(name: str, run_id: str, root: Path | None = None) -> dict | None:
     try:
-        return json.loads((run_folder(name, run_id, root) / "meta.json").read_text(encoding="utf-8"))
+        return json.loads(atomic_read(run_folder(name, run_id, root) / "meta.json"))
     except (OSError, ValueError):
         return None
 

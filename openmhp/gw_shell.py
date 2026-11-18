@@ -33,7 +33,7 @@ import shlex
 import sys
 from pathlib import Path
 
-from . import gw_words as W, scientists as S
+from . import atomic as A, gw_words as W, scientists as S
 from .states import RUN_WAITING_ON, run_next
 
 OK, WAITING, REFUSED, NOT_FOUND = 0, 2, 3, 4
@@ -239,7 +239,7 @@ class Shell:
         end = time.time() + self.wait_s
         while time.time() < end:
             if done.is_file():
-                ans = json.loads(done.read_text(encoding="utf-8"))
+                ans = json.loads(A.read_text(done))
                 done.unlink()
                 extra = {"earlier": earlier} if earlier else {}
                 if ans.get("ok"):
@@ -274,7 +274,7 @@ class Shell:
             if time.time() - asked < self.wait_s + 2:
                 continue
             try:
-                ans = json.loads(f.read_text(encoding="utf-8"))
+                ans = json.loads(A.read_text(f))
                 f.unlink()
             except (OSError, ValueError):
                 continue

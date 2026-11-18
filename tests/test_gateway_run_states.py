@@ -204,6 +204,28 @@ def test_results_that_could_not_come_home_are_tried_again():
     assert w.pending() == []
 
 
+
+def test_run_files_are_replaced_while_windows_readers_hold_them():
+    """Windows refuses to move a file onto one somebody has open ("Access is denied"). A scientist's stop once
+    failed that way on Windows while mhp-gw read the run's state: writers and readers now wait the moment out."""
+    from openmhp import atomic
+    d = Path(tempfile.mkdtemp())
+    target = d / "state.json"
+    target.write_text('{"state": "running"}', encoding="utf-8")
+    real_replace, refusals = atomic.os.replace, [3]
+    def held(src, dst):
+        if refusals[0]:
+            refusals[0] -= 1
+            raise PermissionError(5, "Access is denied", str(dst))
+        real_replace(src, dst)
+    atomic.os.replace = held
+    try:
+        atomic.write_text(target, '{"state": "stopped"}')
+    finally:
+        atomic.os.replace = real_replace
+    assert json.loads(atomic.read_text(target)) == {"state": "stopped"} and refusals == [0]
+    assert [p.name for p in d.iterdir()] == ["state.json"]                    # no side file left behind
+
 if __name__ == "__main__":
     S.create("alice")
     for name, fn in list(globals().items()):

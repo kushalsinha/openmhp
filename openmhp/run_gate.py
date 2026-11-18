@@ -23,7 +23,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import charter as C
+from . import atomic as A, charter as C
 
 APPROVAL_REQUIRED, FORBIDDEN = -32012, -32013
 READS = {"ping", "initialize", "device/describe", "signals/list", "signals/read", "settings/list", "actions/list",
@@ -57,15 +57,13 @@ class RunGate:
     # ---- usage, kept by the gateway --------------------------------------------------------
     def _load(self) -> dict:
         try:
-            return json.loads((self.folder / "usage.json").read_text(encoding="utf-8"))
+            return json.loads(A.read_text(self.folder / "usage.json"))
         except (OSError, ValueError):
             return {"experiments": 0, "consumables": {}, "approvals": {}}
 
     def _save(self) -> None:
         self.folder.mkdir(parents=True, exist_ok=True)
-        tmp = self.folder / "usage.json.tmp"
-        tmp.write_text(json.dumps(self.usage), encoding="utf-8")
-        os.replace(tmp, self.folder / "usage.json")
+        A.write_text(self.folder / "usage.json", json.dumps(self.usage))
 
     # ---- the check -------------------------------------------------------------------------
     def allows_device(self, path: str) -> bool:

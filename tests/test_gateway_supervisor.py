@@ -433,7 +433,8 @@ def test_supervised_run_from_approval_to_results():
     q = next(iter(sup.record(rid3).doc["open_questions"].values()))["question"]
     assert "has stopped" in q and "I set things up and will wait" in q, q
     assert [e["action"] for e in sup.record(rid3).events() if e["kind"] == "idle"] == ["nudged", "asked the scientist"]
-    gw_cmd(f"mhp-gw stop {rid3}")
+    code, ans = gw_cmd(f"mhp-gw stop {rid3}")
+    assert code == GW.OK, (code, ans)
     wait_until(lambda: sup.record(rid3).state == "stopped", what=lambda: f"run 3 to stop: {why_not(rid3)}")
 
     # ---- run 4: an agent waiting on a running instrument job is not stuck; the finished job wakes it ------
