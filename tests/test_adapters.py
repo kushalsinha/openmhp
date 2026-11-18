@@ -298,7 +298,7 @@ def test_fleet_scan_and_lab_tool(tmp_home=None):
     except RemoteError as e:
         assert e.code == -32010
     assert {d["id"] for d in bridge.call_tool("mhp_lab", {"op": "list"})["devices"]} == {"thermocycler-01", "hotplate-01"}
-    assert len(bridge.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]) == 11
+    assert len(bridge.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]) == 12
 
 
 # --------------------------------------------- guided onboarding, no code ---- #
@@ -508,7 +508,7 @@ def test_mqtt_adapter():
     except RemoteError as e:
         assert "valve stuck" in e.message
 
-    d.reset()                                                  # the failed purge latched fault; verify recovery first
+    d.reset(approved=True)                                                  # the failed purge latched fault; verify recovery first
     # no reply_topic: fire-and-forget, returns once the broker publish is done
     j3 = d.wait(d.invoke("vent"))
     assert j3["state"] == "done" and j3["result"]["published"] is True

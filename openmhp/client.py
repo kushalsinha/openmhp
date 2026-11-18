@@ -59,7 +59,7 @@ def _remote(code: int, message: str, data: Any = None, envelope: dict | None = N
 
 
 ACTUATING = {"settings/write", "actions/invoke", "jobs/resume", "safety/reset"}
-_APPROVABLE = {"settings/write", "actions/invoke", "session/release"}  # forcing a lease open needs a person
+_APPROVABLE = {"settings/write", "actions/invoke", "session/release", "safety/reset"}  # a person confirms each
 _OBSERVED = {"settings/write", "actions/invoke", "signals/read", "jobs/pause", "jobs/resume", "jobs/cancel",
              "safety/estop", "safety/reset", "session/acquire", "session/release"}
 
@@ -129,7 +129,7 @@ class Device:
                 if self.approver(self, method, params):
                     return self.call(method, params, _auto_lease=_auto_lease, _approved=True, _note=_note)
                 self._observe(method, params, error={"code": e.code, "message": "declined by a person"})
-                raise _remote(ApprovalRequired.code, f"a person declined '{params.get('name')}'",
+                raise _remote(ApprovalRequired.code, f"a person declined '{params.get('name') or method}'",
                               {"approval": "confirm", "answer": "decline"}) from None
             self._observe(method, params, error={"code": e.code, "message": e.message}, **extra)
             raise
@@ -277,11 +277,17 @@ class Device:
             self._hb_stop.set()
             self._hb_stop = None
 
-    def release(self) -> dict:
+    def release(self, stop: bool = False, handover: bool = False) -> dict:
+        """Give the lease back. With jobs still running the device refuses (the watchdog would be disarmed):
+        stop=True winds them down first, handover=True leaves them to the session that takes the lease next."""
+        p = {**({"stop": True} if stop else {}), **({"handover": True} if handover else {})}
+        r = self.call("session/release", p)
         self._stop_heartbeat()
-        return self.call("session/release")
+        return r
 
     def close(self) -> None:
+        """Release if nothing is running. With jobs still running the lease is left to the device's watchdog,
+        which does what the owner declared (stop, or hand the instrument over) once heartbeats stop."""
         self._stop_heartbeat()
         try:
             self._raw_call("session/release")
@@ -289,7 +295,9 @@ class Device:
             pass
 
     def estop(self, reason: str = "") -> dict:   return self.call("safety/estop", {"reason": reason})
-    def reset(self) -> dict:                     return self.call("safety/reset")
+    def reset(self, approved: bool = False) -> dict:
+        """Clear an e-stop or fault. A person confirms it: approved=True, or the client's approver asks them."""
+        return self.call("safety/reset", {"approved": approved})
 
     def __enter__(self):
         self.acquire()
@@ -733,12 +741,16 @@ class Lab:
         if dev is not None:
             dev.close()
 
-    def release_all(self) -> None:
-        for d in list(self._devices.values()):
+    def release_all(self, handover: bool = False) -> dict:
+        """Release every lease this lab holds. {device: result or {"error": why it was kept}}: a device with jobs
+        still running keeps its lease (and its watchdog) unless handover=True."""
+        out: dict = {}
+        for n, d in list(self._devices.items()):
             try:
-                d.release()
-            except Exception:                        # noqa: BLE001
-                pass
+                out[n] = d.release(handover=handover)
+            except Exception as e:                   # noqa: BLE001
+                out[n] = {"error": getattr(e, "message", None) or f"{type(e).__name__}: {e}"}
+        return out
 
     def close(self) -> None:
         for d in list(self._devices.values()):

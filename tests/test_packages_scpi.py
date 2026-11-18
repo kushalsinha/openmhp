@@ -264,7 +264,7 @@ def test_injected_faults_and_estop_commands_reach_the_fake_link():
                 dev.write(*spec["write"]); raise AssertionError("writes must be refused during e-stop")
             except RemoteError as e:
                 assert "stop" in str(e).lower(), e
-            dev.reset()
+            dev.reset(approved=True)
             assert dev.read("state") == "idle"
         drv.close()
 

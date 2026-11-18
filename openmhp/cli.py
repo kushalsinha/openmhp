@@ -391,6 +391,7 @@ def main(argv=None):
         return serve_http(d, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
             else serve_stdio(d)
 
+    from .driver import TERMINAL
     v, x = a.verb, a.args
     if not a.target.startswith(("http://", "https://", "stdio:", "local:", "pkg:", "sim:")):
         from . import __version__
@@ -419,7 +420,7 @@ def main(argv=None):
         elif v == "cancel":  out = dev.cancel(x[0])
         elif v == "wait":    out = dev.wait(x[0])
         elif v == "estop":   out = dev.estop(" ".join(x))
-        elif v == "reset":   out = dev.reset()
+        elif v == "reset":   out = dev.reset(approved=a.approved)
         elif v == "acquire": out = dev.acquire()
         elif v == "release": out = dev.release()
         elif v == "rpc":     out = dev.call(x[0], _parse_value(x[1]) if len(x) > 1 else {})
@@ -427,9 +428,32 @@ def main(argv=None):
             ap.error(f"unknown verb {v}")
     except RemoteError as e:
         print(json.dumps({"error": {"code": e.code, "message": e.message, "data": e.data}}, indent=2))
+        if e.code == -32012 and not a.approved and v in ("write", "invoke", "reset"):
+            print(f"you are the person this asks: if you have checked it, run the same command with --approved",
+                  file=sys.stderr)
+        _done_with(dev, v)
         return 1
     print(json.dumps(out, indent=2))
+    if v == "invoke" and not a.wait and not a.dry_run and isinstance(out, dict) and out.get("state") not in TERMINAL:
+        try:
+            wd = dev.call("safety/limits").get("watchdog_s")
+        except RemoteError:
+            wd = None
+        if wd:
+            print(f"this device's watchdog acts if its lease holder is silent for {wd}s, and this command ends now: "
+                  f"run it with --wait to stay with the job, or drive it from a script or an agent", file=sys.stderr)
+    _done_with(dev, v)
     return 0
+
+
+def _done_with(dev, verb: str) -> None:
+    """A one-shot command gives back the lease it took, so the next command (a new session) is not refused.
+    `acquire` is the exception: holding it is what was asked."""
+    if verb != "acquire":
+        try:
+            dev.close()
+        except Exception:                          # noqa: BLE001
+            pass
 
 
 if __name__ == "__main__":
