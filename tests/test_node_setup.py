@@ -162,9 +162,13 @@ def test_setup_package_installs_asks_probes_and_offers_fix_or_stop():
                 pass
         finally:
             NS.probe = real_probe
-        # the simulated twin needs no instrument
-        s = Script("n", "2")
-        r = NS.setup_package(folder, s.ask, s.say, sim=True, pip_run=pip_run)
+        # the simulated twin needs no instrument (the port list is fixed: a CI machine may have real ports)
+        NS.serial_ports = lambda: ["COM20", "COM21"]
+        try:
+            s = Script("n", "2")
+            r = NS.setup_package(folder, s.ask, s.say, sim=True, pip_run=pip_run)
+        finally:
+            NS.serial_ports = real_ports
         assert r["probe"] is True and "simulated" in r["probe_text"]
         # a package without settings
         folder2 = _copy("ika-c-mag-hs7", pathlib.Path(td))
