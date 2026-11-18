@@ -38,6 +38,7 @@ from .update_check import notice as update_notice, refresh_in_background
 from .client import (Lab, PackageChanged, RemoteError, _inprocess, _remote, drop_inprocess,
                      package_fingerprint, package_folder, pin_package)
 from .directory import Directory
+from .states import DEVICE_LISTED_STATES
 from .driver import ApprovalRequired, Forbidden
 from .bundled import package as bundled_package
 from .fleet import safe_id
@@ -83,7 +84,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "free text: what you need the device to do"},
          "class": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}},
-         "location": {"type": "string"}, "state": {"type": "string", "enum": ["idle", "busy", "fault", "estop"]},
+         "location": {"type": "string"}, "state": {"type": "string", "enum": list(DEVICE_LISTED_STATES)},
          "limit": {"type": "integer", "default": 5}}},
      "input_examples": [
          {"query": "heat a 96-well plate to 95 C", "class": "thermal_cycler", "state": "idle"},
@@ -1078,8 +1079,17 @@ class Bridge:
                     content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
                 return self._ok(mid, {"content": content})
             except RemoteError as e:
-                txt = json.dumps({"mhpError": {"code": e.code, "message": e.message,
-                                               "data": e.data, "ts": getattr(e, "ts", None)}}, default=str)
+                # everything the device said about the refusal: whether trying again can work, what reached the
+                # instrument, who has to act, the state it is in now, and the next steps (SPEC 5.9)
+                err = {"code": e.code, "message": e.message, "data": e.data, "ts": getattr(e, "ts", None)}
+                for k in ("transient", "effect", "recovery", "motion"):
+                    if getattr(e, k, None) is not None:
+                        err[k] = getattr(e, k)
+                if getattr(e, "device_state", None):
+                    err["state"] = e.device_state
+                if getattr(e, "next", None):
+                    err["next"] = e.next
+                txt = json.dumps({"mhpError": err}, default=str)
                 return self._ok(mid, {"content": [{"type": "text", "text": txt}], "isError": True})
             except Exception as e:                # noqa: BLE001
                 return self._ok(mid, {"content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}], "isError": True})

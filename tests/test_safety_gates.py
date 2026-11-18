@@ -1547,18 +1547,35 @@ def test_shutdown_is_orderly_and_escalates_when_it_cannot_settle():
 
 
 def test_a_hardware_stop_cannot_be_cleared_from_software():
-    from openmhp.driver import NotSupported
+    """A stop latched at the instrument: refused while the driver sees it engaged; cleared only by a person's
+    approved reset once it is released, and that person is told when the software cannot see it."""
+    from openmhp.driver import ApprovalRequired, EStopActive
     from openmhp.client import LocalDevice
     from openmhp.devices.sim_thermocycler import SimThermocycler
     t = SimThermocycler()
     d = LocalDevice(t)
     t.latch_external_stop("red button at the bench", clearance="twist the release, then press reset")
-    assert d.call("device/describe", {"detail": "card"})["state"] == "estop"
-    expect(NotSupported.code, lambda: d.call("safety/reset", {}))
+    ping = d.call("ping")
+    assert ping["state"] == "estop" and ping["stop"] == {"source": "hardware", "clearable": False,
+                                                          "clearance": "twist the release, then press reset"}, ping
+    assert any("twist the release" in s["does"] for s in ping["next"]) and ping["next"][-1]["tool"] == "mhp_reset"
+    # the driver cannot see the button: the person confirming is told to release it first
     try:
-        d.call("safety/reset", {})
-    except Exception as e:
-        assert "twist the release" in str(e), e
+        d.call("safety/reset", {}); assert False
+    except RemoteError as e:
+        assert e.code == ApprovalRequired.code and "twist the release" in e.message and "cannot see" in e.message, e.message
+    # the driver sees it engaged: refused, whoever approves, and it says what to do at the instrument
+    t.hardware_stop_engaged = lambda: True
+    try:
+        d.call("safety/reset", {"approved": True}); assert False
+    except RemoteError as e:
+        assert e.code == EStopActive.code and e.recovery == "operator" and "still engaged" in e.message, e.message
+        assert "twist the release" in e.message and e.next, e.next
+    assert t.state == "estop"
+    # released at the instrument: an ordinary, person-approved reset
+    t.hardware_stop_engaged = lambda: False
+    assert d.reset(approved=True)["state"] == "idle"
+    assert "stop" not in d.call("ping")
 
 
 def test_a_forced_release_will_not_quietly_disarm_the_watchdog():
@@ -2053,7 +2070,8 @@ def test_a_stop_that_lands_while_a_reset_is_checked_is_not_cleared():
         assert e.code == EStopActive.code and "arrived while the reset was being checked" in e.message, e.message
     assert t.state == "estop" and t.stop_clearable is False          # the hardware latch is still in force
     t.verify_recovery = real
-    expect(NotSupported.code, lambda: d.reset(approved=True))       # and software still cannot clear it
+    t.hardware_stop_engaged = lambda: True                           # the instrument still reports its stop
+    expect(EStopActive.code, lambda: d.reset(approved=True))         # and software still cannot clear it
 
 
 def test_a_write_never_reaches_the_instrument_after_an_estop():
