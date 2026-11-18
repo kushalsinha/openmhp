@@ -160,6 +160,7 @@ class Job:
     paused: bool = False
     unverified: str | None = None   # restored from disk and did not match its own digest
     note: str | None = None         # what a person or agent must know about how it ended (e.g. a cancel that came too late)
+    error_detail: dict | None = None  # a typed failure: {code, message, transient, effect, recovery, motion, data?}
 
     def snapshot(self) -> dict:
         return {
@@ -171,6 +172,7 @@ class Job:
             "started": self.started, "finished": self.finished,
             **({"unverified": self.unverified} if self.unverified else {}),
             **({"note": self.note} if self.note else {}),
+            **({"errorDetail": self.error_detail} if self.error_detail else {}),
         }
 
 
@@ -1133,9 +1135,24 @@ class Driver:
         }
 
     def rpc_ping(self, p, client):
+        return {"ok": True, **self.state_facts(), "lease": self._lease_holder(), "ts": time.time()}
+
+    def state_facts(self, with_next: bool = True) -> dict:
+        """The device's state as one answer: what it is in, why, what is running, how a stop clears, and (SPEC 5.9)
+        the next steps from here. ping, describe and every error carry it, so nobody infers it from a state name."""
+        from .states import device_next
         with self._state_lock:
-            return {"ok": True, "state": self.state, "fault_reason": self.fault_reason,
-                    "lease": self._lease_holder(), "ts": time.time()}
+            state, reason = self.state, self.fault_reason
+            jobs = sorted(self._active)
+            stop = ({"source": self.stop_source, "clearable": self.stop_clearable,
+                     **({"clearance": self.stop_clearance} if self.stop_clearance else {})} if state == "estop" else None)
+            deadline = self._shutdown_deadline
+        shutting = deadline is not None and time.time() < deadline
+        out = {"state": state, "fault_reason": reason, "active_jobs": jobs,
+               **({"stop": stop} if stop else {}), **({"shutting_down": {"deadline": deadline}} if shutting else {})}
+        if with_next:
+            out["next"] = device_next(state, active_jobs=jobs, stop=stop, shutting_down=shutting, fault_reason=reason)
+        return out
 
     # describe: three detail tiers so a host never loads more than it needs.
     def rpc_device_describe(self, p, client):
@@ -1149,9 +1166,9 @@ class Driver:
         if detail == "card":
             return self.card()
         if detail == "summary":
-            return self.summary()
+            return {**self.summary(), **self.state_facts()}
         return {**copy.deepcopy(self.descriptor), **copy.deepcopy(self._enforced),
-                "mhp": PROTOCOL_VERSION, "state": self.state}
+                "mhp": PROTOCOL_VERSION, **self.state_facts()}
 
     def card(self) -> dict:
         """Level 1. The DEVICE.md frontmatter plus live state and capability names."""
@@ -1519,7 +1536,7 @@ class Driver:
                 result=rec.get("result"), error=rec.get("error"), outcome=rec.get("outcome"),
                 recovery=rec.get("recovery"), method=rec.get("method"), project=rec.get("project"),
                 defaulted=rec.get("defaulted"), started=rec.get("started") or 0.0,
-                finished=rec.get("finished"))
+                finished=rec.get("finished"), note=rec.get("note"), error_detail=rec.get("errorDetail"))
 
     def _check_result(self, action: str, result: Any) -> str | None:
         """Compare a result against the action's declared `returns`, if it declares one.
@@ -1559,6 +1576,10 @@ class Driver:
                 job.result_mismatch = self._check_result(job.action, result)
             except JobCancelled:
                 final = "cancelled"
+            except MHPError as e:                  # typed: keep what it says about retrying and what reached the device
+                final, error = "failed", f"{type(e).__name__}: {e.message}"
+                job.error_detail = {"code": e.code, "message": e.message, **e.taxonomy(),
+                                    **({"data": e.data} if e.data is not None else {})}
             except Exception as e:                 # noqa: BLE001
                 final, error = "failed", f"{type(e).__name__}: {e}"
         fault_reason = f"job {job.id} ({job.action}) failed: {error}" if final == "failed" else None
@@ -1669,6 +1690,19 @@ class Driver:
             j.cancel_requested, j.paused = True, False
         self.lease = None
 
+    def hardware_stop_engaged(self) -> bool | None:
+        """Override where the instrument reports its own stop (a button, a light curtain, a safety relay): True while
+        it is engaged, False once it is released. None (the default) means the driver cannot tell, and a stop it
+        latched with latch_external_stop is then reset only on a person's word that it was released there."""
+        return None
+
+    def _hardware_stop_engaged(self) -> bool | None:
+        try:
+            v = self.hardware_stop_engaged()
+        except Exception:                          # noqa: BLE001  unreadable counts as engaged
+            return True
+        return v if v in (True, False) else None
+
     def latch_external_stop(self, reason: str, clearance: str | None = None) -> None:
         """A driver calls this when the instrument reports a stop the protocol did not cause:
         a physical button, a light curtain, a safety relay. It latches like any e-stop, but
@@ -1760,17 +1794,28 @@ class Driver:
                                  f"(jobs/cancel) or wait for them, then reset.", {"activeJobs": sorted(self._active)})
             if state not in ("estop", "fault"):
                 return {"state": state, "reset": False, "note": f"nothing to reset: the device is {state}"}
-            if state == "estop" and not self.stop_clearable:
-                raise NotSupported(
-                    "this stop was latched at the instrument and cannot be cleared from software; "
-                    + (self.stop_clearance or "a person must clear it at the device"),
-                    {"source": self.stop_source, "clearance": self.stop_clearance})
+            physical = state == "estop" and not self.stop_clearable
+            if physical:
+                engaged = self._hardware_stop_engaged()
+                if engaged:
+                    raise EStopActive(
+                        "this stop was latched at the instrument and is still engaged there; software cannot clear "
+                        "it. " + (self.stop_clearance or "A person must release it at the device") + ", then reset again.",
+                        {"source": self.stop_source, "clearable": False, "clearance": self.stop_clearance,
+                         "engaged": True})
+                # released (the driver saw it), or the driver cannot tell: a person who has looked decides, below
             stopped = {"state": state, **({"reason": reason} if reason else {}),
                        **({"source": self.stop_source} if state == "estop" else {})}
         if p.get("approved") is not True:
             what = "the emergency stop" if state == "estop" else f"the fault ({reason})" if reason else "the fault"
+            extra = ""
+            if physical and engaged is None:
+                extra = ("; the instrument's own stop must be released first (" + (self.stop_clearance or "at the device")
+                         + "): this software cannot see whether it is")
             raise ApprovalRequired(f"resetting clears {what} and returns the device to idle; a person who has checked "
-                                   "the instrument must confirm it", {"approval": "confirm", **stopped})
+                                   "the instrument must confirm it" + extra,
+                                   {"approval": "confirm", **stopped,
+                                    **({"clearance": self.stop_clearance, "engaged": engaged} if physical else {})})
         ok, detail = self.verify_recovery()
         if not ok:
             raise DeviceFault(f"recovery not verified: {detail}", {"detail": detail})

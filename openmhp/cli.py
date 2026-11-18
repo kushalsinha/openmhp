@@ -38,7 +38,7 @@ def _parse_value(s: str):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
     ap.add_argument("target", nargs="?", help="status | guide | lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
-    ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
+    ap.add_argument("verb", nargs="?", help="ping|find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--version", "-V", action="store_true", help="this OpenMHP's version; with gateway, node or agent, also what the running service or the joined gateway runs")
     ap.add_argument("--json", action="store_true", help="(status|inclusion|rubric|conformance) machine-readable output")
@@ -415,6 +415,7 @@ def main(argv=None):
     try:
         dev = connect(a.target, token=a.token)
         if v == "find":      out = dev.call("directory/search", {"query": " ".join(x)})["results"]
+        elif v == "ping":    out = dev.call("ping")
         elif v == "describe":
             out = dev.call("device/describe", {"detail": x[0]} if x else {})
         elif v == "resources":
@@ -437,13 +438,23 @@ def main(argv=None):
         else:
             ap.error(f"unknown verb {v}")
     except RemoteError as e:
-        print(json.dumps({"error": {"code": e.code, "message": e.message, "data": e.data}}, indent=2))
+        err = {"code": e.code, "message": e.message, "data": e.data}
+        for k in ("transient", "effect", "recovery"):
+            if getattr(e, k, None) is not None:
+                err[k] = getattr(e, k)
+        if getattr(e, "device_state", None):
+            err["state"] = e.device_state
+        print(json.dumps({"error": err}, indent=2))
         if e.code == -32012 and not a.approved and v in ("write", "invoke", "reset"):
             print(f"you are the person this asks: if you have checked it, run the same command with --approved",
                   file=sys.stderr)
+        else:
+            _say_next(a.target, getattr(e, "next", None))
         _done_with(dev, v)
         return 1
     print(json.dumps(out, indent=2))
+    if v == "ping" and isinstance(out, dict):
+        _say_next(a.target, out.get("next"))
     if v == "invoke" and not a.wait and not a.dry_run and isinstance(out, dict) and out.get("state") not in TERMINAL:
         try:
             wd = dev.call("safety/limits").get("watchdog_s")
@@ -454,6 +465,21 @@ def main(argv=None):
                   f"run it with --wait to stay with the job, or drive it from a script or an agent", file=sys.stderr)
     _done_with(dev, v)
     return 0
+
+
+# the mhp command for a wire method, so a person at a terminal reads steps they can type
+_CLI_VERB = {"device/describe": "describe summary", "safety/limits": "limits", "signals/read": "read <signal>",
+             "settings/write": "write <setting> <value>", "actions/invoke": "invoke <action> '<params json>' --dry-run",
+             "jobs/status": "status <job id>", "jobs/cancel": "cancel <job id>", "jobs/list": "rpc jobs/list",
+             "safety/reset": "reset --approved", "safety/estop": "estop <reason>", "ping": "ping",
+             "session/acquire": "acquire"}
+
+
+def _say_next(target: str, steps) -> None:
+    """The device's next steps (SPEC 5.9), as lines a person can act on."""
+    for st in steps or []:
+        verb = _CLI_VERB.get(st.get("method") or "")
+        print("next: " + (f"mhp {target} {verb}   ({st['does']})" if verb else st["does"]), file=sys.stderr)
 
 
 def _done_with(dev, verb: str) -> None:

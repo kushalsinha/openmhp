@@ -49,6 +49,7 @@ def dispatch(driver: Driver, msg: dict, client: str, *, trusted: bool = True) ->
                "state": getattr(driver, "state", None)}
         if e.data is not None:
             err["data"] = e.data
+        err["next"] = refusal_next(driver, e.code)                     # SPEC 5.9: what to do about it, in steps
         if ignored_approved and e.code == ApprovalRequired.code:
             err["message"] += ("; the `approved` flag in this request was ignored because this channel cannot "
                                "assert it: it is neither this machine nor authenticated to this device")
@@ -58,6 +59,18 @@ def dispatch(driver: Driver, msg: dict, client: str, *, trusted: bool = True) ->
     except Exception as e:                          # noqa: BLE001
         err = {"code": -32603, "message": f"{type(e).__name__}: {e}", "ts": err_ts}
     return {"jsonrpc": "2.0", "id": mid, "error": err}
+
+
+def refusal_next(driver, code: int) -> list[dict]:
+    """The next steps after a refusal: what to do about the error, then what the device's state allows."""
+    from .states import error_next
+    try:
+        facts = driver.state_facts(with_next=False)
+    except Exception:                               # noqa: BLE001  an adapter without state_facts: the code alone
+        return error_next(code, getattr(driver, "state", None))
+    stop = facts.get("stop")
+    return error_next(code, facts.get("state"), active_jobs=facts.get("active_jobs"), stop=stop,
+                      shutting_down=bool(facts.get("shutting_down")), fault_reason=facts.get("fault_reason"))
 
 
 # ------------------------------------------------------- authentication and the trust boundary ---- #
