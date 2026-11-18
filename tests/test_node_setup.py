@@ -180,6 +180,23 @@ def test_setup_package_installs_asks_probes_and_offers_fix_or_stop():
         assert r["configured"] and s.heard("needs no settings")
 
 
+def test_no_terminal_and_an_instrument_that_does_not_answer_saves_and_stops_asking():
+    """--yes on a PC where the check fails (no instrument on that port yet): nobody can fix an answer, so setup
+    saves, says how to check again, and ends. It once looped forever on Windows, re-asking itself the same port."""
+    with tempfile.TemporaryDirectory() as td:
+        folder = _copy("globalfia-flopro-sampler", pathlib.Path(td))
+        real_probe = NS.probe
+        calls = []
+        NS.probe = lambda f, cfg, sim=False: (calls.append(cfg["port"]), (False, "COM4 cannot be opened"))[1]
+        said = []
+        try:
+            r = NS.setup_package(folder, NS.auto_ask, said.append, answers={"port": "COM4"}, sim=False, pip=False)
+        finally:
+            NS.probe = real_probe
+        assert calls == ["COM4"] and r["configured"] and r["probe"] is False, (calls, r)
+        assert any("saved anyway" in t and "mhp node setup globalfia-flopro-sampler" in t for t in said), said
+
+
 def test_finish_pairs_with_the_gateway_and_installs_the_service():
     from openmhp import relay, service
     with tempfile.TemporaryDirectory() as td:
