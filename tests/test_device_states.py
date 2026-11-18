@@ -146,6 +146,23 @@ def test_the_command_line_says_the_next_steps_as_commands():
     assert r.returncode == 1 and err["code"] == D.LimitViolation.code and err["effect"] == "none", r.stdout
     assert f"next: mhp {TC} limits" in r.stderr, r.stderr
 
+
+def test_the_specification_says_what_the_code_does():
+    """SPEC 5.9 names every device state and SPEC 12 lists every error code the device raises, with its name."""
+    import re
+    spec = (REPO / "SPEC.md").read_text(encoding="utf-8")
+    sec = spec[spec.index("### 5.9 Device states"):spec.index("## 6. Lifecycle")]
+    for state in ST.DEVICE_LISTED_STATES:
+        assert f"{state}" in sec, state
+    for a, tos in ST.DEVICE_TRANSITIONS.items():
+        for b in tos:
+            assert re.search(rf"{a}\b[^\n]*->[^\n]*\b{b}\b|any -> {b}\b|{a} <-> {b}|{b} <-> {a}", sec), (a, b)
+    table = spec[spec.index("## 12. Error codes"):spec.index("## 13. Device classes")]
+    for c in vars(D).values():
+        if isinstance(c, type) and issubclass(c, D.MHPError) and c is not D.MHPError:
+            assert f"| {c.code} | {c.__name__} |" in table, (c.__name__, c.code)
+    assert (REPO / "openmhp" / "guide" / "spec.md").read_text(encoding="utf-8") == spec    # the packed guide is current
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in list(globals().items()):
