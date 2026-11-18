@@ -59,7 +59,7 @@ class SimBackend(real.CompassBackend):
             try:
                 rows = list(csv.DictReader(batch.read_text(encoding="utf-8").splitlines()))
                 self._export(token, rows)
-                batch.unlink()
+                batch.unlink(missing_ok=True)
             except OSError:
                 del self.due[token]
                 continue

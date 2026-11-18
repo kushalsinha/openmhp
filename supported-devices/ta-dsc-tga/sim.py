@@ -71,15 +71,14 @@ class SimBackend(real.TriosBackend):
         now = time.monotonic()
         for token, j in list(self.jobs.items()):
             if now >= j["read_at"] and j["path"].exists():
-                j["path"].unlink()
+                j["path"].unlink(missing_ok=True)
             if now >= j["start"] and now < j["done_at"]:
                 T = temperature_at(j["p"]["program"]["segments"], (now - j["start"]) / self.scale)
                 live = pathlib.Path(self.cfg["live_export_file"])
                 live.write_text("Sample name\t%s\n\n[step]\nTime\tTemperature\nmin\t°C\n%.3f\t%.2f\n"
                                 % (j["p"]["sample_name"], (now - j["start"]) / self.scale / 60, T), encoding="utf-8")
-            if now >= j["done_at"]:
+            if now >= j["done_at"] and self.jobs.pop(token, None) is not None:   # one thread claims it, however many tick
                 self._write_export(j)
-                self.jobs.pop(token)
 
     def picked_up(self, token):
         self._tick()

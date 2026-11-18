@@ -69,13 +69,13 @@ class SimBackend(real.CaryBackend):
             try:
                 req = json.loads(req_path.read_text(encoding="utf-8"))
                 self._export(token, req)
-                req_path.unlink()
+                req_path.unlink(missing_ok=True)
             except OSError:                               # withdrawn while being read
                 del self.due[token]
                 continue
             adl = req_path.with_suffix(".adl")
             if adl.is_file():
-                adl.unlink()
+                adl.unlink(missing_ok=True)
             del self.due[token]
 
     def _export(self, token: str, req: dict) -> None:

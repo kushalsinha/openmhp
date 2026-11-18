@@ -26,7 +26,7 @@ If your lab has a gateway, join it once with the code its admin gives you
 (from `mhp gateway pair-agent`):
 
 ```bash
-npx -y openmhp-cli@latest join https://<gateway> <code> --name <your name, e.g. alice>
+npx -y openmhp-cli@latest join https://<gateway>:<port> <code> --name <your name, e.g. alice>
 ```
 
 The name becomes your folder on the gateway (unless the admin already chose it when making the code).
@@ -51,6 +51,16 @@ with `pip install -U "openmhp[node]"` and `mhp node add`.
 
 The gateway is set up with pip: `pip install -U openmhp`, then `mhp gateway init`. See
 [Gateway and relay](https://openmhp.com/gateway).
+
+## Without web access
+
+The user guide ships inside the package, so an agent with no web or git access can read it:
+
+```bash
+npx -y openmhp-cli@latest guide                    # the topics; guide <topic> reads one
+npx -y openmhp-cli@latest guide search <words>     # every line that mentions them
+npx -y openmhp-cli@latest --version                # this launcher and the OpenMHP it runs
+```
 
 ## Updating
 

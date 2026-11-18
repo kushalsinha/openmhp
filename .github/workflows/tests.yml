@@ -42,6 +42,8 @@ jobs:
           python tests/test_inclusion.py
           python tests/test_methods.py
           python tests/test_relay.py
+          python tests/test_guide_and_versions.py
+          python tests/test_node_add.py
           python tests/test_gateway_runs.py
           python tests/test_gateway_charter.py
           python tests/test_gateway_supervisor.py

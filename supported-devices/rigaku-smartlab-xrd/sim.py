@@ -40,18 +40,19 @@ class SimBackend(real.StudioBackend):
         n = real.RigakuSmartLab._points(prog)
         now = time.monotonic()
         minutes = (prog["end_2theta"] - prog["start_2theta"]) / prog["speed_deg_min"]
+        read_at = now + max(3 * self.scale, 0.1)        # the import flow takes a moment, however fast the clock runs
         self.jobs[token] = {"p": p, "n": n, "result_name": result_name, "path": path,
-                            "read_at": now + 3 * self.scale, "done_at": now + (90 + minutes * 60) * self.scale}
+                            "read_at": read_at, "done_at": max(now + (90 + minutes * 60) * self.scale, read_at + 0.01)}
         return path
 
     def _tick(self):
         now = time.monotonic()
         for token, j in list(self.jobs.items()):
             if now >= j["read_at"] and j["path"].exists():
-                j["path"].unlink()
+                j["path"].unlink(missing_ok=True)
             if now >= j["done_at"]:
-                self._write_result(j)
-                self.jobs.pop(token)
+                if self.jobs.pop(token, None) is not None:          # one thread claims it, however many tick
+                    self._write_result(j)
 
     def picked_up(self, token):
         self._tick()

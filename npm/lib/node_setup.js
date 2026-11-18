@@ -25,7 +25,14 @@ async function nodeSetup(rest) {
   ensureRuntime({ source: process.env.OPENMHP_SOURCE || "openmhp[node]", upgrade: true });
   if (rest.length && PASSTHROUGH.has(rest[0])) process.exit(run("mhp", ["node", ...rest]));
   const args = [...rest];
-  let folder = args.find((a) => !a.startsWith("-"));
+  const takes = { "--join": 2, "--http": 1, "--name": 1, "--host": 1, "--token": 1 };   // options and their values
+  const values = new Set();
+  args.forEach((a, i) => { for (let k = 1; k <= (takes[a] || 0); k++) values.add(i + k); });
+  let folder = args.find((a, i) => !a.startsWith("-") && !values.has(i));
+  if (!folder && args.includes("--join")) {
+    // pairing a PC set up with `node add`: its packages are in the default folder, served by the background service
+    process.exit(run("mhp", ["node", ...args, "--install-service"]));
+  }
   if (!folder) {
     folder = await ask("Folder with your device packages (one subfolder per instrument)", path.join(HOME, "devices"));
   }
@@ -46,7 +53,7 @@ async function nodeSetup(rest) {
     process.exit(1);
   }
   log(`found ${existing.length} package(s): ${existing.join(", ")}`);
-  const passthrough = args.filter((a) => a !== folder);
+  const passthrough = args.filter((a, i) => !(a === folder && !values.has(i)));
   const code = run("mhp", ["node", folder, ...httpArgs, ...passthrough, "--install-service"]);
   if (code === 0) {
     log("");

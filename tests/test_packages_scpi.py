@@ -84,6 +84,9 @@ def test_packages_validate_and_the_real_driver_needs_only_pyvisa():
             assert dev.read("connected") is False
         except ModuleNotFoundError as e:
             assert e.name == "pyvisa", e
+        except Exception:                                              # noqa: BLE001  pyvisa present, nothing at that address:
+            import importlib.util                                      # any VISA error, never a missing module of ours
+            assert importlib.util.find_spec("pyvisa") is not None, name
         drv, dev = _twin(name)
         assert dev.read("connected") is True
         drv.close()

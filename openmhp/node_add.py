@@ -21,7 +21,7 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-from . import registry
+from . import bundled, registry
 
 TARBALL = "https://codeload.github.com/{owner}/{repo}/tar.gz/{ref}"
 DEFAULT_REF = "main"
@@ -184,7 +184,12 @@ def add(name: str, dest_dir: Path | str | None = None, source: str | Path | None
     if staging.exists():
         shutil.rmtree(staging)
     try:
-        if source is None or source.startswith("github:"):
+        shipped = bundled.for_target(target) if source is None or source.startswith("github:") else None
+        if shipped is not None:                            # in the wheel: no web or git access needed
+            shutil.copytree(shipped, staging, ignore=shutil.ignore_patterns("__pycache__", "config.json", ".git"))
+            from . import __version__
+            origin = f"{target} (the copy shipped with OpenMHP {__version__})"
+        elif source is None or source.startswith("github:"):
             fetch(target, staging)
             origin = target
         elif source.startswith(("http://", "https://", "file:")) or source.endswith((".tar.gz", ".tgz")):

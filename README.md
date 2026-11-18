@@ -144,7 +144,12 @@ OpenMHP runs on up to three kinds of machine. Trying it needs only the first.
 
 Always start npx as `npx -y openmhp-cli@latest`, and pip as `pip install -U`: plain
 `npx openmhp-cli` reuses whatever version npx cached the first time, and plain `pip install` keeps
-whatever version is already installed.
+whatever version is already installed. `mhp --version` says which OpenMHP a machine has; on the
+gateway, an instrument PC or an agent machine, `mhp gateway --version`, `mhp node --version` or
+`mhp agent --version` also says what its running service, or the gateway it joined, runs.
+
+The whole user guide ships inside the package, for machines (and agents) with no web or git access:
+`mhp guide`, `mhp guide <topic>`, `mhp guide search <words>`. Start with `mhp guide troubleshooting`.
 
 ### Agent machine
 
@@ -175,7 +180,8 @@ mhp node add                       # lists the ready-made packages
 mhp node add waters-empower-hplc
 ```
 
-With Node instead: `npx -y openmhp-cli@latest node add waters-empower-hplc`. For anything not on
+Every ready-made package ships inside OpenMHP, so this needs no web or git access
+(`mhp guide instruments` lists them). With Node instead: `npx -y openmhp-cli@latest node add waters-empower-hplc`. For anything not on
 the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Guides:
 [Add an instrument](https://openmhp.com/add-a-device), [Lab nodes](https://openmhp.com/lab-nodes).
 
@@ -185,14 +191,15 @@ the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Gu
 pip install -U openmhp
 mhp gateway init                      # the address others will use, and a certificate
 mhp gateway serve --install-service   # runs now and after every reboot
+mhp gateway restart                   # after an update: restarts the service, stops any copy started by hand
 mhp gateway pair                      # a one-time code for an instrument PC (15 minutes)
 mhp gateway pair-agent                # a one-time code for an agent machine (1 hour)
 ```
 
 The instrument PC pastes its code when `mhp node add` asks (or runs
-`mhp node --join https://gw.office <code>`). The agent machine runs
-`mhp agent --join https://gw.office <code> --name alice` (after an npx setup:
-`npx -y openmhp-cli@latest join https://gw.office <code> --name alice`); the name becomes the scientist's folder on the gateway, or the operator sets it
+`mhp node --join https://gw.office:8443 <code>`). The agent machine runs
+`mhp agent --join https://gw.office:8443 <code> --name alice` (after an npx setup:
+`npx -y openmhp-cli@latest join https://gw.office:8443 <code> --name alice`); the name becomes the scientist's folder on the gateway, or the operator sets it
 with `mhp gateway pair-agent alice`. For experiments run through the gateway, also run `mhp gateway ssh` there and
 install the agent harness on the gateway, signed in as the lab's. Guide:
 [Gateway and relay](https://openmhp.com/gateway).

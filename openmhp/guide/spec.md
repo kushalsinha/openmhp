@@ -1,0 +1,990 @@
+# Open Model Hardware Protocol (MHP)
+
+**Version 2026-09-12 (0.9, draft for early partners)** · rendered at [openmhp.com/spec](https://openmhp.com/spec)
+An open protocol for AI agents to discover, understand and safely operate physical devices.
+
+---
+
+## 1. Why MHP
+
+Every instrument on a bench or factory floor has its own programming interface. Connecting them to each other is hard; connecting them to an AI agent is harder, because the agent needs three things no vendor API provides: a uniform way to *read and write* the device, a machine-readable account of *what the device is and how to use it safely*, and a way to *hand off long-running work* so the device can run without the agent reasoning at every step.
+
+MHP answers all three with one small protocol. It borrows the shape of the Model Context Protocol (MCP): JSON-RPC 2.0 messages, a short list of primitives, capability negotiation at connect time, and a host/client/server split. Where MCP exposes *tools, resources and prompts*, MHP exposes *signals, settings, actions and a safety envelope*, all described by one **device descriptor** that the driver serves and the agent reads before touching anything.
+
+Design rules, in priority order:
+
+1. **Safety is enforced by the driver, never by the agent.** Limits, interlocks and approval levels live in the descriptor and are checked on the device side of the wire. A wrong value from an agent is refused, not obeyed.
+2. **One descriptor is the whole manual.** Everything an agent needs, including the tacit knowledge that used to live in paper manuals and people's heads, is written in natural-language `notes` fields on the descriptor.
+3. **Six primitives, no more.** A device that speaks describe / signals / settings / actions / safety / methods can be operated by any MHP host.
+4. **Bridge, don't replace.** OPC UA, ROS 2, SiLA 2, MADSci and PyLabRobot devices become MHP devices through thin adapters; MHP is the layer the agent sees.
+5. **The agent's context is a resource the protocol protects.** A lab with two thousand devices costs the agent the same handful of tokens as a lab with two. Nothing is loaded that was not asked for (§3).
+
+---
+
+## 2. Architecture
+
+```
+┌──────────────────────────────────┐
+│  Host  (agent runtime)           │
+│   Claude / lab orchestrator /    │
+│   scheduler / notebook           │
+│  ┌──────────┐  ┌──────────┐      │        one server per device
+│  │MHP client│  │MHP client│ ...  │
+└──┴────┬─────┴──┴────┬─────┴──────┘
+        │ JSON-RPC     │ JSON-RPC
+   stdio / HTTP   stdio / HTTP
+        │             │
+┌───────▼──────┐ ┌────▼─────────┐
+│ MHP server   │ │ MHP server   │
+│ (driver)     │ │ (adapter)    │
+│ thermocycler │ │ SiLA 2 arm   │
+└───────┬──────┘ └────┬─────────┘
+   serial/USB      SiLA gRPC
+        │             │
+   [instrument]   [instrument]
+```
+
+| Role | Responsibility |
+|---|---|
+| **Host** | The agent runtime around the model. Holds one client per device, presents confirmation prompts to people, and is trusted; the model it hosts is not (§7.2). |
+| **Client** | One connection to one server. Sends requests, receives responses and notifications, tracks the lease. |
+| **Server (driver)** | Owns exactly one device. Serves the descriptor, enforces the safety envelope, translates primitives into vendor commands, runs jobs. |
+| **Device** | The physical thing. May be a single instrument or a coordinated cell exposed as one logical device. |
+
+A server MAY be an **adapter** that wraps another control layer (an OPC UA server, a SiLA 2 feature, a MADSci node) rather than raw hardware. From the host's point of view there is no difference.
+
+---
+
+## 3. Scale: one device among thousands
+
+MCP's first year taught a specific lesson. Loading every tool definition up front cost about 55,000 tokens for five ordinary servers, and selection accuracy *fell* as the list grew. Anthropic's fixes, described in "Advanced tool use", were three: a **tool search tool** with deferred loading (85% fewer tokens, accuracy up from 49% to 74% on Opus 4), **programmatic tool calling** so intermediate results never enter the model's context (37% fewer tokens on research tasks), and **usage examples** inside tool definitions (72% to 90% on complex parameters). MHP builds all three in from the start, because a lab has more devices than a workspace has tools, and every device descriptor is longer than a tool schema.
+
+### 3.1 Descriptor detail tiers
+
+`device/describe` takes a `detail` parameter. A host never has to load the whole descriptor to decide whether it wants the device.
+
+| Tier | Cost | Contents |
+|---|---|---|
+| `card` | ~40 tokens | Level 1: the DEVICE.md frontmatter (id, class, make, model, location, tags, description), live state, and the *names* of every signal, setting and action |
+| `summary` | under 1k tokens | Level 2: card + the DEVICE.md operating instructions + every signal/setting/action with type, unit, limits, approval level and interlocks + the list of bundled resources |
+| `full` | unbounded | Level 3: the whole descriptor, including notes, params and examples |
+
+`select` fetches full specs for named items only: `{"select": {"actions": ["run_protocol"], "settings": ["target_temperature"]}}`. The normal path is *card → summary → select the two things you will use*. A host SHOULD default to `summary`; `full` is for authoring and debugging.
+
+### 3.2 The directory
+
+A **directory** is an MHP server whose role is finding devices rather than being one. It indexes cards, not descriptors, and keeps no open connection to the devices it lists.
+
+| Method | Params | Returns |
+|---|---|---|
+| `directory/search` | `query` (free text), `class`, `tags`, `location`, `state`, `limit`, `live` (default true) | ranked cards with live `state`, each with a `target` the client can connect to |
+| `directory/get` | `id` | one card + target, with live state (a ping, or a cached answer younger than 2 s) |
+| `directory/stats` | | counts by class and state |
+
+Ranking is BM25 over id, class, make, model, location, tags, notes and the names of signals, settings and actions, so a query like *"heat a 96-well plate to 95 °C for PCR in bay 12"* finds thermocyclers in bay 12 without the agent knowing any ids. Filters are exact. `state` lets an agent ask for an idle instrument.
+
+A directory is built by asking each device for its card once (`device/describe {detail: "card"}`), or from a manifest file the lab maintains. **State is never served from the index.** The index holds only what is static about a device (identity, location, tags, capability names). At query time the directory pings the top candidates in parallel with a short timeout (the reference uses 500 ms and pings four times `limit` candidates when a `state` filter is given), fills in each card's `state` from the answer, and only then applies the filter. `directory/get` uses the same live state, reusing an answer younger than the cache window (2 s in the reference). A device that does not answer is reported as `unreachable` and never matches `state: "idle"`. A client MAY pass `live: false` to skip pinging when it only wants identity, and MUST still treat the device's own `describe` or `ping` as authoritative before acting.
+
+Small labs need no directory: a client with an explicit name-to-target map scans its own devices' cards.
+
+### 3.3 Constant tool surface
+
+An MCP host connected to an MHP lab sees **eight operating tools regardless of device count**: `mhp_find`, `mhp_describe`, `mhp_read`, `mhp_write`, `mhp_invoke`, `mhp_job`, `mhp_estop`, `mhp_run`, plus three for the lab itself: `mhp_lab` (§9.1), `mhp_data` (§3.5) and `mhp_method` (§5.8) — eleven in total. There are never per-device tools. The device descriptor, loaded on demand, is the documentation. Bridges MUST NOT enumerate devices into the tool list or the resource list at startup; resources list only the devices the session has opened.
+
+### 3.4 Programmatic runs
+
+`mhp_run` executes an orchestration script against the lab and returns only what it prints, capped. A script that takes five hundred temperature readings and reports a mean puts one line in the model's context, not five hundred numbers. The script sees a `Lab` offering the client API of §10.3, a `run_dir` folder to save files into, and every call it makes passes the same safety gates, and lands in the same run log, as a direct tool call.
+
+A script is code the host executes, and the host is the trusted side of the protocol (§7.2), so a script a *model* wrote sits inside the trust boundary while its author does not. A host that runs model-authored scripts MUST therefore hand them the audited protocol surface and not the handles that reach past it: the in-process driver object, whose vendor hooks are called only after the gates have passed; an untracked transport call, which skips the host's approval handling and the audit record; and a second client with an approver or observer of its own. The reference bridge wraps the `Lab` and its devices in facades that delegate the documented calls and refuse every other name, naming the call to use instead and recording the attempt in the run log (`script/blocked`); `run/start` records the script's hash, and `run_dir/script.py` keeps its text. Those facades are an API boundary, not a sandbox: they remove the handles, not the capability. Hosts SHOULD sandbox script execution or host devices out of process (§9.1), so that the process running scripts holds no driver object at all, and MAY offer no script execution: `mhp-mcp --no-scripts` (or `OPENMHP_NO_SCRIPTS=1`) omits `mhp_run` from the tool list and refuses it, which is the only configuration in which a model cannot get code to run inside the host. The reference implementation otherwise runs scripts in-process, so simulated device state is shared, and says so.
+
+Three modes matter for real work:
+
+- **Recipes.** `mhp_lab op="recipes"` searches tested cross-instrument procedures (bundled ones such as `pcr-with-plate-transfer`, `timed-hold`, `setpoint-sweep`, `periodic-readings`, plus any in `~/.openmhp/recipes/`). Each is an ordinary script with a header (`# recipe`, `# needs`, `# asks`, `# summary`) and a `PARAMS` dict; `mhp_run recipe=<name> params={...}` merges the caller's overrides into `PARAMS` as data, never as generated code, before the body runs. An agent adapts a recipe rather than composing a protocol from scratch.
+- **Plan mode.** `mhp_run plan=true` rehearses a script against a *plan lab*: reads are real, every write and invoke is a dry run through the gates (including the driver's whole-request parameter check), any other mutating request is recorded but not executed, jobs complete instantly, `time` is virtual, and a plan stops after 300 steps. The result is the ordered list of steps, the ones a person must confirm, the long-running ones, the first step the driver would refuse, and the steps whose interlocks are open right now. A plan follows one path using current readings: a loop that waits on a live reading is recorded as one `wait_until` step or truncates the plan, and the verdict says which. Hosts SHOULD show the plan to the person before running anything that heats or moves.
+- **Background runs.** `mhp_run background=true` starts the script and returns a run id; the script continues after the tool call, for hours if needed. `mhp_data` (§3.5) reads its output and files later.
+
+### 3.5 Runs, data and the run log
+
+Every `mhp_run` is a **run** with a folder under `~/.openmhp/runs/<id>/` holding `script.py`, `stdout.txt`, `meta.json` and whatever the script saved to `run_dir` (readings as CSV, images, logs). `mhp_data` lists runs, lists a run's files, and reads a text file from one, capped; binary files are reported by size and path. This is the protocol's answer to bulk data in this draft: results live in files next to the run that produced them, and an agent pulls in only the file it needs.
+
+A run's `meta.json` is written when it starts, and a run whose process ended before it finished is reported as `interrupted`. Script output goes only to the run's own file; nothing redirects the process's standard output, which the MCP transport owns.
+
+The **run log** is append-only JSONL, one file per day under `~/.openmhp/log/`. The bridge records every call made through its clients, from direct tools and from run scripts (tagged with the run id): reads, writes, invokes, refusals, confirmations, e-stops and leases, plus scans, adds, plans, run boundaries and events from in-process devices. Sequence numbers continue across restarts; a cursor older than memory is served from disk.
+
+Each record MUST carry `prev`, the digest of the record before it, and `hash`, its own, both recomputable from the line itself; the first record of all follows a digest of zeroes. A reader then gets two different answers rather than one: `complete: false` when history is **missing** (the cursor is older than the files, a write failed, or the sequence has a hole), and `verified: {ok: false, broken: [...]}` when what was served is **not what was written**, naming the record where the chain breaks. `mhp_data op="audit"` and `mhp log audit` check every record on disk from the first line to the last. This is tamper-evidence, not tamper-proofing — whoever can write the files can rewrite the chain along with them, and signing the head is §16 — but an edit no longer leaves the record claiming to be whole: a changed reading and a deleted refusal are each pointed at by sequence number. A record that never reached disk leaves the same break as a deleted one, which is the truth about the file. Events from devices served over HTTP are not yet consumed (§16). `mhp_lab op="events" since=<seq>` returns what happened after a point, so a returning agent can catch up; the same events are pushed to the harness as MCP logging messages when it declared the capability. A run is reproducible from its script and the log, and a lab-notebook entry can be generated from them. A logged read carries the reading id the device returned (§5.3), so a number in that entry resolves to one line of the record.
+
+The run log is the **host's** record, and only the MCP bridge keeps one. So every device MUST also keep its **own**, under `~/.openmhp/records/<device-id>/` in the reference implementation, written by whichever process hosts the driver: every `settings/write` and `actions/invoke` with the value and the parameters actually used, every refusal with its code, every e-stop, reset and orderly shutdown, every lease taken and returned, every saved or retired method, and the safety events no request asked for — a watchdog trip, a stop latched at the instrument, a fault. Each line names who asked (`by`) and whether this device honoured an `approved` flag. It is written on the device side of the network, so it does not depend on the caller: the same write from the CLI, from an SDK script, from a run script or from a plain `POST /rpc` is in it. Signal reads are not: they are high-volume and are the caller's business, and the host's log keeps them. `mhp_data op="record" device=<id>` reads it back for a device this host serves; reading a remote instrument's own record is not yet a wire call (§16).
+
+### 3.6 Examples in the descriptor
+
+Actions MAY carry `examples`, an array of realistic parameter objects. Bridges MUST forward them (the reference bridge exposes them through `mhp_describe`, and its own tools ship `input_examples`). A schema says what is valid; an example says what is normal.
+
+### 3.7 Measured
+
+The reference `examples/scale_demo.py` builds 2,000 simulated devices across 8 classes and 40 bays.
+
+| | Tokens in agent context |
+|---|---|
+| Every descriptor loaded up front | 1,224,382 |
+| `mhp_find` (5 cards) + summary of the chosen device (with its operating instructions) + full spec of the 2 items used | 1,270 |
+
+That is 0.10% of the naive cost, with search taking well under a millisecond. The device is then operated through exactly the same primitives as in a two-device lab.
+
+---
+
+## 4. The device package
+
+A device is described the way an Agent Skill is: a folder whose contents load in three levels, each only when the agent needs it. This is the same progressive disclosure that lets a harness hold hundreds of skills at ~100 tokens each, applied to hardware.
+
+```
+thermocycler-01/
+├── DEVICE.md          Level 1: YAML frontmatter, the card        (~100 tokens, always cheap)
+│                      Level 2: Markdown body, operating instructions (loaded when the device is chosen)
+├── descriptor.yaml    Level 3: full machine-readable spec: limits, params, examples
+├── driver.py          Level 3: code, a Driver subclass or an adapter's DEVICE object
+├── references/        Level 3: manual excerpts, SOPs, calibration tables
+├── scripts/           Level 3: ready-made orchestration scripts for mhp_run
+└── methods/           Level 3, optional: the parameter sets this instrument runs, per project (§4.5)
+```
+
+| Level | Content | Served by | Loaded when |
+|---|---|---|---|
+| 1 | frontmatter: `id`, `class`, `make`, `model`, `location`, `tags`, `description` | `device/describe {detail: "card"}`, `directory/search` | search results; ~40 tokens per device |
+| 2 | DEVICE.md body: how to operate it, what to check, what never to do | `device/describe {detail: "summary"}` (with a slim capability table) | the agent picks this device; under 1k tokens |
+| 3 | descriptor.yaml items, references, scripts, driver | `device/describe {select}`, `resources/list`, `resources/read {path}` | the agent needs that item; none until asked |
+
+### 4.1 DEVICE.md
+
+The frontmatter is the card. `description` is what a directory ranks and what an agent matches its task against, so it must say both what the device is and when to pick it, in under 1,024 characters. The body is written for the agent that has just chosen the device: an operating procedure, what to watch, and pointers to the resources it may need.
+
+```markdown
+---
+mhp: "2026-09-12"
+id: thermocycler-01
+class: thermal_cycler
+make: SimBio
+model: TC-96
+location: bay 3, bench 3
+tags: [pcr, heating, 96-well]
+description: 96-well PCR thermocycler with heated lid, 4 to 105 degC block. Use for PCR,
+  denaturation, ligation holds and any timed temperature program on a 96-well SBS plate.
+  Not for tubes, not for cooling below 4 degC.
+driver: driver.py:SimThermocycler
+---
+
+# Thermocycler-01
+
+Sits on bench 3 in bay 3, left of the liquid handler; the plate arm reaches it at `thermocycler`.
+The block ramps about 4 °C/s. Turn `lid_heater` on ~40 s before loading to avoid condensation.
+
+## Operating procedure
+1. Confirm `lid_closed` is true; `run_protocol` refuses otherwise.
+2. Set `lid_heater` true; wait for `lid_temperature` above 100 °C.
+3. Invoke `run_protocol`; poll the job. 30 cycles of three steps take ~75 minutes.
+4. Write `target_temperature` 4 to hold. Open the lid only below 60 °C (needs a human).
+
+## Resources
+- `references/protocols.md`: standard programs per polymerase.
+- `scripts/pcr.py`: complete run through `mhp_run`, including the 4 °C hold.
+```
+
+### 4.2 descriptor.yaml
+
+The machine-readable part. Identity fields live in the frontmatter and are merged in; everything below is enforced or served by the driver.
+
+```yaml
+device:
+  notes: >
+    96-well block on bench 3, left of the liquid handler. Lid must be closed
+    before any run. Block ramps ~4 °C/s; lid heater takes ~40 s to reach 105 °C.
+
+physical:                        # anything the agent cannot infer from code
+  mass_kg: 12.5
+  footprint_mm: [330, 460, 250]
+  power_w: 850
+  notes: Bench-mounted, do not relocate while running. Hot lid surface up to 110 °C.
+
+signals:                         # READ
+  - name: block_temperature
+    type: number
+    unit: degC
+    notes: Measured at block centre; edge wells lag by ~0.5 °C.
+  - name: lid_closed
+    type: boolean
+    notes: True when the lid latch is engaged.
+
+settings:                        # WRITE
+  - name: target_temperature
+    type: number
+    unit: degC
+    limits: {min: 4, max: 105}   # enforced by the driver
+    approval: auto               # auto | confirm | forbid
+    notes: Below 4 °C condensation forms; above 105 °C the seal fails.
+
+actions:                         # INVOKE -> job
+  - name: run_protocol
+    duration: long               # short | long
+    approval: auto
+    interlocks: [lid_closed]     # boolean signals that must read exactly true
+    params:                      # undeclared parameters are refused
+      steps:                     # a declared shape: nested values are bounded here, not in code
+        type: array
+        items:
+          type: object
+          required: [temp]
+          properties:
+            temp:   {type: number, unit: Cel, limits: {min: 4, max: 105}}
+            hold_s: {type: number, unit: s,   limits: {min: 0, max: 3600}}
+      cycles: {type: integer}
+    required: [steps, cycles]
+    limits: {cycles: [1, 100]}   # enforced by the driver, element-wise for lists
+    pausable: true               # the driver checkpoints between steps
+    notes: Runs a cycling program; steps are repeated `cycles` times.
+    examples:                    # what normal usage looks like (§3.5)
+      - {steps: [{temp: 95, hold_s: 30}, {temp: 58, hold_s: 30}, {temp: 72, hold_s: 45}], cycles: 30}
+  - name: open_lid
+    duration: short
+    approval: confirm            # a human must confirm each invocation
+    notes: Lid may be hot; a human should be present.
+
+safety:
+  estop: true                    # driver implements safety/estop
+  interlocks: [lid_closed]
+  watchdog_s: 10                 # while a session holds the lease: act if it goes silent this long (§6)
+  watchdog_action: estop         # and what to do then: estop (default), or release the lease and keep running
+  notes: E-stop cuts block and lid heaters; the block cools passively.
+
+locations:                       # optional, device-class specific extensions
+  thermocycler: [-410, 90, 120]
+```
+
+### 4.3 Resources
+
+`resources/list` returns the relative paths of every file in the package except DEVICE.md. `resources/read {path}` returns a text file's contents (capped; binary files return size only) and MUST refuse paths outside the package. Scripts under `scripts/` are written for `mhp_run` and see `lab`; an agent reads one, adapts the constants, and runs it, so the device owner's tested procedure is what executes.
+
+### 4.4 Field rules
+
+- `device.id` MUST be unique within a host's set of devices. `class` is an open string; §13 lists the initial vocabulary.
+- `device.description` (frontmatter) SHOULD state what the device is and when to pick it, ≤ 1,024 characters. It is the ranking text for directories and the card text for agents.
+- Every object (device, physical, signal, setting, action, safety) MAY carry a `notes` string. Notes are **natural language for the agent**. They are the mechanism by which tacit knowledge enters the protocol; drivers MUST pass them through unchanged.
+- `type` is one of `number | integer | boolean | string | object | array`. `unit` MUST be a [UCUM](https://ucum.org/) code (`Cel`, `mm`, `s`, `%`, `N`, `mbar`, `uL/min`, `{rev}/min`). UCUM is the declared vocabulary because an agent that cannot resolve a unit cannot convert one, and a free-text spelling makes two descriptors disagree about what the same number means. Descriptors carrying a non-UCUM spelling still load, and `mhp validate` reports them with the UCUM replacement. Values are checked against the declared type before any limit or vendor code runs: numbers must be finite, integers and booleans are not interchangeable, `null` is refused, and strings may not contain control characters.
+- `limits` on a setting: `{min, max}` for numbers, `{enum: [...]}` for strings. The driver MUST refuse writes outside limits with `LimitViolation`.
+- `nullable: true` on a signal, setting or parameter shape declares that `null` is a legitimate value. Without it `null` is refused, so nullability is part of the contract rather than a convention.
+- `resolution` on a numeric shape declares the step the instrument can actually honour (`resolution: 0.1` on a block setpoint). A value off that grid is refused with `InvalidValue` naming the nearest settable value, rather than silently rounded: a quietly coerced setpoint does not surface until the science is already wrong.
+- `default` on a parameter shape declares what is used when the caller omits it. The driver fills it before the `required` check, and **reports it back**: the response and the job both carry `defaulted`, a map of parameter path to the value applied. A driver that substitutes a value not declared this way is invisible to the caller, which `mhp validate` warns about for every optional parameter with no declared default.
+- `params` on an action declares each parameter's **shape**: `{type, unit?, limits?, resolution?, nullable?, default?, notes?}` for a scalar, `{type: array, items: {...}}` for a list, and `{type: object, properties: {...}, required: [...]}` for a nested object, nested to any depth. The driver checks the whole shape before any step runs, so a bound on a value *inside* a parameter (a 200 °C step in an otherwise valid program) is enforced by the descriptor rather than by hand-written driver code. A parameter declared as a plain string (`steps: "array of {temp: degC}"`) is the legacy prose form: it is documentation, nothing structural is checked, and `mhp validate` reports it. Prose belongs in `notes`, which every shape may carry.
+- `returns` on an action declares the **result contract** in the same shape vocabulary as `params`. It is optional: an instrument whose output has no stable structure simply does not declare one. When it is declared, the driver compares the result against it and reports a mismatch as `resultMismatch` on the job rather than raising, because the physical work has already happened by the time the result exists and failing the job would misreport what the instrument did.
+- `source` on a signal says who answers it: `instrument` (the driver's `on_read`, the default for any other name), `record` (the base, from the lab's `self_state` record; only for the self-state names of §4.6) or `runtime` (the base, from its own state machine; only for `state`, `busy`, `active_jobs` and `connected`). A driver that can read one of those names itself declares `source: instrument` or simply answers it in `on_read`; the base falls back to its own answer when the driver has none.
+- `robot_access_ready` is a reserved boolean signal for instruments a handling system meets at a boundary (a lid, door, drawer, tray or deck): `true` exactly when a robot may load or unload, meaning the boundary is open and parked and nothing moves. An instrument with such a boundary SHOULD declare it and list it in the `interlocks` of its load and unload actions, so an orchestrator reads one name on every device rather than a different door signal per vendor. `physical.automated_load: true|false` says whether the instrument can be loaded by a handling system at all.
+- `safety.hardware_stop` names a physical stop the instrument has (a button, a light curtain, a safety relay) and what clears it; a driver that detects it calls `latch_external_stop` (§15.1).
+- `limits` on an action: a map from parameter name to `[min, max]`, `{min, max}` or `{enum: [...]}`, applied element-wise to lists. It bounds top-level parameters only; nested values are bounded inside `params`. The driver MUST enforce them, for dry runs and real runs alike, together with `required` and, when `params` is declared, the rule that undeclared parameters are refused. Checks that span a whole request (every step of a program) belong in the driver's side-effect-free `validate_params` hook, which also runs for dry runs, so no step starts before the whole request is known to be valid.
+- `approval`: `auto` (agent may act), `confirm` (each call needs `approved: true`, which only the host may set, and only after a person confirmed that exact request; §7.2), `forbid` (never agent-operable; listed so the agent knows the capability exists and why it is off-limits).
+- `interlocks`: names of boolean signals that MUST read exactly `true` at the moment of the write or invoke; false, unreadable or stale values count as open (`InterlockOpen`).
+- `during_job` on a setting (default false) says it may change while a job runs; otherwise the write is refused as busy. `concurrent`, `pausable` and `cancellable` on an action declare what the driver can actually do; pause and cancel requests for actions that do not support them are refused with `NotSupported`.
+- A factory-built driver (adapter) generates its capabilities from bindings; descriptor.yaml then refines named items and MUST NOT name a capability the driver has no binding for.
+- `duration`: `short` actions are expected to finish within seconds and hosts MAY block on them; `long` actions run as jobs and the host SHOULD poll or subscribe.
+- `tags` on `device` SHOULD be set: they are what a directory filters on, along with `location`. A package meant to be shared cannot know where the instrument will stand, so `location` is recorded by the lab that installs it (`mhp_lab op='location'`, `mhp lab location <id> "bay 3"`) and the fleet record is the authority; the frontmatter value is a default for a device installed in one place only. `examples` on an action is an array of parameter objects.
+- Unknown top-level keys (for example `locations`) are permitted and MUST be preserved by adapters and bridges. Device classes define their own conventions.
+
+### 4.5 Methods: the `methods/` folder
+
+Some instruments do not run *actions* so much as *methods*: an HPLC, GC, MS or PXRD runs one named
+parameter set per injection or scan, and that set changes from project to project and compound to
+compound. A balance or a laser probe has no such thing. MHP treats methods as a primitive that every
+device answers (§5.8), and as Level 3 content of the package for the devices that have them. The rules
+below are the whole game; the reference implementation enforces each one.
+
+**M1. Declaring.** An action that runs methods carries `methods: true` in descriptor.yaml. A device with at
+least one such action is *method-capable* and reports `capabilities.methods: true` in `initialize`. A device
+with none reports `false`: its `methods/list` and `methods/find` answer empty, and `methods/save` is refused
+with `NotSupported`. No device may be method-capable without declaring the action, and no method may
+target an action that is not declared method-driven.
+
+**M2. Where they live.** Methods are files in the package, under `methods/`, one folder per project:
+
+```
+methods/
+├── README.md                       optional: what a method means on this instrument
+├── _shared/                        methods owned by no project: vendor defaults, system suitability
+│   └── <method>.yaml
+└── <project>/                      one folder per project that has run on this instrument
+    ├── <method>.yaml               the current version
+    ├── <method>.history.jsonl      every earlier version, append-only, never rewritten
+    └── <method>.runs.jsonl         every run of it on this instrument, append-only
+```
+
+Project ids and method ids match `^[a-z0-9][a-z0-9._-]{0,63}$`. `_shared` is the one reserved project id.
+A method's full id is `<project>/<method>`; wherever a request names a method, `name` MAY be the full id, or
+a bare method id together with `project` (default `_shared`). Nothing else in the package may be named
+`methods`. A package without method-driven actions MUST NOT have a `methods/` folder; the validator refuses
+either inconsistency. The folder is written by the device itself, so it is not part of the package's enforced
+configuration: a host that fingerprints a package to detect tampering (§9.1, `reload`) MUST leave `methods/`
+out of the fingerprint, and a method file is never code.
+
+**M3. The record.** A method file is YAML with exactly these top-level keys:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `name`, `project` | yes | must equal the file name and folder name |
+| `action` | yes | the method-driven action that receives `params` |
+| `params` | yes | an object: exactly what `actions/invoke` sends; nothing else is interpreted |
+| `compounds` | yes | one or more lowercase names; what the method is for; `methods/find` matches on them |
+| `version` | yes | integer ≥ 1, assigned by the device, never chosen by the caller |
+| `hash` | yes | first 12 hex of sha256 over canonical JSON `{action, params}`; assigned by the device |
+| `created`, `updated` | yes | Unix seconds, assigned by the device |
+| `validated` | yes | `{at, hash}` when the device's own parameter gate passed for this version; `null` if the file was authored by hand and never checked |
+| `status` | yes | `active` or `retired`; retired methods are kept, listed only on request, never found by `methods/find` |
+| `author`, `notes` | no | free text: who and why |
+| `source` | no | `{kind: vendor_file \| manual \| person \| agent \| derived, ref}`: where the parameters came from |
+| `derived_from` | no | `{project, name, version}`: the method this one was copied or tuned from |
+
+A file with any other key, a missing required key, or a `name`/`project` that disagrees with its path is
+invalid and the device MUST NOT serve it. History entries repeat the record as it was; run entries are
+`{ts, job, session, state, overrides, project, result_digest}`.
+
+**M4. Versions.** `methods/save` on a name that exists compares `hash` and `action`. Unchanged: the record's
+metadata is updated and `version` stays. Changed: the previous record is appended to the history file and
+`version` increments. Versions are never renumbered or removed. `methods/delete` sets `status: retired`; it
+does not remove the file. A retired method can be saved again, which reactivates it as a new version.
+
+**M5. Validation on save.** Before writing, the device runs the target action's parameter gate on `params`:
+types, required parameters, undeclared parameters, `limits`, and the whole-request `validate_params` hook.
+State, interlocks, leases and busy are run-time conditions and are not checked. A refusal is returned
+unchanged and nothing is written. The stored `validated.hash` MUST equal the record's `hash`.
+
+**M6. Running one.** `actions/invoke` accepts `method: {name, project?, version?, overrides?}` in place of, or
+in addition to, `params`. The parameters sent to the action are the method's, then `overrides`, then explicit
+`params`, later keys winning. The job carries `method: {project, name, version, hash, overrides?}` and
+`project`, in every status answer and every job notification, so a result is traceable to the exact
+parameters that produced it. On completion the device appends the run to the method's runs file. Overrides
+are for adapting between runs; they are never saved implicitly.
+
+**M7. Asking.** A method-driven action invoked with neither `method` nor `params` is refused with
+`MethodRequired` (-32015). `data` carries the answer of `methods/find` for the request's `compound` and
+`project` (`choice`, `method` or `candidates`, `ask`), so the caller knows exactly what to ask a person. A
+method-driven action invoked with explicit `params` under a `project` that has no method for the given
+`compound` is accepted, and the response carries `methodHint`, telling the caller to save the parameters
+under that project if they worked. This is how a new project's methods come to exist on an instrument.
+
+**M8. Finding.** `methods/find {compound, project?, action?}` answers with `choice`:
+
+| `choice` | When | The caller's duty |
+|---|---|---|
+| `one` | exactly one active method for the compound in the project; or none in the project and exactly one anywhere (then `newProject` names the project) | use it |
+| `several` | more than one candidate at the level that matched | ask the person which one; an autonomous loop with a declared project takes the project's own, never one from another project |
+| `none` | no active method for the compound | ask the person for the parameters, run once with explicit params, save them under the project |
+
+Project methods take precedence over `_shared`; `_shared` over other projects' methods. `ask` is a sentence
+the caller can put to a person as is.
+
+**M9. Provenance.** The host's run log records `method` and `project` with every invoke; the device's runs
+file is the instrument-side record; the history file is the parameter-side record. Together they answer,
+for any result, which parameters produced it, on which instrument, in which project, and what they were
+derived from.
+
+**M10. Plans.** In plan mode `methods/list`, `get`, `find` and `diff` are real; `save` and `delete` are
+recorded, not executed; a `run` of a method is a dry-run invoke with the resolved parameters, so the plan
+shows the method's name and version next to the step.
+
+### 4.6 Instrument self-state
+
+Whether an instrument is calibrated, qualified, worn or out of specification is the first thing a
+person asks before trusting a result from it, and the first thing a procurement checklist asks of
+the interface. These six signal names are reserved so that every device answers them alike:
+
+| signal | type | values |
+|---|---|---|
+| `calibration_status` | string | `valid`, `due`, `overdue`, `unknown` |
+| `calibration_last` | string, nullable | ISO-8601 date of the last calibration |
+| `calibration_due` | string, nullable | ISO-8601 date the next one is due |
+| `qualification_status` | string | `qualified`, `unqualified`, `unknown` (IQ/OQ/PQ as the lab records it) |
+| `usage_count` | integer | runs, injections, cycles or hours; `notes` says which |
+| `out_of_spec` | boolean | a self-check or limit the instrument itself reports |
+
+Every instrument that is not operator-run SHOULD declare at least `calibration_status` and
+`qualification_status`; `mhp validate` reports a package that declares none. An instrument that
+reports them itself (a balance with a calibration log, a chromatograph with an injection counter)
+declares `source: instrument` and answers in `on_read`. Every other instrument declares `source:
+record` and the base answers from the lab's record: the `self_state` block of `config.json`, or the
+same keys at its top level (`calibration_last`, `calibration_due`, `qualified`, `usage_count`,
+`out_of_spec`, written once by the person who installs the package; `mhp node setup --all` asks
+for them on every instrument that is not operator-run), with
+`calibration_status` derived from the due date (`due` within 30 days, `overdue` past it, `unknown`
+with no date) and `usage_count` from the device's own job records when the record has no count.
+The card tier of `device/describe` carries the record-sourced `calibration_status` and
+`qualification_status`, so a directory can answer "which balances are overdue" without opening a
+session on any of them. Nothing here is enforced as a gate: an overdue instrument still runs,
+because the decision belongs to the person, and the protocol's job is to make sure they are told.
+
+---
+
+## 5. Primitives
+
+All requests are JSON-RPC 2.0. Method names are namespaced with `/`, as in MCP.
+
+| Primitive | Methods | Direction |
+|---|---|---|
+| Lifecycle | `initialize`, `ping` | client → server |
+| Describe | `device/describe {detail, select}` | client → server |
+| Resources | `resources/list`, `resources/read {path}` | client → server |
+| Directory | `directory/search`, `directory/get`, `directory/stats` | client → directory server |
+| Signals | `signals/list`, `signals/read`, `signals/subscribe` | client → server |
+| Settings | `settings/list`, `settings/write` | client → server |
+| Actions | `actions/list`, `actions/invoke`, `jobs/status`, `jobs/list`, `jobs/pause`, `jobs/resume`, `jobs/cancel` | client → server |
+| Methods | `methods/list`, `methods/find`, `methods/get`, `methods/save`, `methods/diff`, `methods/delete` | client → server |
+| Safety | `safety/limits`, `safety/estop`, `safety/reset` | client → server |
+| Session | `session/acquire`, `session/renew`, `session/release` | client → server |
+| Notifications | `notifications/signals/update`, `notifications/settings/changed`, `notifications/jobs/{started,progress,paused,resumed,cancelling,finished}`, `notifications/safety/{estop,fault,reset}`, `notifications/methods/{saved,retired}` | server → client |
+| Elicitation | `elicitation/confirm` | server → client (optional; see §7.2) |
+
+### 5.1 `initialize`
+
+```json
+→ {"jsonrpc":"2.0","id":1,"method":"initialize",
+   "params":{"protocolVersion":"2026-09-12","clientInfo":{"name":"claude-lab","version":"1.0"}}}
+← {"jsonrpc":"2.0","id":1,"result":{
+     "protocolVersion":"2026-09-12",
+     "device":{"id":"thermocycler-01","class":"thermocycler","make":"SimBio","model":"TC-96"},
+     "capabilities":{"signals":true,"settings":true,"actions":true,"methods":false,
+                     "subscribe":true,"lease":true,"estop":true}}}
+```
+
+Servers MUST respond to `initialize` before any other method. Capabilities are booleans; a client MUST NOT call a method whose capability is false.
+
+### 5.2 `device/describe`
+
+Returns the descriptor (§4) at the requested `detail` tier (`card | summary | full`, §3.1) or the named items in `select`, plus `"state": "idle" | "busy" | "fault" | "estop"`. Hosts SHOULD call this with `summary` before operating a device, then `select` the items they will use.
+
+### 5.3 Signals (read)
+
+```json
+→ {"method":"signals/read","params":{"names":["block_temperature","lid_closed"]}}
+← {"result":{"values":{"block_temperature":22.0,"lid_closed":true},"ts":1788991266.5,"id":"read_7f2a91c4"}}
+```
+
+`names` omitted means all signals. `signals/subscribe` asks the server to push `notifications/signals/update` for the named signals; over HTTP these arrive on the `/events` SSE stream, over stdio as interleaved notification lines.
+
+Every result MUST carry `id`, a **reading id**, and every `signals/update` notification MUST carry one too: a value that was pushed is as citable as one that was asked for. An action result has a job id; a reading had nothing, so a number an agent wrote into a conclusion could not be pointed back at the record that produced it. The id is what a host records beside the values (§3.5), what a run writes next to each row of `readings.csv`, and what an agent cites. It identifies the reading; it is not a handle to fetch it again, because a reading is a moment and the device does not keep it.
+
+### 5.4 Settings (write)
+
+```json
+→ {"method":"settings/write","params":{"name":"target_temperature","value":95}}
+← {"result":{"ok":true,"name":"target_temperature","value":95}}
+
+→ {"method":"settings/write","params":{"name":"target_temperature","value":200}}
+← {"error":{"code":-32010,"message":"target_temperature=200 above max 105","data":{"min":4,"max":105}}}
+```
+
+Optional params: `approved: true` (for `confirm` settings; set by the host only, after a person confirmed, §7.2), `dryRun: true` (run every check, touch nothing, return `wouldWrite`).
+
+A write whose outcome is unknown (the command may have reached the device but the reply failed) latches the device in `fault` with `data.outcome: "unknown"`. Errors raised before anything was sent (`InvalidValue`, `LimitViolation`, ...) do not change the device state.
+
+### 5.5 Actions and jobs
+
+`actions/invoke` returns immediately with a **job**. The device does the work; the agent polls or subscribes.
+
+```json
+→ {"method":"actions/invoke","params":{"name":"run_protocol",
+     "params":{"steps":[{"temp":95,"hold_s":30},{"temp":58,"hold_s":30},{"temp":72,"hold_s":45}],"cycles":30}}}
+← {"result":{"job":{"id":"job_04324008","action":"run_protocol","state":"queued","progress":0.0}}}
+
+→ {"method":"jobs/status","params":{"id":"job_04324008"}}
+← {"result":{"job":{"id":"job_04324008","state":"running","progress":0.43}}}
+
+   ... later ...
+← {"method":"notifications/jobs/finished","params":{"job":{"id":"job_04324008","state":"done",
+     "progress":1.0,"result":{"cycles_completed":30,"final_block_temperature":72}}}}
+```
+
+Job states: `queued → running → done | failed | cancelled`, plus `waiting_operator` for operator-run instruments (§9.1). A `failed` job carries `outcome: "unknown"` and puts the device in `fault` until a verified `safety/reset`. Busy is derived from all active jobs: a non-concurrent action is refused while any job runs, and a `concurrent` one may run alongside. A job's completion and the device state are published together. Settled job records that a device keeps on disk, and reads back as its own history after a restart, carry a digest of the record: one that does not match it is still returned, because dropping evidence is worse, but it carries `unverified` saying so, so an edited result is never presented as what the instrument reported. A result too bulky for a log line or an event buffer is replaced there by a placeholder, which MUST name the call that returns the real one rather than describing it: the device holds a finished job's result in full, and a result too big for its own record on disk is written to a file beside that record with the same lifetime, so the placeholder resolves for as long as the record is kept and says plainly when the file is gone. Data too large even for that belongs in a file in the run folder (§3.5), and the record says so instead of pointing nowhere. Adapters MUST report the backend's terminal outcome (a cancelled or aborted backend job is not `done`) and MUST NOT report a cancel the backend has not honoured.
+
+### 5.6 Safety
+
+- `safety/limits` returns the effective limits, interlocks and approval levels in one call, for hosts that want to show the envelope to a human.
+- `safety/estop` MUST stop all motion and energy output as fast as the hardware allows, cancel every running job, and put the device in `estop`. It MUST succeed regardless of lease, approval level or interlock state, and MUST NOT wait behind ordinary requests: the reference driver runs it outside the request lock, and the serial driver interrupts in-flight I/O before sending its stop commands. If the stop hook fails, the device stays in `estop` and the response says `stopped: false`. It is the one call an agent may always make. A host that offers a lab-wide stop (`mhp_estop` with `device: "*"`, `Lab.estop_all`) MUST reach every device it is driving, not only the ones its own client session opened: a run and a plan each work through a session of their own, and an in-process driver outlives the session that loaded it, so a stop that walks one connection list silently spares the instrument a script was driving. The reference client walks the lab it was called on, every lab descended from it, and every driver this process hosts for one of that lab's devices.
+- `safety/reset` returns the device to `idle` after `estop` or `fault`. It MUST fail with `DeviceBusy` while any job is still active, and MUST verify recovery first (the reference reads every signal). Only the lease holder, or anyone when the device is unleased, may reset.
+
+### 5.7 Session leases
+
+`session/release {force: true}` opens a lease held by a session that died holding it. It is
+refused unless a person confirmed it (`approved: true`, the same trusted-host rule as
+`approval: confirm`, so a model cannot assert its way through), and while a job is running it
+is refused outright the first time: the watchdog is armed **only while a lease is held**, so
+breaking the lease on a working instrument would remove the dead man's switch and leave the
+job running unattended. The refusal names what is running and what the watchdog would have
+done; re-issuing with `stop: true` winds the work down first and then releases. A device that declares
+`watchdog_action: release` does this handover itself (§6), so a dead holder does not have to be
+forced open by a person.
+
+`session/acquire {ttl}` gives the calling session exclusive write and invoke rights until `ttl` seconds pass without `session/renew`, or until `session/release`. Every client has its own session id, so independent clients never share a lease. That id is a name the caller asserts (`X-MHP-Client` over HTTP), not a secret the device issued, so it identifies a client only as far as the channel does: a caller the device already trusts could claim another session's id and operate a device leased to it. Closing that needs the lease to be a token `session/acquire` hands back and the holder presents, which is not in this draft; until then a device's authentication (§9.1) is what bounds who can make the claim. The reference client renews automatically with a heartbeat while it holds a lease, and each run gets its own session whose leases end with the run. If a lease is lost, the next actuating call fails with `NotLeased`, and the client must not assume it still has control. Reads, `ping`, `describe`, `jobs/status`, `jobs/pause`, `jobs/cancel` and `safety/estop` are never blocked by a lease; `jobs/resume` and `safety/reset` are. On a device that declares `watchdog_s`, operating it requires holding the lease (`NotLeased` with `data.reason: "lease_required"`); the reference client acquires it on first use.
+
+### 5.8 Methods
+
+The rules are in §4.5; this is the wire surface. Every device answers all six; a device that is not
+method-capable answers `list` and `find` with nothing and refuses `save` with `NotSupported`.
+
+| Method | Params | Result |
+|---|---|---|
+| `methods/list` | `compound?`, `project?`, `action?`, `query?`, `retired?` (default false) | `{methods: [card...], count, compounds, projects, actions, method_driven}`; a card is the record without `params` |
+| `methods/find` | `compound` (required), `project?`, `action?` | `{choice: one\|several\|none, method? \| candidates, ask?, why?, newProject?}` (§4.5 M8) |
+| `methods/get` | `name` (full id or bare), `project?`, `version?` | the full record; an earlier version is reconstructed from history |
+| `methods/save` | `method: {name, project?, action, params, compounds, author?, notes?, source?, derived_from?}`, `note?` | `{saved: card, validated: true}`; the device assigns version, hash, timestamps and `validated` |
+| `methods/diff` | `a`, `b?` (full ids or bare with `project`), `aVersion?`, `bVersion?` | `{a, b, action?, params: {key: {from, to}}, same}` |
+| `methods/delete` | `name`, `project?` | `{retired: true}`; the file stays (§4.5 M4) |
+
+`actions/invoke` gains `method`, `project` and `compound` (§4.5 M6, M7). `methods/list`, `find`, `get` and
+`diff` are never blocked by a lease or by a running job; `save` and `delete` wait for the request lock like
+any write and require no lease, since they touch files, not hardware.
+
+---
+
+## 6. Lifecycle
+
+```
+client                                server
+  │── initialize ───────────────────────▶│  version + capabilities
+  │── device/describe ──────────────────▶│  descriptor into agent context
+  │── session/acquire {ttl:600} ────────▶│  optional exclusive control
+  │── signals/subscribe ────────────────▶│  optional streaming
+  │── settings/write / actions/invoke ──▶│  operate (gated by §7)
+  │◀─ notifications/... ─────────────────│
+  │── session/renew (< watchdog_s) ─────▶│  keeps the lease and the watchdog fed
+  │── session/release ──────────────────▶│
+```
+
+**Watchdog.** If the descriptor declares `safety.watchdog_s`, the watchdog is armed whenever a session holds the lease, and operating the device requires holding it (§5.7). Any request from the holder renews it; the reference client sends `session/renew` at a third of the window. If the holder is silent for longer than the window, or its lease expires without release, the server MUST act and MUST report it as `notifications/safety/watchdog`, naming what it did.
+
+What it does is the author's declaration, `safety.watchdog_action`:
+
+- **`estop`** (the default, and the only behaviour before this field existed): enter `estop`, cancel active jobs, run the stop hook, drop the lease. Recovery needs a verified `safety/reset`. This is the answer for an instrument that is only safe while something is minding it. A device MUST NOT declare it unless `safety.estop` is true, or the trip would claim a stop the device cannot perform.
+- **`release`**: drop the lease and leave the work running, so another controller can take the instrument over without the person-confirmed forced release of §5.7. This is the answer for an instrument whose work must not be interrupted — electrolysis, a laser acquisition, an oven program — where stopping is itself the damage. One switch that meant both "require a lease" and "slam the e-stop" left those authors declaring no watchdog at all, which is strictly worse: nothing watches the controller, and operating the instrument then needs no lease either.
+
+Either way the silence is detected and reported, and `watchdog_s: null` remains the one setting under which nothing notices at all. The watchdog protects against the controlling process dying or losing its connection; it does not notice a model that is alive but idle, and the reference client's heartbeat keeps the window fed for as long as that client's process lives, so it is a liveness check on the controller, not on the work. A driver running inside the host process dies with the host, so host power loss is covered only by a device-side or hardware watchdog, which the descriptor should describe in `safety.notes`.
+
+**Versioning.** `protocolVersion` is a date string, as in MCP. A server MUST answer `initialize` with the highest version it supports that is ≤ the client's; a client that receives an older version MUST either speak it or disconnect. The MCP bridge negotiates MCP versions separately: it answers with the client's version when it supports it, and otherwise with its newest supported version.
+
+---
+
+## 7. Safety model
+
+The safety model is the reason MHP exists as a separate protocol rather than a set of MCP tools. Every rule below is enforced **in the server**, on the device side of the network, so it holds even when the agent is wrong, compromised or has lost context.
+
+### 7.1 Gate order
+
+On every `settings/write` and `actions/invoke` the server evaluates, in order:
+
+1. **State**: `estop` → `EStopActive`; `fault` → `DeviceFault`.
+2. **Approval**: `forbid` → `Forbidden`; `confirm` without `approved:true` → `ApprovalRequired`.
+3. **Interlocks**: each named signal is read live and must be exactly `true`; false, unreadable or stale → `InterlockOpen`.
+4. **Values**: type (`InvalidValue`), then limits (`LimitViolation`); for actions also declared, required and bounded parameters, then the driver's whole-request `validate_params`.
+5. **Lease**: another session holds an unexpired lease → `NotLeased`; a watchdog device operated without the lease → `NotLeased` (`lease_required`).
+6. **Busy**: an action while a non-concurrent job runs, or a setting not marked `during_job` while any job runs → `DeviceBusy`.
+
+Only after all six pass does vendor code run. `dryRun: true` evaluates the same checks without touching the device; approval, lease and busy conditions come back as notes (`needsApproval`, `needsLease`, `leaseHeldBy`, `busyNow`) so a plan can show them.
+
+### 7.2 Approval levels, elicitation and the trust boundary
+
+`confirm` is the bridge between agent autonomy and human oversight, and it depends on one rule: **the host is trusted, the model is not.** `approved: true` is the host's statement that a person confirmed *this exact request*. A model asserting it is not approval.
+
+1. The model asks for `open_lid`. The host sends the request without approval and gets `ApprovalRequired`.
+2. The host asks a person, showing the device, the action, its exact parameters and the descriptor's `notes`.
+3. Only on an explicit yes does the host send the same request again with `approved: true`. The answer is logged.
+
+The reference bridge does this through MCP elicitation, for direct tool calls and for every call a run script makes, and it ignores any `approved` value the model supplies. If the harness has no elicitation, the bridge has no trusted way to reach a person, so confirm-gated operations are unavailable and the refusal says so. The SDK and the CLI are host tooling: code or a person using them directly is the trusted party, and `--approved` is that person's own statement. Servers that can reach a person directly (a touchscreen on the instrument, a key switch) MAY implement `elicitation/confirm` as a server-initiated request.
+
+A device enforces that rule at the edge of its transport, because `approved: true` is a statement about a *person* and only some callers are in a position to make one. A device MUST honour the flag only from a caller its transport can place: the process that launched it (stdio, in-process), a request from the machine it runs on, or a request authenticated to it (§9.1). From any other caller — a stranger reaching an open port on the lab network — the flag MUST be dropped before the gates see it, and the request refused as unconfirmed with `data.ignoredApproved: true`, so the caller can tell "you did not ask" from "you are not in a position to answer". Within a trusted channel the host's word is still taken on trust: that is what trusted means, and it is why which channels count is a deployment decision and not a model's.
+
+Jobs can be **paused** (`jobs/pause`, `jobs/resume`) when the action declares `pausable: true`: the driver calls `checkpoint()` between steps, which blocks while paused and raises on cancel, so a person can step in without an emergency stop.
+
+### 7.3 Fail closed
+
+Any exception inside vendor code during a job, and any failure of a write after the command may have been sent, moves the device to `fault` with an unknown outcome and runs the driver's safe-state hook (by default the e-stop behaviour). `fault` and `estop` block all writes and invokes until `safety/reset`, which verifies recovery first. There is no automatic recovery. A request rejected before anything was sent does not change the device state.
+
+### 7.4 Defence in depth
+
+Descriptor limits protect setpoints and parameters. A value hidden inside a structured parameter (a 200 °C step inside an otherwise valid protocol) is caught by the driver's `validate_params`, which MUST run for dry runs as well as real runs, so no step executes before the whole program is known to be valid. The reference thermocycler validates every step this way.
+
+### 7.5 What MHP does not do
+
+MHP is not a functional-safety system in the IEC 61508 sense. Hard-wired e-stops, light curtains and PLC safety logic remain the primary layer; MHP is the layer that keeps an agent from *asking* for something unsafe, and gives it a standard way to stop everything when it sees something wrong.
+
+### 7.6 Trust boundary and retries
+
+Package code (`driver.py`, `sim.py`), recipes and `mhp_run` scripts are code the host executes, and a device package *is* the rulebook: every limit, interlock and approval level the runtime enforces comes from it. So the gates above hold only while the package is outside the model's authority. A host that lets a model write a package and then puts it into service has let the model set its own limits, and the refusals it still issues mean nothing.
+
+A host that gives a model any way to write package files — the reference bridge's `mhp_lab op='new'` and `op='write'`, a filesystem tool, an unsandboxed script — MUST therefore record per device which package files were accepted, MUST refuse to operate a device whose files are not those, and MUST put any change in what a device enforces to a person on the same trusted channel as a confirm-gated write, naming the limit, interlock or approval level that would move, before anything enforces it. Writing a file is not the moment to gate; becoming enforced is, and a package can start being enforced because files changed under a host that never wrote them. §9.1 specifies the reference implementation: an accepted fingerprint and rulebook per fleet entry, `mhp_lab op='reload'` to put a change to the owner, and `mhp lab accept` for the owner to accept one themselves.
+
+What this does not reach: a host that executes model-supplied code cannot contain it. An unsandboxed `mhp_run` script can drive vendor libraries directly, and an agent can still introduce a *new* device package of its own rather than loosening an old one. The rule above means no configuration already accepted for a device gets looser without a person seeing it, not that an unsandboxed host is safe. Deployments SHOULD separate package authoring (a code review) from operation, and SHOULD sandbox scripts.
+
+MHP operations are not idempotent. A request can reach a device even when its response is lost, and servers do not deduplicate requests. Clients MUST NOT retry writes or invokes automatically; after a lost response they SHOULD read state or list jobs to reconcile.
+
+---
+
+## 8. Notifications
+
+Servers push notifications (JSON-RPC requests without `id`) for anything a supervising agent needs to react to:
+
+| Method | Params | When |
+|---|---|---|
+| `notifications/signals/update` | `{name, value, ts, id}` | a subscribed or driver-chosen signal changes; `id` is the reading id (§5.3) |
+| `notifications/settings/changed` | `{name, value, by}` | any client writes a setting |
+| `notifications/jobs/started` | `{job}` | job leaves the queue |
+| `notifications/jobs/progress` | `{job, ...extra}` | driver reports progress (extra keys are device-specific) |
+| `notifications/jobs/finished` | `{job}` | job reaches done / failed / cancelled |
+| `notifications/jobs/paused`, `jobs/resumed`, `jobs/cancelling` | `{job, by}` | pause, resume or cancel requested |
+| `notifications/safety/estop` | `{by, reason, stopped, stop_error}` | e-stop engaged by a client or the watchdog |
+| `notifications/safety/watchdog` | `{action, holder, silent_s, watchdog_s, reason, activeJobs, stopped}` | the lease holder went silent; `action` is what the device did about it |
+| `notifications/safety/fault` | `{reason}` | the device latched a fault with an unknown outcome |
+| `notifications/operator/instruction` | `{text, job?}` | an operator-run instrument asks a person to act |
+| `notifications/safety/reset` | `{by}` | device returned to idle |
+| `notifications/methods/saved`, `methods/retired` | `{method: card, by}` | a method was saved (new version or new method) or retired |
+
+A supervising host consumes these without asking: the reference bridge subscribes to every device it opens
+(in-process, over the HTTP `/events` stream, or over stdio), keeps the recent ones per device for
+`mhp_data op='updates'`, appends them to the `events.jsonl` of any run that has used the device, and writes
+the notable ones (job finished with its result, safety, operator, methods) to the lab's run log. An agent
+reads what came in and decides the next run; nothing in this path polls the instrument.
+
+---
+
+## 9. Transports and discovery
+
+MHP defines two transports, mirroring MCP:
+
+- **stdio**: newline-delimited JSON-RPC on the driver process's stdin/stdout. For a driver running on the bench PC, launched by the host. A transport MUST keep reading while a request is being handled: a stop that has not been read yet cannot be let past the driver's request lock (§6), so the reference server reads on one thread, hands ordinary requests to one worker that runs them in the order they arrive — one instrument, one queue — and answers the calls the driver handles outside that lock, `safety/estop` first among them, the moment they are read, each on a thread of its own.
+- **HTTP**: `POST /rpc` for requests; `GET /events` as a Server-Sent Events stream of notifications; `GET /mhp.json` returns the descriptor with no handshake, so an agent (or a person with `curl`) can learn what a device is from its URL alone. Clients MUST send a unique session id in `X-MHP-Client`; leases are per session. The device HTTP transport authenticates with a bearer token, which a reference server requires as soon as it is bound where another machine can reach it (§9.1); there is no transport encryption here, so it still belongs on a trusted segment or behind a TLS proxy (§16).
+
+**Network discovery.** Servers SHOULD advertise via mDNS/DNS-SD as `_mhp._tcp` with TXT records `id`, `class`, `path=/mhp.json`; the reference HTTP transport does so when the optional `zeroconf` package is installed. Clients discover devices two ways, and SHOULD use both: browse `_mhp._tcp`, and probe `GET /mhp.json` on candidate hosts across the conventional port range (18900 to 18939), which works on networks that block multicast. Labs MAY additionally run a directory (§3.2).
+
+### 9.1 The fleet and `mhp_lab`
+
+A host keeps a **fleet**: the list of devices it knows, persisted as `~/.openmhp/fleet.json`, each entry an id, a target, the device's card and — for a package the host runs in-process — the fingerprint and rulebook that were accepted for it. Device packages the host owns are hosted in-process from `~/.openmhp/devices/<id>/`, so a scientist's laptop needs no separate device servers for them. The bridge exposes the fleet through one tool, `mhp_lab`, with these operations:
+
+| op | Effect |
+|---|---|
+| `status` | how many devices the lab has and what to do next; the agent's starting point |
+| `scan` | mDNS browse plus HTTP probe of localhost and any `hosts` given; returns devices not yet in the fleet |
+| `add` | register a target (`http://host:port`, a package folder, or a package id under `~/.openmhp/devices`); fetches the card; the device is immediately searchable; an id already in the lab at a different target is refused. A package whose rulebook differs from the one accepted for that id — still in the lab, or removed from it — is a reconfiguration, so a person is asked first; a refusal leaves the lab exactly as it was |
+| `onboard` | a guided interview run by the server: returns the next questions (`ask`, in plain words for the human) and the `shape` of the answer; on completion the server writes DEVICE.md, descriptor.yaml and driver.py, validates, and asks the agent to `add` |
+| `new` | create a package skeleton for an instrument that does not speak MHP yet (for agents that prefer to write files themselves) |
+| `write` | write files (DEVICE.md, descriptor.yaml, driver.py, references, scripts) into that package; paths may not escape it. A device already running from that folder goes on enforcing the configuration accepted for it: the result says so, and the log entry names every bound the new files would move |
+| `validate` | run the package validator |
+| `recipes` | search tested procedures (§3.4) |
+| `registry` | search known community packages; add one with `add target="github:owner/repo/path"` |
+| `safety_card` | a readable review of a device before first use: enforced limits, gated actions, e-stop, watchdog, validator findings, and live probes (every action dry-run, an out-of-range write on every bounded setting) |
+| `events` | what happened since a sequence number (§3.5) |
+| `remove`, `reload` | `remove` refuses a device with active jobs unless `force`; both drop the device's connection, directory entry and in-process driver, and `remove` keeps the configuration that was accepted, so a looser package returning under the same id is still a change. `reload` is where changed files become the rulebook, so it shows a person every limit, interlock and approval level that would move and asks; a decline changes nothing and leaves the device running on what it had |
+| `location` | record where an installed instrument stands; the lab's fleet record, not the package, is the authority |
+| `release` | hand the bridge session's leases back |
+| `list`, `home` | membership and paths |
+
+**The accepted configuration.** Package files are the rulebook, so the fleet record — not the files — is the authority on which rulebook a device enforces, the way it already is for a device's location. `add` and a confirmed `reload` record the package's fingerprint and its rulebook (every limit, interlock, approval level, declared type and bound inside a nested parameter, plus a hash of each code file) in the fleet entry. The host pins those fingerprints: a package whose files no longer hash to what was accepted is not loaded at all, and the refusal says a person has to accept the new configuration. That holds however the files came to change — a host tool, a run script's `open()`, an editor, a `git pull` — and whether or not the driver was already in memory, so a restart cannot quietly adopt a rulebook nobody reviewed. `op='status'` lists the devices in that state, `op='reload'` puts the diff to the owner through elicitation, and the owner can accept it themselves with `mhp lab accept <id>`, which is the trusted channel when the harness has none. Packages a host was pointed at on its command line, and fleets written before the host recorded fingerprints, are pinned to the files as they stand at startup: that much was the operator's own choice, and changes after it are not.
+
+`add` accepts `sim=true` to register a package's **simulated twin** (`sim.py`, declared as `sim:` in the frontmatter) under `<id>-sim`, so protocols can be rehearsed with nothing plugged in. The bundled devices and the community packages all ship one. Onboarding (`onboard`) ends with a safety card the agent reads back to the owner; an agent that has the instrument's manual SHOULD submit everything the manual states in one `answers` call and ask the human only to confirm the limits.
+
+The bridge also declares MCP `instructions` on `initialize`, so a harness with no skills support still receives the operating loop and the setup path, and three MCP prompts (`setup-my-lab`, `add-instrument`, `run-experiment`) that harnesses surface as slash commands.
+
+**No-code drivers.** The interview asks how the instrument is controlled today and picks a driver kind. `manual` wraps an instrument a person operates: a setting write is a request the operator carries out, reads return only what a person reported, each action waits in `waiting_operator` until a person acknowledges it, and both `acknowledge` and `record` need a person's confirmation. A manual device never claims an automatic e-stop or a watchdog. It can take part in protocols now and swap in a real driver later by changing one file. `serial` is a declarative driver for instruments with text commands over a serial or USB port: the owner pastes the commands from the manual into `descriptor.yaml` under `serial:` (`read`, `write`, `actions`, `estop`), and `openmhp.drivers.serial_ascii` does the rest; boolean replies must match known tokens exactly, and anything else counts as unreadable. `mhp` means the instrument already has an address and is simply added. `adapter` collects the interview and leaves `driver.py` for the fleet skill. In all kinds the descriptor, gates and levels are the same.
+
+This is how a scientist adds an instrument without leaving the conversation: *"find the instruments on my network"* → `scan` → *"add the thermocycler"* → `add`. For an instrument that has no MHP server, the `openmhp-onboard-device` skill interviews the owner, and the agent writes the package with `new`, `write` and `validate`, then `add`s it. The `npx openmhp-cli` launcher installs the runtime, the skills and the harness registration in one command.
+
+**Authentication.** The device HTTP transport takes a bearer token: `Authorization: Bearer <token>` on `POST /rpc` and `GET /events`, with `GET /mhp.json` left open as the device's nameplate so discovery and `mhp lab scan` keep working. A reference server requires none while it is bound to loopback, where the operating system is already the boundary, and generates one the moment it binds an address another machine can reach (`OPENMHP_DEVICE_TOKEN`, or `~/.openmhp/device_token` created with mode 0600), printing where to find it: a port that operates an instrument should not answer the whole network unasked. `mhp serve --no-auth` and `mhp node --no-auth` serve an exposed port openly on purpose — behind a proxy that authenticates, or on an isolated instrument VLAN — and then requests from off the machine are served but cannot assert `approved` (§7.2). A client presents an explicit token, else `OPENMHP_DEVICE_TOKEN`, else the local token file when the device is on the same machine; it never volunteers that secret to a host that did not issue it, and a 401 surfaces as `Forbidden` naming the variable to set. There is still no transport encryption here: run it on a trusted segment or behind a TLS proxy, and note that a caller holding the token is trusted entirely, including about which session it is (§5.7). The MCP bridge's HTTP endpoint (`mhp-mcp --http`) exposes script execution and hardware control, so it requires a bearer token (`OPENMHP_HTTP_TOKEN`, or a generated `~/.openmhp/http_token`), refuses requests whose `Origin` is not explicitly allowed (`--allow-origin`), and on a loopback bind refuses `Host` headers other than localhost. It has no server-initiated requests, so confirm-gated operations are unavailable over it. The protocol reserves `params.auth` for a future in-band scheme.
+
+### 9.2 The relay: nodes behind a firewall
+
+Instruments usually sit on a network nothing outside may enter. The relay lets a bench PC serve them to agents elsewhere with **no inbound connection anywhere**: the node dials out to a **gateway** over HTTPS and stays connected; agents reach the gateway. The reference implementation is `mhp gateway` (gateway) and `mhp node --join` (node).
+
+**Node face.** Every call is made by the node, authenticated with a node token the gateway issued at pairing, and framed as JSON:
+
+| Call | Meaning |
+|---|---|
+| `POST /relay/join {code, name, devices}` | once: a single-use pairing code (15 min) from the gateway operator → `{node_token, name}`. The node pins the gateway's certificate at this point and refuses any other afterwards |
+| `POST /relay/register {name, devices:[{id, card, nameplate, state}], openmhp?, upgrade?}` | on every (re)connect; `nameplate` is what the device's `GET /mhp.json` returns; `openmhp` is the node's software version and `upgrade` the command that updates it → `{name, latest}`, the newest release the gateway knows of |
+| `GET /relay/next` | long poll (≤ 25 s) → `{requests:[{rid, device, kind: rpc|nameplate, client, trusted, body}]}`; its presence is the node's heartbeat |
+| `POST /relay/reply {rid, body, state}` | the device's answer; `body` is the JSON-RPC response exactly as the HTTP transport would have returned it |
+| `POST /relay/events {events:[{device, event, state}]}` | notifications (§8), batched within 0.5 s |
+
+The node answers a request with the same `dispatch` the HTTP transport uses, with `client` the name the gateway supplies and `trusted` the gateway's statement about the caller (§7.2).
+
+**Agent face.** The gateway serves each registered device at `/<node>/<device>/` with the ordinary HTTP transport shape (`POST rpc`, `GET events`, `GET mhp.json`), so clients, the bridge and the fleet need no change, plus a directory (§3.2) at `/directory/` whose targets are those URLs and whose `state` is what the node last reported, or `offline`. Agents authenticate with an agent token issued per agent machine: `POST /agent/join {code, name}` exchanges a single-use code (1 hour) from the gateway operator for `{agent_token, name, directory}`, and the machine pins the gateway's certificate at that point, exactly as a node does; the operator MAY also issue a token by hand. An unknown token is refused before anything is queued, the open nameplate included. The gateway **sets** the session the node sees to the agent's name, so leases are per agent and a caller cannot claim another's session (§5.7). A caller the gateway authenticated is a host in the sense of §7.2: `approved` is carried, which makes the gateway the approval boundary, and agent tokens belong only to harnesses that can really ask a person.
+
+**Delivery, exactly once or not at all.** A request is handed to the node once. If the node is offline (no poll in progress and none for a few seconds, or none at all for 45 s) the agent receives HTTP 503 at once and nothing is queued. If the node takes the request but no reply arrives within the timeout (120 s, or the `X-MHP-Timeout` header) the agent receives 504 and the reply, should it come, is discarded. Requests queued while a node was away are failed when it re-registers, not run late. The gateway never re-sends (§7.6); the agent confirms with `jobs/status` before repeating an action. Events pushed while no agent was subscribed, or during a node's gap, are not replayed, as on an SSE reconnect.
+
+**Software versions.** The gateway shows its operator which nodes run an older release than the newest it knows of, and passes that release on at registration, so a node with no internet still learns of it. When it relays a `device/describe` from such a node it MAY add a `notice` string to the result, which an agent relays to the person it works for. Nothing updates itself: on a qualified instrument PC a software change goes through the lab's change control, so a notice names the command and a person runs it.
+
+**What the relay does not change.** The node serves its instruments locally exactly as before, with its own device token for callers on the lab network. Emergency stop, the device-side watchdog (§6) and the operator's own controls are on the bench and do not depend on the link; a dropped link is seen by the device as any other silent client, and `watchdog_action` applies.
+
+---
+
+## 10. Three control surfaces
+
+The same six primitives are reachable three ways. They compose: an agent uses MCP to explore and decide, writes a code file for the parts that must run fast or long, and uses the CLI to check on it. Which surface was used changes the convenience, not the rules: the gates are in the server (§7), and so is the record (§3.5), so no surface is the quiet one.
+
+### 10.1 MCP bridge
+
+A single MCP server exposes a whole lab to any MCP host through ten generic tools (§3.3), each with `input_examples`. Because the descriptor *is* the documentation, no per-device tool code is written, and the tool list does not grow with the lab.
+
+| MCP tool | MHP call |
+|---|---|
+| `mhp_find` | `directory/search` (or a scan of cards in a small lab) |
+| `mhp_describe` | `device/describe {detail, select}`, default `summary`; with `resource=` it calls `resources/read` |
+| `mhp_read` | `signals/read` |
+| `mhp_write` | `settings/write` |
+| `mhp_invoke` | `actions/invoke` (+ optional wait) |
+| `mhp_job` | `jobs/status`, `jobs/pause`, `jobs/resume`, `jobs/cancel` |
+| `mhp_estop` | `safety/estop` on one device or every device this session touched |
+| `mhp_run` | runs a script against a facade over the `Lab` client; returns stdout only; absent with `--no-scripts` (§3.4) |
+| `mhp_lab` | fleet management: status, scan, add, onboard, recipes, registry, safety card, events, remove, reload, release (§9.1) |
+| `mhp_data` | runs, their files, the run log, and what devices pushed (`op='updates'`, §8) |
+| `mhp_method` | the device's methods: find, list, get, save, run, diff, retire (§4.5, §5.8) |
+| resource `mhp://<id>/descriptor`, `mhp://<id>/<path>` | descriptor and package resources of devices this session has opened |
+
+MHP errors surface as MCP tool results with `isError: true` and the structured `mhpError` body, so the model sees *why* a write was refused and can adjust. A refused call inside an `mhp_run` script returns the same body.
+
+```bash
+npx -y openmhp-cli@latest setup                              # scientist's laptop: runtime, skills, harness registration
+mhp-mcp                                                  # the lab in ~/.openmhp/fleet.json; mhp_lab fills it
+mhp-mcp --directory http://directory:18900               # big lab: nothing loaded until searched
+mhp-mcp --directory http://directory:18900 --http 18800  # over HTTP for remote harnesses: bearer token required
+mhp-mcp thermo=http://bench:18921 arm=http://arm-pc:18921   # small lab: cards indexed at start
+mhp-mcp --no-scripts                                     # no mhp_run: nothing the model writes is executed here
+```
+
+The bridge is the lab's MCP server. Any harness that speaks MCP over stdio or HTTP (Claude Code, Codex, OpenClaw, Hermes, Claude Science, Open Science, or a custom agent) connects to it and sees the same eleven tools — ten with `--no-scripts`, which is the deployment that executes no model-authored code (§3.4).
+
+### 10.2 Command line
+
+```bash
+mhp http://bench:18921 describe
+mhp http://bench:18921 read block_temperature lid_closed
+mhp http://bench:18921 write target_temperature 95
+mhp http://bench:18921 invoke run_protocol '{"steps":[...],"cycles":30}' --wait
+mhp http://bench:18921 invoke open_lid --approved      # the person at this terminal confirms
+mhp http://bench:18921 estop "smoke from lid"
+mhp lab accept thermocycler-01                         # the owner accepts an edited package as this lab's rulebook
+mhp log audit                                          # is the record on disk still what was written?
+```
+
+The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool.
+
+### 10.3 Code files (SDK)
+
+```python
+from openmhp.client import Lab
+
+lab = Lab({"arm": "http://arm-pc:18921", "thermo": "http://bench:18921"})
+arm, thermo = lab["arm"], lab["thermo"]
+
+with arm, thermo:                                    # leases on both, renewed by a heartbeat
+    arm.write("speed", 30)
+    arm.wait(arm.invoke("pick_plate", location="deck_A1"))
+    arm.wait(arm.invoke("place_plate", location="thermocycler"))
+    result = thermo.wait(thermo.invoke("run_protocol", steps=PCR, cycles=30))
+    arm.wait(arm.invoke("pick_plate", location="thermocycler"))
+```
+
+An agent writes a file like this when a protocol must run for hours or step faster than its own reasoning loop. The devices then execute it without the model in the loop; the model reads the result, or gets a notification when something trips.
+
+---
+
+## 11. Authoring descriptors
+
+Two paths, same output, a device package (§4):
+
+1. **By hand.** Copy the package template, fill in the frontmatter and limits, write the operating procedure in DEVICE.md.
+2. **By interview.** The agent asks the owner a short set of questions and writes the package: *What is it and when should an agent pick it? Where does it sit? What is heavy, hot, sharp or fragile about it? How do you run it, step by step? What must be true before it runs? What values would you never set? What should always need a human?* The first answer becomes `description`, the procedure becomes the DEVICE.md body, and the rest become `notes`, `interlocks`, `limits` and `approval` levels in descriptor.yaml. Existing SOPs and manual excerpts go under `references/`. The owner reviews the package before it is served.
+
+Packages are versioned folders checked into the lab's repository. Changing a limit is a code review, not a runtime action.
+
+---
+
+## 12. Error codes
+
+| Code | Name | Meaning |
+|---|---|---|
+| -32601 | MethodNotFound | unknown method |
+| -32602 | InvalidParams | missing/invalid params |
+| -32010 | LimitViolation | value outside descriptor limits (`data` carries the limits) |
+| -32011 | InterlockOpen | a required interlock signal is falsy (`data.interlock`) |
+| -32012 | ApprovalRequired | `confirm` item called without `approved:true` |
+| -32013 | Forbidden | `forbid` item |
+| -32014 | InvalidValue | wrong type, non-finite number, `null`, control characters, undeclared or missing parameter; a malformed method record |
+| -32015 | MethodRequired | a method-driven action was invoked with neither `method` nor `params`; `data` carries `choice`, `candidates` and `ask` (§4.5 M7) |
+| -32020 | DeviceFault | device in `fault` (or a write's outcome is unknown, `data.outcome`); verified reset required |
+| -32021 | DeviceBusy | non-concurrent job running, or reset attempted mid-job |
+| -32022 | EStopActive | device in `estop`; reset required |
+Every error also carries a **recovery taxonomy**, so a caller branches on fields instead of reading prose: `transient` (could the identical request succeed later with nothing changed), `effect` (`none`, `partial` or `unknown`: what reached the device), `recovery` (`retry`, `retry_after`, `abort` or `operator`), `motion` (does recovering move the device, so a neighbour must stay clear) and `state` (what the device is in now). A failed job carries `recovery` for the same reason. Without these a model must infer from wording whether a fault is temporary, and on a non-idempotent operation a wrong inference means repeated actuation rather than a controlled abort.
+
+Every error carries `ts`, the device's own clock at the moment it refused, so a client can align a refusal with its own receipt time and with the `ts` on reads and the `started`/`finished` on jobs.
+
+| -32030 | NotLeased | another session holds the lease (`data.holder`), the lease was lost, or a watchdog device needs one (`data.reason: "lease_required"`) |
+| -32040 | UnknownName | no such signal/setting/action |
+| -32041 | JobNotFound | no such job id |
+| -32050 | NotSupported | the action does not support pause or cancel; use `safety/estop` |
+
+---
+
+## 13. Device classes
+
+`class` is a short snake_case name that tells an agent what kind of instrument it is looking at and gives the conventions below a namespace. The vocabulary is `openmhp/classes.json`, built by `scripts/build_classes.py`. There is no UCUM for instruments, so OpenMHP aligns with the published vocabularies wherever one has the term: each class is the snake_case form of a label from the Allotrope Foundation Ontology equipment branch (AFE, CC-BY; preferred for analytical equipment), the Chemical Methods Ontology (CHMO, CC-BY), the Ontology for Biomedical Investigations (OBI, CC-BY) or the NCI Thesaurus (NCIT), and carries that term's reference and definition. A class of OpenMHP's own is minted only where no vocabulary has the term (spin coater, glovebox, battery cycler, rheometer, dissolution tester and a few more); those are marked *none yet* and are candidates to propose upstream. `match` is *exact* unless the reference is broader or narrower than the class, which the table says.
+
+Classes are not enforced by the protocol; an unknown class still loads, `mhp validate` names the nearest known one because agents and directories filter on the known ones, and an older name listed under *also* is accepted with a warning that names the published one. A descriptor MAY carry `class_ref` with a more specific term from the same vocabularies (for example `CHMO:0000941`, scanning electron microscope, under class `electron_microscope`); `device/describe` includes it in the card so a directory can filter on the ontology term. The conventions, each a SHOULD:
+
+| class | reference | convention |
+|---|---|---|
+| `thermal_cycler` (also `thermocycler`) | [OBI:0400116](http://purl.obolibrary.org/obo/OBI_0400116) | `lid_closed` interlock on the run action; `robot_access_ready`; a run action that is `cancellable` |
+| `liquid_handler` | [OBI:0400112](http://purl.obolibrary.org/obo/OBI_0400112) | `robot_access_ready`; positions named as the vendor names them in `notes` |
+| `robot_arm` | [NCIT:C20678](http://purl.obolibrary.org/obo/NCIT_C20678) (broader) | a `locations` map; `robot_access_ready` on anything it serves |
+| `stage` | none yet | a `locations` map; `robot_access_ready` on anything it serves |
+| `microscope` | [AFE_0000825](http://purl.allotrope.org/ontologies/equipment#AFE_0000825) | an `acquire` action returning an image URI in `returns` |
+| `electron_microscope` | [CHMO:0001088](http://purl.obolibrary.org/obo/CHMO_0001088) | `vacuum_ready`, `beam_on`, `stage_position` signals; `load_sample` with `robot_access_ready` and `physical.automated_load`; `acquire_image` whose `returns` names the file and magnification; e-stop turns the beam off |
+| `camera` | none yet | an `acquire` action returning an image URI in `returns` |
+| `sampler` (also `autosampler`) | [AFE_0001711](http://purl.allotrope.org/ontologies/equipment#AFE_0001711) | `robot_access_ready`; positions named as the vendor names them in `notes` |
+| `chromatograph` (also `gc`, `hplc`) | [AFE_0000392](http://purl.allotrope.org/ontologies/equipment#AFE_0000392) | one method-driven run action (`methods: true`, SPEC 4.5) whose `returns` names the result file or table; `usage_count` counts injections |
+| `mass_spectrometer` | [AFE_0000648](http://purl.allotrope.org/ontologies/equipment#AFE_0000648) | one method-driven run action whose `returns` names the result file; `usage_count` counts scans or runs |
+| `nuclear_magnetic_resonance_spectrometer` (also `nmr`, `nmr_spectrometer`) | [AFE_0002280](http://purl.allotrope.org/ontologies/equipment#AFE_0002280) | one method-driven run action whose `returns` names the result folder; `usage_count` counts experiments |
+| `diffractometer` | [CHMO:0000950](http://purl.obolibrary.org/obo/CHMO_0000950) | one method-driven scan action whose `returns` names the pattern file; `usage_count` counts scans |
+| `thermal_analyzer` | [AFE_0000733](http://purl.allotrope.org/ontologies/equipment#AFE_0000733) (narrower) | one method-driven run action (DSC, TGA) whose `returns` names the result file; `usage_count` counts runs |
+| `microplate_reader` (also `plate_reader`) | [OBI:0001058](http://purl.obolibrary.org/obo/OBI_0001058) | one protocol-driven read action whose `returns` names the result table; `robot_access_ready` when the tray is out |
+| `dissolution_tester` | none yet | a run action with typed media, speed and sampling times and `returns` naming the sample table; `usage_count` counts runs |
+| `capillary_electrophoresis_instrument` (also `electrophoresis`) | [OBI:0001132](http://purl.obolibrary.org/obo/OBI_0001132) | one method-driven run action whose `returns` names the result file; `usage_count` counts injections |
+| `real_time_pcr_machine` (also `qpcr`) | [OBI:0001110](http://purl.obolibrary.org/obo/OBI_0001110) | one plate-run action whose `returns` names the result export; `lid_closed` interlock; `usage_count` counts runs |
+| `flow_cytometer` (also `cytometer`) | [CHMO:0001957](http://purl.obolibrary.org/obo/CHMO_0001957) | one acquisition action whose `returns` names the FCS files; `usage_count` counts tubes or wells |
+| `spectrometer` (also `spectrophotometer`) | [AFE_0000857](http://purl.allotrope.org/ontologies/equipment#AFE_0000857) | an `acquire` action with typed integration time whose `returns` carries the spectrum or names its file |
+| `particle_analyzer` | none yet | measurements as signals with units; a `measure` action whose `returns` carries the size distribution summary |
+| `biosensor` | [CHMO:0002795](http://purl.obolibrary.org/obo/CHMO_0002795) | measurements as signals with units; `out_of_spec` from the instrument's self-check where it has one |
+| `cell_counter` | [AFE_0000524](http://purl.allotrope.org/ontologies/equipment#AFE_0000524) | measurements as signals with units; a `count` action whose `returns` carries concentration and viability |
+| `profilometer` | [CHMO:0001994](http://purl.obolibrary.org/obo/CHMO_0001994) | a `scan` action with typed length and force whose `returns` names the profile file and the step height |
+| `surface_analyzer` | [CHMO:0002648](http://purl.obolibrary.org/obo/CHMO_0002648) (narrower) | a method-driven acquisition whose `returns` names the spectrum or image; vacuum readiness as a signal and interlock |
+| `rheometer` | none yet | measured and setpoint temperature as separate signals; a method-driven run action whose `returns` names the result file; `lid_closed` interlock |
+| `mechanical_tester` | none yet | `load`, `extension` and `crosshead_state` signals; `run_test` with typed rate and limits whose `returns` carries peak load and modulus; e-stop halts the crosshead; `hardware_stop: true` |
+| `balance` | [AFE_0000693](http://purl.allotrope.org/ontologies/equipment#AFE_0000693) | `weigh` returning `{mass, unit, stable}`; `tare`; `calibration_status` from the instrument's own log where it has one |
+| `dispenser` (also `powder_dispenser`) | [NCIT:C69095](http://purl.obolibrary.org/obo/NCIT_C69095) (broader) | a `dose` action with typed target mass and tolerance whose `returns` carries the dispensed mass; `calibration_status` from the balance |
+| `pump` | [AFE_0000499](http://purl.allotrope.org/ontologies/equipment#AFE_0000499) | `flow`/`pressure` signals in UCUM; a `stop` that zeroes the setpoint; `estop: true` |
+| `mass_flow_controller` (also `flow_controller`) | [AFE_0001671](http://purl.allotrope.org/ontologies/equipment#AFE_0001671) | `flow`/`pressure` signals in UCUM; a `stop` that zeroes the setpoint; `estop: true` |
+| `valve` | [AFE_0000795](http://purl.allotrope.org/ontologies/equipment#AFE_0000795) | position as a setting with the vendor's names; `estop` leaves the valve where it is unless `safety.notes` says otherwise |
+| `titrator` | [AFE_0000876](http://purl.allotrope.org/ontologies/equipment#AFE_0000876) | one method-driven titration whose `returns` carries the result and its unit; `usage_count` counts titrations |
+| `hotplate` | none yet | the measured value and the setpoint as separate signals; `estop` turns heating and stirring off |
+| `stirrer` | [AFE_0000812](http://purl.allotrope.org/ontologies/equipment#AFE_0000812) | the measured value and the setpoint as separate signals; `estop` stops the motor |
+| `circulator` (also `water_bath`) | [OBI:0400155](http://purl.obolibrary.org/obo/OBI_0400155) (broader) | the measured value and the setpoint as separate signals; `circulating` as a signal |
+| `temperature_controller` | [AFE_0000528](http://purl.allotrope.org/ontologies/equipment#AFE_0000528) | the measured value and the setpoint as separate signals per loop |
+| `incubator` | [OBI:0000136](http://purl.obolibrary.org/obo/OBI_0000136) | the measured value and the setpoint as separate signals; `door_closed` as a signal and an interlock; `robot_access_ready` where a handling system loads it |
+| `oven` | [AFE_0000816](http://purl.allotrope.org/ontologies/equipment#AFE_0000816) | the measured value and the setpoint as separate signals; `door_closed` as a signal and an interlock |
+| `furnace` (also `tube_furnace`, `muffle_furnace`) | [NCIT:C49965](http://purl.obolibrary.org/obo/NCIT_C49965) | `temperature` and `temperature_setpoint` separate; `program_running` and `segment` signals; `run_program` with typed `segments` (target, ramp, dwell) and `returns`; `door_closed` interlock; watchdog `release`, because an abort mid-sinter is the damage |
+| `environmental_chamber` (also `stability_chamber`, `climate_chamber`) | none yet | temperature and humidity measured and setpoint as separate signals; `door_closed` as a signal and an interlock |
+| `glovebox` (also `glove_box`) | none yet | `o2_ppm`, `h2o_ppm`, `box_pressure` signals; `antechamber_state` enum; `antechamber_cycle` with a typed purge count; inner and outer door actions interlocked on each other; `robot_access_ready` only when the inner door is open and the box is still |
+| `shaker` (also `incubator_shaker`) | [OBI:0001076](http://purl.obolibrary.org/obo/OBI_0001076) (narrower) | the measured value and the setpoint as separate signals; `lid_closed` interlock; `robot_access_ready` where a handling system loads it |
+| `centrifuge` | [OBI:0400106](http://purl.obolibrary.org/obo/OBI_0400106) | `lid_closed` interlock on the run action; `robot_access_ready`; a run action that is `cancellable` |
+| `lyophilizer` (also `freeze_dryer`) | [OBI:0001087](http://purl.obolibrary.org/obo/OBI_0001087) | `lid_closed`/`door_closed` interlock on the run action; a recipe-driven run that is `cancellable`; watchdog `release` |
+| `rotary_evaporator` (also `evaporator`, `rotavap`) | [CHMO:0002199](http://purl.obolibrary.org/obo/CHMO_0002199) | bath temperature, rotation and vacuum each as measured and setpoint; `lid_closed`-style interlock on lowering the flask; a run that is `cancellable` |
+| `reactor` | [AFE_0000153](http://purl.allotrope.org/ontologies/equipment#AFE_0000153) | the measured value and the setpoint as separate signals; `door_closed`/`lid_closed` as a signal and an interlock where there is one; a recipe-driven run with `returns` |
+| `bioreactor` | [OBI:0001046](http://purl.obolibrary.org/obo/OBI_0001046) | the measured value and the setpoint as separate signals per loop; a recipe-driven run with `returns`; `robot_access_ready` where a sampler meets it |
+| `cryostat` | [OBI:0001072](http://purl.obolibrary.org/obo/OBI_0001072) | temperature and field measured and setpoint as separate signals; `chamber_state` enum; watchdog `release` |
+| `spin_coater` | none yet | a `run_recipe` action with typed steps (speed, acceleration, duration) and `returns`; `lid_closed` and `vacuum_ok` interlocks; `estop` stops the chuck |
+| `mill` (also `ball_mill`) | none yet | a `run` action with typed speed and duration and `returns`; `lid_closed` interlock; `estop` stops the drive |
+| `deposition_system` (also `sputter_system`, `evaporation_system`) | [CHMO:0002122](http://purl.obolibrary.org/obo/CHMO_0002122) (narrower) | `base_pressure`, `process_pressure`, `power`/`power_setpoint`, `shutter_open`, `substrate_temperature` signals; `deposit` with `returns` carrying the thickness estimate; `base_pressure_ok` and `door_closed` interlocks; `hardware_stop: true` where the tool has one |
+| `3d_printer` | none yet | a `print` action taking a file URI whose `returns` names the job; `door_closed` interlock; `estop` disables the heaters |
+| `cnc` | none yet | a `run_program` action taking a file URI; `door_closed` interlock; `estop: true` |
+| `laser` | [OBI:0400064](http://purl.obolibrary.org/obo/OBI_0400064) | output enable as a boolean setting; `shutter_open` as a signal; `estop` closes the shutter and disables emission |
+| `potentiostat` | [CHMO:0002427](http://purl.obolibrary.org/obo/CHMO_0002427) | output enable as a boolean setting; `estop` disables every output; `returns` on acquisitions names the data file |
+| `battery_cycler` (also `battery_tester`) | none yet | a `channel` parameter on every action; `start_protocol` with typed steps (mode, current, voltage, time limits) and `returns` carrying cycle count and last capacity; `channel_state` signal; `estop` opens every channel |
+| `source_meter` (also `source_measure_unit`) | none yet | output enable as a boolean setting; `estop` disables every output; `returns` on sweeps names the data file |
+| `lock_in_amplifier` | [CHMO:0002340](http://purl.obolibrary.org/obo/CHMO_0002340) | output enable as a boolean setting; `estop` disables every output; `returns` on acquisitions names the data file |
+| `oscilloscope` | [OBI:0000948](http://purl.obolibrary.org/obo/OBI_0000948) | an `acquire` action whose `returns` names the waveform file |
+| `power_supply` | [OBI:0400142](http://purl.obolibrary.org/obo/OBI_0400142) | output enable as a boolean setting; `estop` disables every output |
+| `data_acquisition_device` (also `daq`) | [AFE_0000555](http://purl.allotrope.org/ontologies/equipment#AFE_0000555) | channels as signals with units; output enable as a boolean setting; `estop` disables every output |
+| `sensor` | [AFE_0002184](http://purl.allotrope.org/ontologies/equipment#AFE_0002184) | measurements as signals with units; `out_of_spec` from the instrument's self-check where it has one |
+| `vacuum_gauge` (also `pressure_gauge`) | none yet | pressure as a signal in UCUM; `out_of_spec` from the gauge's self-check where it has one |
+| `generic` | none yet | no convention; name the capabilities plainly and say in `notes` what the device is |
+
+---
+
+## 14. Bridging existing ecosystems
+
+MHP is deliberately thin enough to sit on top of the control layers labs already run. The reference implementation ships an adapter for each, built on one mechanism: **bindings**. A binding pairs an MHP name with a callable into the foreign layer, and `BoundDriver` turns three lists of bindings into a complete MHP driver with every gate, tier, job and notification inherited.
+
+```python
+from openmhp.adapters import BoundDriver, Signal, Setting, Action
+dev = BoundDriver(device={"id": "hotplate-01", "class": "hotplate", "notes": "Fume hood 2."},
+                  signals=[Signal("plate_temperature", read=lambda: plc.read(0x10), unit="degC")],
+                  settings=[Setting("target_temperature", write=lambda v: plc.write(0x20, v),
+                                    limits={"min": 20, "max": 300})],
+                  actions=[Action("shutdown", run=lambda job, p: plc.write(0x21, 0), approval="confirm")],
+                  estop=lambda: plc.write(0x21, 0))
+```
+
+| Layer | Adapter | Mapping |
+|---|---|---|
+| **OPC UA / Modbus** | `opcua_device(url, ...)` | variable node → signal or setting; method node → action with positional args; abort method → estop. Modbus uses `BoundDriver` with two register callables. |
+| **ROS 2** | `ros2_device(node, ...)` | topic subscription → signal; topic publication → setting; action server → action with feedback → progress and cancel, reporting the goal's terminal status (aborted is a failure); signals older than `max_age_s` read as no value; Trigger service → estop, with its result checked. |
+| **SiLA 2** | `sila_device(host, port, ...)` | property → signal; one-parameter unobservable command → setting; command → action, observable commands stream progress and accept cancel; any stop command → estop. Leases replace LockController. |
+| **MADSci** | `madsci_node(url, ...)` | self-describing: `/info` actions → actions with params and notes; `/state` keys → signals; `/status` busy → `ping` state; `/action` + polling → jobs; cancel is sent to the node and the job ends only on a terminal status, and a node that keeps running after a cancel faults the device; `/admin/safety_stop` → estop. No binding map needed. |
+| **PyLabRobot** | `plr_device(machine, ...)` | every public coroutine on a `Machine` → action with `params` from its signature and enforced `limits`; `setup()` on start, `stop()` on estop; coroutines run on a private event loop. Actions cannot be cancelled mid-move (use e-stop); an operation that times out is cancelled and faults the device. |
+| **MQTT** | `mqtt_device(url, ...)` | subscribed topic → signal (last message cached with its arrival time; stale after `max_age_s`, default 5 s); published topic → setting; a command topic paired with a reply topic → action, correlated by a `job` field in both payloads; without a reply topic an action is fire-and-forget and returns once the broker has acknowledged the publish, which is not the same as the device having acted. Estop publishes at QoS 2; like the action case, that confirms the broker received it, not that the device stopped — pair it with a signal on a state topic to verify. |
+
+Each adapter is a few lines per device; the `openmhp-adapt-fleet` skill (§14.1) walks a harness through a whole fleet. Adapters MUST implement the safety gates in §7 themselves; wrapping a layer that lacks limits does not exempt the MHP server from enforcing them. The reference adapters get this for free from `BoundDriver`. They are tested against fakes of each client library; no vendor system has been exercised yet.
+
+### 14.1 Agent Skills
+
+MHP ships three [Agent Skills](https://agentskills.io) so that any skills-capable harness can bring hardware under the protocol and operate it without bespoke prompting:
+
+| Skill | When it activates | What it does |
+|---|---|---|
+| `openmhp-onboard-device` | one instrument to connect | interviews the owner, writes descriptor + driver, validates, serves, registers |
+| `openmhp-adapt-fleet` | OPC UA / ROS 2 / SiLA 2 / MADSci / PyLabRobot fleet | one adapter file per device, manifest, directory, `mhp-mcp` config, proof checklist |
+| `openmhp-operate` | any task on connected hardware | the find → describe → check → dry-run → act → verify loop; refusal handling; e-stop rules |
+
+Skills follow the progressive-disclosure design of the protocol itself: a harness holds only their names and descriptions until a task matches.
+
+---
+
+## 15. Conformance
+
+| Level | Requirements |
+|---|---|
+| **MHP Core** | `initialize`, `ping`, `device/describe` (all three tiers and `select`), `resources/*`, `signals/read`, `settings/write` with limit enforcement, error codes in §12. |
+| **MHP Actions** | Core + `actions/invoke`, `jobs/*`, `notifications/jobs/*`, interlocks and approval gates, and `methods/*` as specified in §4.5 (answering empty and refusing `save` when no action is method-driven). |
+| **MHP Safe** | Actions + `safety/estop` that never waits behind ordinary requests, verified `safety/reset`, watchdog, fail-closed state machine with unknown-outcome faults, per-session `session/*` leases with renewal. |
+| **MHP Directory** (server role) | `initialize` with `role: "directory"`, `directory/search`, `directory/get`, `directory/stats`; indexes cards only. |
+
+Devices that carry stored energy or can move SHOULD NOT be exposed below **MHP Safe**. All device levels MUST support `detail` and `select` on `device/describe` (§3.1).
+
+Conformance is behavioural. The reference suite `tests/test_safety_gates.py` exercises typed limits, ownership, watchdog silence, rejected approvals, blocked I/O, backend aborts and plan-mode isolation; a conformant implementation should pass equivalent tests.
+
+---
+
+### 15.1 Orderly shutdown and hardware stops
+
+`safety/shutdown {within_s}` is an orderly stop, not an emergency stop. The device stops
+accepting new work, cancels what is running, calls the driver's `on_shutdown(deadline)` hook to
+park safely, and **escalates to a full e-stop if it has not settled when the deadline passes**.
+Like `safety/estop` it is never blocked by a lease, because its purpose is to wind a cell down
+when something elsewhere has gone wrong. `Lab.shutdown_all(within_s)` issues it to every
+connected device in parallel.
+
+A stop records **who caused it**: `client`, `watchdog`, `hardware` or `fault`. A driver that
+can detect a physical stop (a button, a light curtain, a safety relay) calls
+`latch_external_stop(reason, clearance)`, which latches like any e-stop but marks itself
+**not clearable from software**. `safety/reset` then refuses and repeats the `clearance` text
+describing what a person must do at the instrument, rather than appearing to succeed against a
+latch it has no authority over. The descriptor should declare `safety.hardware_stop` so an
+agent knows one exists before it starts.
+
+### 15.2 Simulated twins and fault injection
+
+A package's `sim.py` twin is loaded by `load_driver(path, sim=True)`, which marks it `simulated`. Only a simulated driver answers `sim/fault {on, mode, times?, hang_s?}`; a real device refuses it with `NotSupported`, so the facility cannot be armed against hardware by accident. `on` is `invoke`, `read` or `write`; `mode` is `raise` (vendor code fails, exercising the fail-closed path and an unknown outcome), `hang` (vendor code blocks, exercising the watchdog) or `refuse` (a typed refusal before any actuation, which must not latch a fault). `mode: null` disarms. A twin that can only succeed exercises only the happy path; the orchestrator branches worth testing are the ones reached by deliberate failure.
+
+---
+
+## 16. Not yet specified
+
+In-band authentication (`params.auth`; the device HTTP transport authenticates at the transport level today, §9.1); request idempotency tokens; multi-device transactions (`safety/shutdown` winds a cell down but is not a transaction, and does not roll anything back); descriptor signing, and signing the run log's chain head so that a rewrite by whoever holds the files is detectable too (§3.5); a hosted registry beyond the bundled index; sandboxed script execution; streaming bulk data (results are stored as files next to the run, §3.5); a machine-readable description of hardware watchdogs and device-side safe states; a wire primitive for reading an instrument's own record from off the machine that hosts it, which needs a rule about who may read who did what. Each has a natural home in the protocol (a `data/` primitive, `params.auth`, a `transaction/` namespace) and will be specified with partner input.
+
+---
+
+## Appendix: reference implementation
+
+`openmhp` is a Python implementation of everything above (PyYAML is the only dependency, for device packages): the `Driver` base class with all gates and detail tiers, the device package loader, the live-pinging `Directory`, stdio and HTTP+SSE transports, the lazy `Lab` client SDK, the `mhp` CLI (including `serve-directory`), the eleven-tool `mhp-mcp` bridge over stdio or HTTP, `BoundDriver` and the six ecosystem adapters (OPC UA, ROS 2, SiLA 2, MADSci, PyLabRobot, MQTT), three Agent Skills (bundled in the package, `mhp skills install`), the fleet and `mhp_lab`, network discovery, the `npx openmhp-cli` launcher, three bundled device packages with simulated twins, adapter tests that run against injected fakes, and the 2,000-device scale demo. `supported-devices/` holds ready-made packages for named instruments, each with a twin. Writing a new driver is a descriptor plus three hooks (`on_read`, `on_write`, `on_invoke`), with optional `validate_params` and `on_fault`. See `README.md`.
+
+**Status: experimental.** The protocol is pre-1.0 and breaking changes are expected between minor versions. Maturity is tracked per device rather than for the project as a whole: each package in `supported-devices/` carries its own status (`twin tested`, `hardware tested`, or `template`), defined in [`supported-devices/README.md`](supported-devices/README.md), so that what has actually been run on an instrument is never in doubt. The core runtime is covered by the behavioural suite in `tests/`. §16 lists what is not yet specified.
