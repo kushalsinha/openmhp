@@ -41,7 +41,10 @@ def test_run_states_and_record():
     rec.to("planning", "request received")
     rec.to("waiting_approval", "charter ready")
     rec.set(charter_digest="sha256:abc", harness="claude-code")
-    rec.to("running", "approved by alice")
+    with raises(ValueError):
+        rec.to("running", "approved by alice")                              # approval queues it; never straight in
+    rec.to("queued", "approved by alice")
+    rec.to("running", "all instruments allocated")
     rec.to("waiting_scientist", "asked about cell 4")
     rec.to("running", "answered")
 
@@ -49,13 +52,13 @@ def test_run_states_and_record():
     meta = json.loads((pub / "meta.json").read_text())
     assert meta["state"] == "running" and meta["harness"] == "claude-code" and "history" not in meta
     seen = [json.loads(l)["state"] for l in (pub / "events.jsonl").read_text().splitlines() if '"kind": "state"' in l]
-    assert seen == ["planning", "waiting_approval", "running", "waiting_scientist", "running"]
+    assert seen == ["planning", "waiting_approval", "queued", "running", "waiting_scientist", "running"]
 
     # the gateway's copy is the truth: editing the scientist's mirror changes nothing
     (pub / "meta.json").write_text(json.dumps({**meta, "state": "finished"}))
     again = SV.RunRecord(PRIVATE / rid, rid, "alice")
     assert again.state == "running" and [h["state"] for h in again.doc["history"]][-1] == "running"
-    assert [e["kind"] for e in again.events()].count("state") == 5
+    assert [e["kind"] for e in again.events()].count("state") == 6
 
     # a gateway restart interrupts live runs and leaves ended ones alone
     done = S.open_run("alice")["id"]

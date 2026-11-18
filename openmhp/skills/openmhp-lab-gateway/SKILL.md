@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs a shell with ssh and rsync, and a machine paired with `mhp agent --join` on a gateway that has SSH access turned on. Works in any harness that can run shell commands.
 metadata:
   author: openmhp
-  version: "0.5"
+  version: "0.6"
 ---
 
 # Being the scientist's go-between with the lab gateway
@@ -49,14 +49,14 @@ scientist those steps, in their words; never guess a step that is not in `next`.
 
 | State | Waiting on | What the scientist can do |
 |---|---|---|
-| `open` | scientist | hand over files with rsync, then `request` |
-| `planning` | gateway | `wait` for the planner's questions and plan; `message` it |
-| `waiting_approval` | scientist | `show` the plan, then `approve` it or `message` changes |
-| `queued` | gateway | `wait`; it starts when its instruments are free |
+| `open` | scientist | hand over files with rsync, then `request`; or `stop` it unused |
+| `planning` | gateway | `wait` for the planner's questions and plan; `message` it; `stop` |
+| `waiting_approval` | scientist | `show` the plan, then `approve` it or `message` changes; or `stop` |
+| `queued` | gateway | `wait`; it starts when its instruments are free; `message`, `stop` |
 | `running` | gateway | `wait`, `message`, `stop` |
-| `waiting_scientist` | scientist | `answer` its question |
+| `waiting_scientist` | scientist | `answer` its question; `message`, `stop` |
 | `interrupted` | scientist | the gateway restarted mid-run: `resume` it (its agent checks the bench first) or `stop` it |
-| `finished`, `stopped`, `failed` | nobody | bring the results home with rsync, then `ack` |
+| `finished`, `stopped`, `failed` | nobody | bring the results home with rsync, then `ack`; for `failed`, `status` says why |
 
 A run that `failed` could not be run at all; `status` says why.
 

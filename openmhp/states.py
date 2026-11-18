@@ -5,6 +5,7 @@ next from each state. The code that moves a machine checks the move here before 
 every answer that reports a state carries its next steps, so nobody has to infer them.
 
     RUN   an experiment run on a lab gateway (supervisor.py moves it; mhp-gw and gw_words report it)
+    SETUP a machine's parts as `mhp status` reports them (install, gateway link, skills, service, gateway)
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from __future__ import annotations
 RUN_TRANSITIONS: dict[str, set[str]] = {
     "open": {"planning", "waiting_approval", "stopped", "failed"},
     "planning": {"waiting_approval", "stopped", "failed"},
-    "waiting_approval": {"planning", "queued", "running", "stopped"},
+    "waiting_approval": {"planning", "queued", "stopped"},
     "queued": {"running", "stopped", "failed"},
     "running": {"waiting_scientist", "finished", "stopped", "failed", "interrupted"},
     "waiting_scientist": {"running", "finished", "stopped", "failed", "interrupted"},
@@ -87,3 +88,46 @@ def check_run_move(run_id: str, current: str, to: str) -> None:
     if to not in RUN_TRANSITIONS.get(current, set()):
         nxt = ", ".join(c.split()[0] for c, _ in RUN_NEXT.get(current, [])) or "nothing: it has ended"
         raise ValueError(f"run {run_id} is {current}; it cannot become {to} from there (what it can do now: {nxt})")
+
+
+# ---- a machine's setup (`mhp status` reports it, part by part) ---------------------------------------------
+# A setup part is not moved through transitions by one owner; it is observed. What is declared is every state a
+# part can be reported in and what it means, so `mhp status`, the specification and the skills say the same thing.
+# A state with a next step is one that needs something done; status.py names the step.
+
+# the link from a lab PC or an agent machine to its gateway (relay.py writes it, mhp status reads it)
+LINK_STATES = {
+    "connected": "the gateway answers and accepts this machine",
+    "unreachable": "the gateway did not answer: network, VPN, or the gateway is down",
+    "unpaired": "the gateway answered but no longer accepts this machine's pairing: pair again",
+    "certificate_changed": "something answers at the gateway's address with a certificate this machine did not pin",
+    "error": "the gateway answered with an error this machine does not recognise",
+    "unknown": "nothing tried the link yet (the node has not run since pairing)",
+}
+
+# an agent skill installed in a harness's skills folder (skills_install.py)
+SKILL_STATES = {
+    "current": "the installed copy is this OpenMHP's",
+    "outdated": "an older copy, untouched since installed: `mhp skills install` updates it",
+    "newer": "a newer copy than this OpenMHP has: left alone",
+    "changed": "edited by hand since installed: left alone unless a person asks (then backed up first)",
+    "missing": "not installed in that folder",
+}
+
+# every part `mhp status` reports, and the states it reports it in
+STATUS_PARTS = {
+    "install": {"current", "outdated"},
+    "gateway link": set(LINK_STATES),
+    "runs over SSH": {"set up", "not set up"},
+    "agent skills": {"current", "needs update"},
+    "instruments": {"ready", "not ready", "none"},
+    "background service": {"running", "stopped", "installed", "not installed", "broken"},
+    "gateway": {"running", "running old code", "not running"},
+    "gateway service": {"not installed"},
+}
+
+
+def check_status_part(part: str, state: str) -> None:
+    """`mhp status` reports only declared parts and states, so its words and the documentation cannot drift."""
+    if state not in STATUS_PARTS.get(part, ()):
+        raise ValueError(f"mhp status: {part!r} has no declared state {state!r} (openmhp/states.py STATUS_PARTS)")
