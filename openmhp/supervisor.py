@@ -630,9 +630,10 @@ class Supervisor:
     def _close_live(self, c: "RunCtl", why: str, locked: bool = False) -> None:
         def close():
             if c.live is not None:
-                c.live.close()
-                c.record.event("session", action="closed", phase=c.live_phase, why=why)
-                c.live, c.scripts = None, {}
+                live, phase = c.live, c.live_phase
+                c.live, c.scripts = None, {}            # first: whoever sees the "closed" event sees no session
+                live.close()
+                c.record.event("session", action="closed", phase=phase, why=why)
         if locked:
             close()
         else:

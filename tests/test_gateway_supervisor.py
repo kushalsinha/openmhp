@@ -336,6 +336,14 @@ def test_supervised_run_from_approval_to_results():
                 "envelope": {"tc": {"settings": {"target_temperature": {"min": 4, "max": 99}}, "actions": {}}},
                 "cleanup": "block to 4 C"}
 
+    def approve(rid, digest):
+        """Approve; on a slow machine mhp-gw may stop waiting first (WAITING, by design): then the run must still start."""
+        code, ans = gw_cmd(f"mhp-gw approve {rid} --charter-digest {digest}")
+        assert code in (GW.OK, GW.WAITING), ans
+        if code == GW.WAITING:
+            wait_until(lambda: sup.record(rid).state != "waiting_approval", timeout=120, what=f"{rid} to be approved")
+        assert sup.record(rid).state in ("queued", "running", "waiting_scientist", "finished"), sup.record(rid).state
+
     # ---- run 1: approve, the agent works and asks, the scientist answers, the agent finishes ----------
     code, ans = gw_cmd("mhp-gw open")
     rid = ans["run"]
@@ -384,7 +392,7 @@ def test_supervised_run_from_approval_to_results():
     code, ans = gw_cmd("mhp-gw open")
     rid2 = ans["run"]
     d2 = sup.propose(rid2, "alice", charter(rid2, "hold the block"), harness="stand-in")
-    assert gw_cmd(f"mhp-gw approve {rid2} --charter-digest {d2}")[0] == GW.OK
+    approve(rid2, d2)
     wait_until(lambda: sup.record(rid2).state == "running" and any(e["kind"] == "turn" for e in sup.record(rid2).events()),
                what="first turn of run 2")
     gw.events(gw.nodes["bench"], {"events": [{"device": "thermocycler-01",
@@ -408,7 +416,7 @@ def test_supervised_run_from_approval_to_results():
     rid3 = gw_cmd("mhp-gw open")[1]["run"]
     c3 = charter(rid3, "hold the block")
     c3["envelope"]["tc"]["actions"] = {"run_protocol": {}}
-    assert gw_cmd(f"mhp-gw approve {rid3} --charter-digest {sup.propose(rid3, 'alice', c3, harness='quiet')}")[0] == GW.OK
+    approve(rid3, sup.propose(rid3, 'alice', c3, harness='quiet'))
     wait_until(lambda: sup.record(rid3).state == "waiting_scientist", what="the idle run's question")
     work3 = S.run_folder("alice", rid3) / "work"
     turns = (work3 / "turns.log").read_text().splitlines()
@@ -422,7 +430,7 @@ def test_supervised_run_from_approval_to_results():
     rid4 = gw_cmd("mhp-gw open")[1]["run"]
     c4 = charter(rid4, "run one protocol, busy")
     c4["envelope"]["tc"]["actions"] = {"run_protocol": {}}
-    assert gw_cmd(f"mhp-gw approve {rid4} --charter-digest {sup.propose(rid4, 'alice', c4, harness='quiet')}")[0] == GW.OK
+    approve(rid4, sup.propose(rid4, 'alice', c4, harness='quiet'))
     tc = drivers["thermocycler-01"]
     wait_until(lambda: any(j.snapshot().get("state") not in ("done", "failed", "cancelled") for j in tc.jobs.values()),
                what="the protocol to start")
@@ -438,7 +446,7 @@ def test_supervised_run_from_approval_to_results():
     sup.adapters["live"] = H.Command([sys.executable, str(live)], live=True)
     rid5 = gw_cmd("mhp-gw open")[1]["run"]
     c5 = charter(rid5, "sweep the ramp with a background script")
-    assert gw_cmd(f"mhp-gw approve {rid5} --charter-digest {sup.propose(rid5, 'alice', c5, harness='live')}")[0] == GW.OK
+    approve(rid5, sup.propose(rid5, 'alice', c5, harness='live'))
     wait_until(lambda: sup.record(rid5).state == "finished", what="run 5 to finish")
     # finish arrives during the session's reply; the supervisor records the reply and closes the session after it
     wait_until(lambda: any(e["kind"] == "session" and e["action"] == "closed" for e in sup.record(rid5).events()),
@@ -455,7 +463,7 @@ def test_supervised_run_from_approval_to_results():
     # ---- run 6: the session dies between messages; the next message starts it again on the same conversation --
     rid6 = gw_cmd("mhp-gw open")[1]["run"]
     c6 = charter(rid6, "hold the block")
-    assert gw_cmd(f"mhp-gw approve {rid6} --charter-digest {sup.propose(rid6, 'alice', c6, harness='live')}")[0] == GW.OK
+    approve(rid6, sup.propose(rid6, 'alice', c6, harness='live'))
     work6 = S.run_folder("alice", rid6) / "work"
     wait_until(lambda: (work6 / "live.log").is_file() and sup.ctl[rid6].live is not None, what="run 6's session")
     first_pid = json.loads((work6 / "live.log").read_text().splitlines()[0])["pid"]
