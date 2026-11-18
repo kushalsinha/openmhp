@@ -813,6 +813,19 @@ mhp status                                             # this machine: what it i
 
 The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool. `mhp status` (`--json` for an agent or a script) reports every part of the machine it runs on, whichever roles it has: the install, the agent machine's gateway link and skills, the instrument PC's packages, background service and gateway link, the gateway and its service. Each part that needs something names its next step, and the exit code is 1 when anything does.
 
+The parts and the states each is reported in are declared once (`openmhp/states.py`), and `mhp status` reports nothing else:
+
+| Part | Machine | States |
+|---|---|---|
+| `install` | every | `current`, `outdated` (the next step is the upgrade command for this install) |
+| `gateway link` | agent machine, instrument PC | `connected`, `unreachable` (network, VPN, or the gateway is down), `unpaired` (the gateway answered but no longer accepts this machine: pair again), `certificate_changed` (something answers there with a certificate this machine did not pin), `error`, `unknown` (not tried since pairing) |
+| `runs over SSH` | agent machine | `set up`, `not set up` |
+| `agent skills` | agent machine | `current`, `needs update`; each skill is `current`, `outdated`, `newer` or `changed` (newer and hand-edited copies are left alone), or `missing` |
+| `instruments` | instrument PC | `ready`, `not ready` (a package needs `mhp node setup`), `none` |
+| `background service` | instrument PC | `running`, `stopped`, `installed` (the OS cannot say whether it runs), `not installed`, `broken` (it serves a folder that is gone) |
+| `gateway` | lab gateway | `running`, `running old code` (restart it), `not running` |
+| `gateway service` | lab gateway | `not installed` (it stops when its terminal closes) |
+
 ### 10.3 Code files (SDK)
 
 ```python

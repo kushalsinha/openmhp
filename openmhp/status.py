@@ -17,6 +17,8 @@ from . import __version__
 
 
 def part(name: str, state: str, detail: str = "", next_step: str | None = None) -> dict:
+    from .states import check_status_part
+    check_status_part(name, state)                     # only declared states: these words are documented (SPEC 10.2)
     return {"part": name, "state": state, "detail": detail, **({"next": next_step} if next_step else {})}
 
 
@@ -43,9 +45,9 @@ def agent_parts() -> list[dict]:
             out.append(part("gateway link", "connected", f"{cfg['gateway']} as '{cfg['name']}', "
                             f"{len(doc.get('devices', []))} instrument(s) reachable"))
         except urllib.error.HTTPError as e:
-            out.append(part("gateway link", "refused" if e.code == 401 else "error", f"{cfg['gateway']} answered {e.code}",
+            out.append(part("gateway link", "unpaired" if e.code in (401, 403) else "error", f"{cfg['gateway']} answered {e.code}",
                             "pair again: ask the operator for a code (mhp gateway pair-agent there), then "
-                            f"mhp agent --join {cfg['gateway']} <code> --name <your name>" if e.code == 401 else None))
+                            f"mhp agent --join {cfg['gateway']} <code> --name <your name>" if e.code in (401, 403) else None))
         except Exception as e:                                   # noqa: BLE001
             out.append(part("gateway link", "unreachable", f"{cfg['gateway']}: {e}",
                             "check the network or VPN; the operator can check the gateway with mhp gateway status"))

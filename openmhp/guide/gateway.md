@@ -104,6 +104,20 @@ Both the gateway and the node install as a user service: systemd on Linux, a Lau
 
 A running gateway keeps the code it started with, so after an update run `mhp gateway restart`. Once the service is installed, do not also start `mhp gateway serve` in a terminal: only one process can hold the port, and a copy started by hand before an update keeps answering with the old code. `restart` finds such a copy and stops it. Agents and lab PCs use exactly the address and port `mhp gateway status` prints; a name or load balancer in front of it must lead there, port included.
 
+### Is this machine connected?
+
+On any of the three machines, `mhp status` says what the machine is set up as, the state of each part, and the one next step for each part that needs one (`--json` for an agent; the exit code is 1 when something needs doing). The link to the gateway is reported the same way on a lab PC and an agent machine:
+
+| Link | What it means | What to do |
+|---|---|---|
+| `connected` | the gateway answers and accepts this machine | nothing |
+| `unreachable` | no answer: the network, a VPN, or the gateway is down | check the network; on the gateway, `mhp gateway status` |
+| `unpaired` | the gateway answered but no longer accepts this machine (it was removed, or the gateway was set up again) | pair again: a new code from `mhp gateway pair` (or `pair-agent`), then `--join` |
+| `certificate_changed` | something answers at the gateway's address with a certificate this machine did not pin | if the gateway was set up again, pair again; if not, find out what is answering there |
+| `unknown` | nothing has tried the link since pairing | start the node (or its service) |
+
+A failed pairing never replaces one that works: the new certificate is kept only once the gateway has accepted the code.
+
 ## What the relay guarantees
 
 - **Every connection is outbound** from the lab PC, over HTTPS. It passes corporate web proxies. The only thing IT has to confirm is that lab PCs and agent machines can reach the gateway's address and port.

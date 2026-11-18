@@ -52,7 +52,24 @@ The run's agent is **one session for the whole run**, not a script and not a new
 
 - **It does more than run experiments.** Between injections it can read the literature on alcohol separations, refit and question the mechanistic model, and decide that the next experiment is a different one than the optimizer suggested, as long as it is inside the charter.
 
-- **It survives hiccups.** If the session's process dies, or the gateway restarts, the next message starts it again on the same conversation, with its notebook and everything it has learned.
+- **It survives hiccups.** If the session's process dies, the next message starts it again on the same conversation, with its notebook and everything it has learned. If the gateway itself restarts, the run is marked `interrupted`: its instruments were released and their watchdogs acted, so nothing carries on unwatched. Alice resumes it, and its agent checks every instrument and its notebook first, or she stops it.
+
+## Where a run is, and what Alice can do
+
+A run is always in one of these states. Every answer from `mhp-gw` about a run says which, who it is waiting on, and the exact commands that make sense now, each with what it does, so Alice's agent never has to guess the next step.
+
+| State | Waiting on | What she can do |
+|---|---|---|
+| `open` | Alice | hand over files, then `request`; or `stop` it unused |
+| `planning` | the gateway | `wait` for the planner's questions and plan; `message` it; `stop` |
+| `waiting_approval` | Alice | `show` the plan, then `approve` it or `message` changes; or `stop` |
+| `queued` | the gateway | `wait`: it starts when its instruments are free; a `message` is held for the agent |
+| `running` | the gateway | `wait` for news, `message` the agent, `stop` (the agent cleans up first) |
+| `waiting_scientist` | Alice | `answer` its question; the run goes on |
+| `interrupted` | Alice | the gateway restarted mid-run: `resume` it or `stop` it |
+| `finished`, `stopped`, `failed` | nobody | bring the results home, then `ack`; for `failed`, `status` says why it could not run |
+
+A run ends once: a `finish` and a `stop` that race each other cannot both happen. A request the gateway is still acting on when `mhp-gw` stops waiting is answered `pending`, and its answer comes with her next command for that run.
 
 ## What the gateway enforces
 

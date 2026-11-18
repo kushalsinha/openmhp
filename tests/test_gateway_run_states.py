@@ -99,12 +99,12 @@ def test_question_numbers_and_spend_survive_a_restart():
 
 def test_a_run_ends_once_and_its_questions_close_with_it():
     sup, gw = supervisor()
-    rid, rec = new_run(("planning", "waiting_approval", "running"))
+    rid, rec = new_run(("planning", "waiting_approval", "queued", "running"))
     sup.ask(rid, "keep cell 4?")
     with raises(LookupError):
         sup.finish(rid + "x", "", "")                                         # unknown run: nothing written
     with raises(ValueError) as e:
-        sup.ask(new_run(("planning", "waiting_approval", "running", "finished"))[0], "too late?")
+        sup.ask(new_run(("planning", "waiting_approval", "queued", "running", "finished"))[0], "too late?")
     assert "has ended" in str(e.value)
     r = sup.stop(rid, "alice")
     assert r["state"] == "stopped" and gw.calls.count(("end", rid)) == 1
@@ -123,7 +123,7 @@ def test_a_run_ends_once_and_its_questions_close_with_it():
 
 def test_a_finish_and_a_stop_racing_do_not_both_end_the_run():
     sup, gw = supervisor()
-    rid, rec = new_run(("planning", "waiting_approval", "running"))
+    rid, rec = new_run(("planning", "waiting_approval", "queued", "running"))
     assert sup._claim_end(rec, "stop by alice")                               # the stop got there first
     with raises(ValueError) as e:
         sup.finish(rid, "done", "objective met")
@@ -133,7 +133,7 @@ def test_a_finish_and_a_stop_racing_do_not_both_end_the_run():
 
 def test_an_interrupted_run_resumes_and_holds_messages_until_it_starts():
     sup, gw = supervisor()
-    rid, rec = new_run(("planning", "waiting_approval", "running"))
+    rid, rec = new_run(("planning", "waiting_approval", "queued", "running"))
     (PRIVATE / rid / "charter.json").write_text(json.dumps({"run": rid, "owner": "alice"}))
     assert rid in SV.recover(PRIVATE, S.lab_root())                          # other tests leave live runs too
     sup = SV.Supervisor(gw, lab_root=S.lab_root(), runs_dir=PRIVATE, adapters={}, poll_s=0.1)
@@ -169,7 +169,7 @@ def test_every_answer_about_a_run_says_who_it_waits_on_and_what_comes_next():
     assert code == GW.OK and ans["state"] == "waiting_approval" and ans["waiting_on"] == "scientist"
     assert [n["command"].split()[0] for n in ans["next"]] == ["show", "approve", "message", "stop"]
     assert "What you can do now:" in ans["say"] and "approve exactly that plan" in ans["say"]
-    rid2, _ = new_run(("planning", "waiting_approval", "running", "finished"))
+    rid2, _ = new_run(("planning", "waiting_approval", "queued", "running", "finished"))
     code, ans = shell(f"mhp-gw status {rid2}")
     assert ans["waiting_on"] == "nobody" and [n["command"].split()[0] for n in ans["next"]] == ["rsync", "ack"]
 
