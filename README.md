@@ -144,7 +144,8 @@ OpenMHP runs on up to three kinds of machine. Trying it needs only the first.
 
 Always start npx as `npx -y openmhp-cli@latest`, and pip as `pip install -U`: plain
 `npx openmhp-cli` reuses whatever version npx cached the first time, and plain `pip install` keeps
-whatever version is already installed. `mhp --version` says which OpenMHP a machine has; on the
+whatever version is already installed. `mhp status` says what a machine is set up as, the state of each part,
+and the next step for anything that needs one. `mhp --version` says which OpenMHP a machine has; on the
 gateway, an instrument PC or an agent machine, `mhp gateway --version`, `mhp node --version` or
 `mhp agent --version` also says what its running service, or the gateway it joined, runs.
 

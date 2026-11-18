@@ -37,10 +37,11 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", nargs="?", help="guide | lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("target", nargs="?", help="status | guide | lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
     ap.add_argument("--version", "-V", action="store_true", help="this OpenMHP's version; with gateway, node or agent, also what the running service or the joined gateway runs")
+    ap.add_argument("--json", action="store_true", help="(status|inclusion|rubric|conformance) machine-readable output")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
     ap.add_argument("--approved", action="store_true", help="assert human confirmation was obtained")
     ap.add_argument("--dry-run", action="store_true")
@@ -75,6 +76,9 @@ def main(argv=None):
         ap.print_help()
         print("\nThe user guide ships with this package, for machines without web access:  mhp guide", file=sys.stderr)
         return 2
+    if a.target == "status":                # mhp status [--json]: this machine, every part, the next step
+        from . import status
+        return status.main(["--json"] if a.json else [])
     if a.target == "guide":                 # mhp guide [topic | search <words> | path]
         from . import guide
         return guide.main(([a.verb] if a.verb else []) + a.args)
@@ -139,6 +143,12 @@ def main(argv=None):
             cmd = U.node_upgrade_command(rec.get("folder") or a.verb or "<devices folder>", as_service=True, python=rec.get("python"))
             print(f"OpenMHP {__version__} here" + (f"; {latest} is out. The instruments keep working. To update:  {cmd}"
                                                     if U.newer(latest) else " (current)"), file=sys.stderr)
+            from . import relay as R
+            link = R.load_link() if R.load_node_config() else None
+            if link:
+                print(f"gateway link: {link.get('state')} ({link.get('gateway')}{', ' + link['detail'] if link.get('detail') else ''}, "
+                      f"since {link.get('since')})", file=sys.stderr)
+            print("everything about this machine, with next steps:  mhp status", file=sys.stderr)
             return 0
 
         base = a.http or 18900
@@ -346,11 +356,11 @@ def main(argv=None):
 
     if a.target == "inclusion":             # mhp inclusion <device package folder> [--json]
         from .inclusion import main as imain
-        return imain([a.verb, *a.args] if a.verb else [])
+        return imain(([a.verb, *a.args] if a.verb else []) + (["--json"] if a.json else []))
 
     if a.target == "rubric":                # mhp rubric <device package folder> [--json]
         from .rubric import main as rmain
-        return rmain([a.verb, *a.args] if a.verb else [])
+        return rmain(([a.verb, *a.args] if a.verb else []) + (["--json"] if a.json else []))
 
     if a.target == "log":                   # mhp log [since] | mhp log audit
         from .runs import RunLog
@@ -373,7 +383,7 @@ def main(argv=None):
             ap.error("mhp conformance <pkg:folder | http://host:port | local:mod:Class>")
         dev = connect(a.verb, "device-under-test")
         result = crun(dev)
-        if "--json" in (a.args or []):
+        if a.json:
             print(_json.dumps(result, indent=2, default=str))
         else:
             print(creport(result))
@@ -397,7 +407,7 @@ def main(argv=None):
         from .update_check import upgrade_command
         print(f"mhp: {a.target!r} is not a command of OpenMHP {__version__} here, nor a device address "
               "(http://host:port, pkg:<folder>, ...).\n"
-              "Commands: guide, agent, gateway, node, lab, serve, serve-directory, skills, validate, inclusion, rubric, log, "
+              "Commands: status, guide, agent, gateway, node, lab, serve, serve-directory, skills, validate, inclusion, rubric, log, "
               "conformance.\nIf the instructions you follow are newer than this install, update it:  "
               + upgrade_command(), file=sys.stderr)
         return 2
