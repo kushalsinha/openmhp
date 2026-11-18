@@ -15,6 +15,7 @@ import types
 HERE = pathlib.Path(__file__).resolve()
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO))
+os.environ["OPENMHP_SERVICE_MANAGER"] = "none"     # setup takes "install the service" by default: never on this machine
 _tmp_home = tempfile.mkdtemp()
 os.environ["OPENMHP_HOME"] = _tmp_home                                  # relay/node.json and the default devices dir stay out of ~
 from openmhp import node_setup as NS                                     # noqa: E402
@@ -230,6 +231,8 @@ def test_cli_setup_with_yes_and_set_asks_nothing_and_check_then_passes():
         assert not (folder / "config.json").exists() or json.loads((folder / "config.json").read_text())["port"] == "COM21"
         r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip", "--set", "port=COM4"], capture_output=True, text=True, env=env, cwd=td)
         assert r.returncode == 0, r.stderr
+        installed = list((pathlib.Path(td) / "services").glob("*.service"))   # "installed", into this test's own folder
+        assert [p.name for p in installed] == ["openmhp-node.service"], (installed, r.stderr)
         assert json.loads((folder / "config.json").read_text())["port"] == "COM4" and "saved" in r.stderr, r.stderr
         assert "pip install -U pyserial" in r.stderr, r.stderr                               # --no-pip: named, not run
         r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td)

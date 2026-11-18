@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+os.environ["OPENMHP_SERVICE_MANAGER"] = "none"     # nothing here installs a real background service
 from openmhp import node_add                                              # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
