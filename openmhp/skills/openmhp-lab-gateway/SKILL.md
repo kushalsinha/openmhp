@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs a shell with ssh and rsync, and a machine paired with `mhp agent --join` on a gateway that has SSH access turned on. Works in any harness that can run shell commands.
 metadata:
   author: openmhp
-  version: "0.4"
+  version: "0.5"
 ---
 
 # Being the scientist's go-between with the lab gateway
@@ -43,6 +43,23 @@ Every gateway answer is one JSON object. It has a **`say`** field: the news in p
 by the gateway. Show the scientist the `say` text, or retell it in your own words, without losing
 anything in it. Use the rest of the JSON for your own next step (run IDs, digests, `since`).
 
+Every answer about a run also carries **`state`**, **`waiting_on`** (`scientist`, `gateway` or
+`nobody`) and **`next`**: the exact commands that make sense now, each with what it does. Offer the
+scientist those steps, in their words; never guess a step that is not in `next`.
+
+| State | Waiting on | What the scientist can do |
+|---|---|---|
+| `open` | scientist | hand over files with rsync, then `request` |
+| `planning` | gateway | `wait` for the planner's questions and plan; `message` it |
+| `waiting_approval` | scientist | `show` the plan, then `approve` it or `message` changes |
+| `queued` | gateway | `wait`; it starts when its instruments are free |
+| `running` | gateway | `wait`, `message`, `stop` |
+| `waiting_scientist` | scientist | `answer` its question |
+| `interrupted` | scientist | the gateway restarted mid-run: `resume` it (its agent checks the bench first) or `stop` it |
+| `finished`, `stopped`, `failed` | nobody | bring the results home with rsync, then `ack` |
+
+A run that `failed` could not be run at all; `status` says why.
+
 - **`show_to_scientist`**: show it exactly as given, with the run ID. Never shorten or skip it.
   It is how the lab tells them, for example, that a run may need someone in the lab, or how long
   results are kept.
@@ -58,13 +75,14 @@ anything in it. Use the rest of the JSON for your own next step (run IDs, digest
   results are on their machine and what the run suggests doing next.
 - **Refusals** (exit code 3, or `"ok": false`): say what was refused and why, from `say`, and what
   they can do about it. Do not retry the same thing.
-- **Waiting** (exit code 2): the gateway has it but has not acted yet. Say so, and check again a
-  little later.
+- **Waiting** (exit code 2): either nothing new happened yet (`wait`), or the gateway has the request
+  and is still acting on it (`pending`). Say which, from `say`. A late answer to a `pending` request
+  comes back in `earlier` with your next command for that run; tell the scientist what it says.
 
 | Exit code | Meaning | What you tell the scientist |
 |---|---|---|
 | 0 | done | the `say` text |
-| 2 | waiting for a person, or not acted on yet | what is being waited for |
+| 2 | nothing new yet, or still being acted on (`pending`) | what is being waited for (`waiting_on`) |
 | 3 | refused | what was refused and why; do not retry it unchanged |
 | 4 | not found | a wrong run ID, or a run that is not theirs |
 
@@ -114,6 +132,7 @@ ssh mhp-gateway mhp-gw approve R-2611-0042 --charter-digest sha256:...
 ssh mhp-gateway mhp-gw answer R-2611-0042 q1 "re-make cell 4 in the next batch"
 ssh mhp-gateway mhp-gw message R-2611-0042 "stop after 10 more cells"
 ssh mhp-gateway mhp-gw stop R-2611-0042
+ssh mhp-gateway mhp-gw resume R-2611-0042                   # only an interrupted run: it goes on after a gateway restart
 ```
 
 - Approve only after the scientist says yes to the plan they were shown, and pass the digest

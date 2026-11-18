@@ -33,7 +33,8 @@ import shlex
 import sys
 from pathlib import Path
 
-from . import gw_words as W, scientists as S
+from . import atomic as A, gw_words as W, scientists as S
+from .states import RUN_WAITING_ON, run_next
 
 OK, WAITING, REFUSED, NOT_FOUND = 0, 2, 3, 4
 VERBS = {
@@ -47,6 +48,7 @@ VERBS = {
     "message": "message <run id> <text, or on stdin>: tell the running agent something",
     "answer": "answer <run id> <question id> <text, or on stdin>: answer the run's question",
     "stop": "stop <run id>: stop now; the agent cleans up as the charter says",
+    "resume": "resume <run id>: an interrupted run takes its instruments again and goes on; its agent checks the bench first",
     "watch": "watch [--since <ts>] [--for <s>]: news from all your runs, one JSON line each, as it happens",
     "ack": "ack <run id>: your machine received the results and checked them; the gateway may delete its copy",
     "help": "this list",
@@ -78,6 +80,12 @@ class Shell:
         self.execvp = execvp or os.execvp
         self.stdin = stdin if stdin is not None else sys.stdin
         self.wait_s = WAIT_S if wait_s is None else wait_s
+
+    @staticmethod
+    def where(meta: dict) -> dict:
+        """With every answer about a run: its state, who it waits on, and the exact next steps."""
+        state = meta.get("state")
+        return {"state": state, "waiting_on": RUN_WAITING_ON.get(state, "gateway"), "next": run_next(meta)}
 
     def answer(self, code: int, **obj) -> int:
         self.out.write(json.dumps({"ok": code == OK, **obj}, default=str) + "\n")
@@ -222,6 +230,7 @@ class Shell:
         self._run(run_id)
         inbox = S.run_folder(self.scientist, run_id, self.root) / "inbox"
         inbox.mkdir(exist_ok=True)
+        earlier = self.earlier_answers(inbox)
         name = f"{time.strftime('%Y%m%dT%H%M%S')}-{os.getpid()}-{uuid.uuid4().hex[:8]}-{body['kind']}"   # unique per request"
         tmp = inbox / (name + ".tmp")
         tmp.write_text(json.dumps(body), encoding="utf-8")
@@ -230,17 +239,56 @@ class Shell:
         end = time.time() + self.wait_s
         while time.time() < end:
             if done.is_file():
-                ans = json.loads(done.read_text(encoding="utf-8"))
+                ans = json.loads(A.read_text(done))
                 done.unlink()
+                extra = {"earlier": earlier} if earlier else {}
                 if ans.get("ok"):
                     ans = {k: v for k, v in ans.items() if k != "ok"}
-                    return self.answer(OK, **ans, say=say(ans) if say else "Done.")
-                return self.refuse(ans.get("error", "refused"), NOT_FOUND if ans.get("not_found") else REFUSED)
+                    meta = self._run(run_id)
+                    words = (say(ans) if say else "Done.") + " " + W.run_state(meta)
+                    return self.answer(OK, **{**ans, **self.where(meta)}, **extra, say=words + self.earlier_say(earlier))
+                meta = self._run(run_id)
+                why = ans.get("error", "refused")
+                return self.answer(NOT_FOUND if ans.get("not_found") else REFUSED, error=why, **self.where(meta), **extra,
+                                   say=f"The gateway did not do that: {why}. " + W.run_state(meta) + self.earlier_say(earlier))
             time.sleep(0.2)
-        return self.answer(WAITING, run=run_id, pending=body["kind"],
-                           note="the gateway has the request but has not acted on it yet; check again with mhp-gw status",
-                           say=f"The gateway has your {body['kind']} for {run_id} but has not acted on it yet. "
-                               "I will check again shortly.")
+        meta = self._run(run_id)
+        return self.answer(WAITING, run=run_id, pending=body["kind"], **{**self.where(meta), "waiting_on": "gateway"},
+                           **({"earlier": earlier} if earlier else {}),
+                           note=f"the gateway has the {body['kind']} and is still acting on it; its answer comes with your "
+                                "next mhp-gw command for this run, or check with mhp-gw status",
+                           say=f"The gateway has your {body['kind']} for {run_id} and is still working on it. I will "
+                               "bring you its answer with the next thing I ask the gateway about this run."
+                               + self.earlier_say(earlier))
+
+    def earlier_answers(self, inbox: Path) -> list[dict]:
+        """Answers that arrived after mhp-gw stopped waiting for them: delivered with the next request, once. Only
+        answers whose own request has given up waiting: one still waiting reads its answer itself."""
+        import time
+        out = []
+        for f in sorted(inbox.glob("*.done.json")):
+            try:
+                asked = time.mktime(time.strptime(f.name.split("-", 1)[0], "%Y%m%dT%H%M%S"))
+            except ValueError:
+                asked = 0.0
+            if time.time() - asked < self.wait_s + 2:
+                continue
+            try:
+                ans = json.loads(A.read_text(f))
+                f.unlink()
+            except (OSError, ValueError):
+                continue
+            kind = f.name[:-len(".done.json")].rsplit("-", 1)[-1]
+            out.append({"request": kind, **ans})
+        return out
+
+    @staticmethod
+    def earlier_say(earlier: list[dict]) -> str:
+        if not earlier:
+            return ""
+        parts = [f"your earlier {e['request']} " + ("was done" if e.get("ok") else f"was refused: {e.get('error')}")
+                 for e in earlier]
+        return " Also, " + "; ".join(parts) + "."
 
     def verb_request(self, args) -> int:
         if not args:
@@ -266,7 +314,8 @@ class Shell:
             return self.refuse("--since and --timeout take numbers")
         self._run(run_id)
         log = S.run_folder(self.scientist, run_id, self.root) / "events.jsonl"
-        news = {"question", "charter_proposed", "charter_revised", "plan_notes", "state", "finish", "report", "results_ready"}
+        news = {"question", "charter_proposed", "charter_revised", "plan_notes", "state", "finish", "report", "results_ready",
+                "questions_closed"}
         end = time.time() + timeout
         settled = False
         while True:
@@ -286,13 +335,13 @@ class Shell:
             if events or time.time() >= end:
                 meta = self._run(run_id)
                 say = (W.events(events) if events else f"No news from {run_id} yet: it {W.STATES.get(meta.get('state'), meta.get('state'))}")
-                return self.answer(OK if events else WAITING, run=run_id, state=meta.get("state"), events=events,
+                return self.answer(OK if events else WAITING, run=run_id, **self.where(meta), events=events,
                                    since=max([since] + [e["ts"] for e in events]),
                                    open_questions=meta.get("open_questions") or {}, say=say)
             time.sleep(0.5)
 
     NEWS = ("question", "answer", "charter_proposed", "charter_revised", "plan_notes", "state", "report", "finish",
-            "results_ready", "results_deleted")
+            "results_ready", "results_deleted", "questions_closed")
 
     def verb_watch(self, args) -> int:
         """Stream news from every run of this scientist as JSON lines until the connection drops. A heartbeat line
@@ -385,13 +434,25 @@ class Shell:
                             lambda a: f"Run {args[0]} {W.STATES.get(a.get('state'), a.get('state'))} Its agent cleaned up "
                                       "as the plan says; whatever results it had are on the gateway for your machine.")
 
+    def verb_resume(self, args) -> int:
+        if len(args) != 1:
+            return self.refuse("resume needs one run ID")
+        return self.request(args[0], {"kind": "resume"},
+                            lambda a: f"Run {args[0]} is going on again: it takes its instruments back, and its agent "
+                                      "checks the bench before anything else.")
+
     def verb_status(self, args) -> int:
         if len(args) != 1:
             return self.refuse("status needs one run ID, for example: mhp-gw status R-2611-0042")
         meta = S.load_run(self.scientist, S.check_run_id(args[0]), self.root)
         if meta is None:
             raise LookupError(f"no run {args[0]} in your folder")
-        return self.answer(OK, run=meta, say=W.run_state(meta))
+        inbox = S.run_folder(self.scientist, args[0], self.root) / "inbox"
+        earlier = self.earlier_answers(inbox) if inbox.is_dir() else []
+        if earlier:
+            meta = self._run(args[0])
+        return self.answer(OK, run=meta, **self.where(meta), **({"earlier": earlier} if earlier else {}),
+                           say=W.run_state(meta) + self.earlier_say(earlier))
 
 
 def main(argv=None) -> int:

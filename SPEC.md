@@ -718,6 +718,28 @@ The node answers a request with the same `dispatch` the HTTP transport uses, wit
 
 **What the relay does not change.** The node serves its instruments locally exactly as before, with its own device token for callers on the lab network. Emergency stop, the device-side watchdog (§6) and the operator's own controls are on the bench and do not depend on the link; a dropped link is seen by the device as any other silent client, and `watchdog_action` applies.
 
+
+### 9.3 Runs on a gateway
+
+A gateway that runs experiments for scientists (`mhp-gw` over SSH, the reference supervisor) keeps one state per run. The states, their moves and each state's next steps are declared once (`openmhp/states.py`); every move is checked there before anything else happens, so a refused move writes, releases and records nothing.
+
+| State | Waiting on | Moves to |
+|---|---|---|
+| `open` | scientist | `planning` (request), `waiting_approval`, `stopped`, `failed` |
+| `planning` | gateway | `waiting_approval` (a charter), `stopped`, `failed` |
+| `waiting_approval` | scientist | `queued` (approved), `planning` (changes asked), `stopped` |
+| `queued` | gateway | `running` (instruments allocated), `stopped`, `failed` |
+| `running` | gateway | `waiting_scientist`, `finished`, `stopped`, `failed`, `interrupted` |
+| `waiting_scientist` | scientist | `running` (answered), `finished`, `stopped`, `failed`, `interrupted` |
+| `interrupted` | scientist | `queued` (`resume`), `stopped` |
+| `finished`, `stopped`, `failed` | nobody | ended |
+
+- A run ends once. `finish` and `stop` claim the ending before they write anything; the second is refused, or answered with what already happened. Ending closes the run's open questions (`questions_closed`), releases its instruments and its token, and writes a results manifest.
+- `interrupted` means the gateway restarted while the run held instruments: their leases lapsed and their watchdogs acted. It is not ended. `resume` gives the approved charter a new token and queues the run again; its agent is told first to check every instrument and its notebook. A planner interrupted by a restart carries on by itself, since planning moves nothing.
+- `failed` means the gateway could not run it (for example, it could not prepare the run's environment); `failed_because` says why.
+- A message or answer sent while a run is `queued` or `interrupted` is held and given to its agent when it starts. An answer after a run ended is refused.
+- Question ids and the agent's spend are kept in the run's record, so a restart neither reuses an id nor resets a budget.
+- Every `mhp-gw` answer about a run carries `state`, `waiting_on` (`scientist`, `gateway`, `nobody`) and `next`: the commands that make sense now, each with what it does. A request the gateway has not finished acting on when `mhp-gw` stops waiting is answered `pending`; its answer comes back in `earlier` with the next command for that run.
 ---
 
 ## 10. Three control surfaces
