@@ -559,6 +559,10 @@ def setup_package(folder: Path, ask=default_ask, say=default_say, *, answers: di
             say(f"  {name} is ready: {text}")
             break
         say(f"  {name} did not answer: {text}")
+        if ask is auto_ask:                         # no person to fix an answer: asking again would loop forever
+            say(f"  saved anyway. Check the cable and the values, then  mhp node setup {name}  at a terminal "
+                "(or --set key=value) to check again.")
+            break
         try:
             choice = ask("  (f)ix an answer, (c)arry on anyway, or (s)top? [f/c/s]", "f").strip().lower()[:1]
         except Unanswered:
