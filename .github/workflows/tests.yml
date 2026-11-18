@@ -47,6 +47,7 @@ jobs:
           python tests/test_gateway_runs.py
           python tests/test_gateway_charter.py
           python tests/test_gateway_supervisor.py
+          python tests/test_gateway_run_states.py
           python tests/test_gateway_planner.py
           python tests/test_gateway_watcher.py
           python tests/test_gateway_demo.py
