@@ -616,7 +616,7 @@ def finish(root: Path, base: int, ask=default_ask, say=default_say, *, host: str
             pair = parse_pair_line(ans)
             if pair is None:
                 try:
-                    ans = ask("  that is not an address and a code (like  https://gw.lab.local ab12-cd34). Try again, or Enter to skip", None)
+                    ans = ask("  that is not an address and a code (like  https://gw.lab.local:8443 ab12-cd34). Try again, or Enter to skip", None)
                 except Unanswered:
                     ans = ""
                 continue
@@ -635,7 +635,7 @@ def finish(root: Path, base: int, ask=default_ask, say=default_say, *, host: str
                 continue
             break
         if not out["joined"]:
-            say("  (later:  mhp node" + ("" if root == _default_dir() else f" {short(root)}") + " --join https://<gateway> <code>)")
+            say("  (later:  mhp node" + ("" if root == _default_dir() else f" {short(root)}") + " --join https://<gateway>:<port> <code>)")
     # the service
     st = svc.status()
     if st.get("installed"):

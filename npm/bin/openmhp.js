@@ -17,6 +17,10 @@
  *   node [folder]            serve every package in a folder in the background, across reboots
  *   node --service-status | --uninstall-service | --check
  *
+ * Anywhere:
+ *   guide [topic | search <words>]   the user guide, shipped with the package (no web access needed)
+ *   --version                this launcher, and the OpenMHP runtime it runs
+ *
  * The lab gateway is set up with pip (`pip install -U openmhp`, then `mhp gateway init`); see openmhp.com/gateway.
  *
  * Everything lives in ~/.openmhp (venv, fleet.json, devices/). The Python package
@@ -147,8 +151,12 @@ function main() {
     case "mhp": ensureRuntime(); process.exit(run("mhp", rest));
     case "join":                                       // pair this machine with a lab gateway
       ensureRuntime();
-      if (rest.length < 2) { log("usage: npx -y openmhp-cli@latest join https://<gateway> <code> --name <your name>"); process.exit(2); }
+      if (rest.length < 2) { log("usage: npx -y openmhp-cli@latest join https://<gateway>:<port> <code> --name <your name>"); process.exit(2); }
       process.exit(run("mhp", ["agent", "--join", rest[0], rest[1], ...rest.slice(2)]));
+    case "guide": ensureRuntime(); process.exit(run("mhp", ["guide", ...rest]));
+    case "-V": case "--version": case "version":
+      console.log(`openmhp-cli ${require("../package.json").version} (launcher)`);
+      ensureRuntime(); process.exit(run("mhp", ["--version", ...rest]));
     case "home": console.log(HOME); return;
     case "-h": case "--help": case "help":
       console.log(fs.readFileSync(__filename, "utf8").split("*/")[0].split("\n").slice(1).map((l) => l.replace(/^(\/\*| \*) ?/, "")).join("\n"));

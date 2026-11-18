@@ -96,7 +96,7 @@ class SimBackend(real.ArbinBackend):
             try:
                 req = json.loads(req_path.read_text(encoding="utf-8"))
                 self._export(req)
-                req_path.unlink()
+                req_path.unlink(missing_ok=True)
                 self.running.discard(req["channel"])
             except OSError:                             # withdrawn: nobody started it
                 pass

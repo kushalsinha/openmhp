@@ -1,6 +1,6 @@
 """`mhp agent`: the agent-machine half of gateway pairing (SPEC 9.2), the mirror of `mhp node --join`.
 
-    mhp agent --join https://gw.office ab12-cd34     pair this machine once, with a code from `mhp gateway pair-agent`
+    mhp agent --join https://gw.office:8443 ab12-cd34     pair this machine once, with a code from `mhp gateway pair-agent`
     mhp agent                                        which gateway this machine is paired with, and whether it answers
     mhp agent leave                                  forget the gateway (the operator revokes with `mhp gateway remove-agent`)
 
@@ -202,7 +202,7 @@ def status() -> int:
     cfg = load_agent_config()
     if cfg is None:
         say("not paired with a gateway. Ask the operator for a code (`mhp gateway pair-agent` there), then:",
-            "  mhp agent --join https://<gateway> <code> --name <your name, e.g. alice>",
+            "  mhp agent --join https://<gateway>:<port> <code> --name <your name, e.g. alice>",
             "  (on a gateway that runs experiments, the name is your folder there; without it, this computer's name)")
         return 1
     if cfg.get("ssh"):

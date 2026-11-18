@@ -103,7 +103,7 @@ def test_packages_validate_and_real_drivers_load():
             try:                                                           # pyserial / pymodbus absent: fail cleanly, never half-load
                 dev = LocalDevice(load_driver(ROOT / name))
                 assert dev.read("connected") is False
-            except (ImportError, RemoteError, RuntimeError):
+            except (ImportError, OSError, RemoteError, RuntimeError):   # OSError: pyserial present, no port
                 pass
     for name, ref in (("retsch-planetary-mill", "protocol.md"), ("aja-sputter-system", "registers.md"),
                       ("arbin-battery-cycler", "file_formats.md"), ("neware-battery-cycler", "bts_api.md"),
