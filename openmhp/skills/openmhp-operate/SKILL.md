@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs an MCP connection to an mhp-mcp bridge (stdio or HTTP). Works in any harness that supports MCP tools.
 metadata:
   author: openmhp
-  version: "0.3"
+  version: "0.4"
 ---
 
 # Operating hardware through OpenMHP
