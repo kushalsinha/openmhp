@@ -54,21 +54,45 @@ Three commands set it up, and each one hands out a different secret to a differe
 
 ### On the gateway machine, once
 
-Any always-on desktop or small VM on the company network. `pip install -U openmhp`, then:
+Any always-on desktop or small VM on the company network.
+
+1. Install OpenMHP:
 
 ```
-mhp gateway init                      # asks for the address others will use and a port (8443); makes a certificate
-mhp gateway serve --install-service   # runs now and after every reboot
+pip install -U openmhp
+```
+
+2. Make this machine the gateway. It asks for the address others will use and a port (8443), and makes a certificate:
+
+```
+mhp gateway init
+```
+
+3. Run it now and after every reboot:
+
+```
+mhp gateway serve --install-service
 ```
 
 The gateway listens on that one address and port only, never on every interface. Take the port `init` suggests, 8443: a background service runs as an ordinary user, and on Linux an ordinary user cannot open 443. Every machine then uses the address with its port, such as `https://gw.office:8443`; `mhp gateway status` prints it. If IT gives you a certificate, pass `--cert` and `--key` to `init`; otherwise it makes one, and every machine that joins pins it. TLS 1.2 is the oldest it will speak.
 
 ### For each lab PC
 
-On the gateway, `mhp gateway pair` prints a one-time code and the line to paste. On the lab PC, the scientist names the instrument they are standing next to:
+1. On the gateway, print a one-time code (15 minutes) and the line to paste:
+
+```
+mhp gateway pair
+```
+
+2. On the lab PC, install OpenMHP:
 
 ```
 pip install -U "openmhp[node]"
+```
+
+3. Name the instrument you are standing next to:
+
+```
 mhp node add waters-empower-hplc
 ```
 
@@ -76,18 +100,35 @@ It asks the instrument's own questions, then *Does your lab have an OpenMHP gate
 
 ### For each agent machine
 
-On the gateway, `mhp gateway pair-agent` prints a one-time code that lasts an hour. Send it to the person in chat. On their machine, once:
+1. On the gateway, print a one-time code (1 hour) for the scientist, named after them, and send it to them in chat:
 
 ```
-mhp agent --join https://gw.office:8443 ef56-ab78 --name alice                      # installed with pip
-npx -y openmhp-cli@latest join https://gw.office:8443 ef56-ab78 --name alice      # installed with npx
+mhp gateway pair-agent alice
 ```
 
-With npx, run OpenMHP's commands through the launcher (`npx -y openmhp-cli@latest mhp ...`): its `mhp` is not put on your PATH, and a bare `mhp` may be an older pip install.
+On a gateway that runs experiments, the name is the scientist's folder there (lower-case letters, digits, `-` and `_`). Without a name, the scientist adds `--name alice` when joining; with neither, it is their computer's name.
 
-On a gateway that runs experiments, the name is the scientist's folder there (lower-case letters, digits, `-` and `_`); without `--name` it is the computer's name. The operator can fix it instead with `mhp gateway pair-agent alice`, and the code then joins as alice whatever the machine says.
+2. On the scientist's machine, install OpenMHP as in the [quickstart](https://openmhp.com/quickstart#try), then join with the code:
 
-It shows the gateway's certificate fingerprint to compare with what `pair-agent` printed, pins the certificate, exchanges the code for an agent token and saves it in `~/.openmhp/agent.json`. From then on plain `mhp-mcp` finds every instrument of every joined lab PC through the gateway's directory: no environment variable to set, no certificate to copy, and the token never passes through the operator's hands. `mhp agent` says whether the gateway answers; `mhp agent leave` forgets it.
+```
+mhp agent --join https://gw.office:8443 <code>
+```
+
+Installed with npx:
+
+```
+npx -y openmhp-cli@latest join https://gw.office:8443 <code>
+```
+
+3. Still on the scientist's machine, check the link; `gateway link` should say `connected`:
+
+```
+mhp status
+```
+
+With npx, run OpenMHP's commands through the launcher (`npx -y openmhp-cli@latest mhp status`): its `mhp` is not put on your PATH, and a bare `mhp` may be an older pip install.
+
+It shows the gateway's certificate fingerprint to compare with what `pair-agent` printed, pins the certificate, exchanges the code for an agent token and saves it in `~/.openmhp/agent.json`. Joining also installs the `openmhp-lab-gateway` skill and, when the gateway offers SSH (`mhp gateway ssh`), sets up `ssh mhp-gateway` for runs and files. From then on plain `mhp-mcp` finds every instrument of every joined lab PC through the gateway's directory: no environment variable to set, no certificate to copy, and the token never passes through the operator's hands. `mhp agent` says whether the gateway answers; `mhp agent leave` forgets it. What a scientist does next, step by step: [quickstart](https://openmhp.com/quickstart#scientist); running experiments through the gateway: [experiment flow](https://openmhp.com/experiment-flow#by-hand).
 
 ## Day to day
 
