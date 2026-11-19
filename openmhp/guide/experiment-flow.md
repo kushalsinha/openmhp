@@ -122,7 +122,85 @@ export PATH="<the bin folder it prints>:$PATH"                      # ... which 
 ssh mhp-gateway mhp-gw open
 ```
 
-On a real gateway, turn on scientists' folders with `mhp gateway ssh`, pair each scientist's machine with `mhp gateway pair-agent` there and `mhp agent --join` on the laptop, and install the agent harness on the gateway signed in as the lab's.
+## On a real gateway
+
+The operator sets up the gateway with experiments turned on (`mhp gateway ssh` and the agent harness installed there), then pairs each scientist; every step is on the [quickstart](https://openmhp.com/quickstart#gateway). The one command for a scientist, on the gateway:
+
+```
+mhp gateway pair-agent alice
+```
+
+Alice then joins once from her laptop with the code, as on the [quickstart](https://openmhp.com/quickstart#scientist):
+
+```
+mhp agent --join https://gw.office:8443 <code>
+```
+
+From then on she simply asks her agent; the `openmhp-lab-gateway` skill runs the commands below for her.
+
+## The same, by hand
+
+Every command runs over SSH on the gateway, in her own folder. In order:
+
+1. Open a run. It answers with the run's ID:
+
+```
+ssh mhp-gateway mhp-gw open
+```
+
+2. Hand over your skills, scripts and data:
+
+```
+rsync -a ./my-run/ mhp-gateway:runs/<run id>/in/
+```
+
+3. Say what you need in plain English; a planner starts:
+
+```
+ssh mhp-gateway mhp-gw request <run id> < request.md
+```
+
+4. Wait for its questions and its plan:
+
+```
+ssh mhp-gateway mhp-gw wait <run id>
+```
+
+5. Read the plan (its charter) and the preview of the data:
+
+```
+ssh mhp-gateway mhp-gw show <run id>
+```
+
+6. Approve exactly that plan, using the digest `show` printed:
+
+```
+ssh mhp-gateway mhp-gw approve <run id> --charter-digest <digest>
+```
+
+7. Bring the results home when it ends:
+
+```
+rsync -a mhp-gateway:runs/<run id>/out/ ./results/
+```
+
+8. After checking them, let the gateway delete its copy:
+
+```
+ssh mhp-gateway mhp-gw ack <run id>
+```
+
+While it runs, the answer to every command lists what makes sense now: `answer <run id> <question id> <text>` a question, `message <run id> <text>` the agent, `stop <run id>`, or `resume <run id>` after a gateway restart. To see all her runs:
+
+```
+ssh mhp-gateway mhp-gw list
+```
+
+To hear about her runs even when no agent is open:
+
+```
+mhp agent watch --install-service
+```
 
 ## Next
 
