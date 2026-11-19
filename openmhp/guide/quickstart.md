@@ -20,6 +20,8 @@ pip install -U "openmhp[all]"
 mhp skills install
 ```
 
+If your shell then says `mhp: command not found`, pip installed into a different Python than the one on your PATH. Install with `python3 -m pip install -U "openmhp[all]"` instead; with pyenv, run `pyenv rehash` afterwards. If pip refuses with `externally-managed-environment` (Homebrew or system Python), use [pipx](https://pipx.pypa.io): `pipx install "openmhp[all]"`.
+
 2. Register the MCP server with your agent. For Claude Code:
 
 ```
