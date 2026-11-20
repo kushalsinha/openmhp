@@ -88,6 +88,14 @@ def test_wrapped_face_schema_is_one_string_form():
     assert all(isinstance(ex["value"], str) for ex in w["input_examples"])
 
 
+def test_wrapped_examples_parse_as_json():
+    # a model copies an example's value verbatim into its own call; a value that json.loads
+    # rejects makes the device see the literal escaped text (the shipped trigger_source bug)
+    w = [t for t in mb.Bridge(write_face="wrapped").tools() if t["name"] == "mhp_write"][0]
+    for ex in w["input_examples"]:
+        json.loads(ex["value"])
+
+
 def test_restore_matrix():
     b, dev = mb.Bridge(write_face="wrapped"), FakeDev()
     for name, value, expect in [("ch1_enabled", "true", True), ("ch1_probe_atten", "10", 10),
@@ -112,8 +120,14 @@ def test_refuses_double_wrapped_boolean_with_correction():
 
 
 def test_refuses_json_number_for_string_target():
-    e = refused(mb.Bridge(write_face="wrapped"), FakeDev(), "trigger_coupling", "5")
+    # "5" parses as a number, so the plain-text hint would make a weak model send "5" again and
+    # loop; the correction must branch on what happened and show the nested-quote form instead
+    b, dev = mb.Bridge(write_face="wrapped"), FakeDev()
+    e = refused(b, dev, "trigger_coupling", "5")
     assert e is not None and e.data["category"] == "unrestorable"
+    assert 'Send {"value": "\\"5\\""}' in e.message
+    b._write_wrapped(dev, {"device": "d", "name": "trigger_coupling", "value": '"5"'})
+    assert dev.written[-1]["value"] == "5"         # following the quoted form succeeds: no loop
 
 
 def test_refuses_non_string_value():
