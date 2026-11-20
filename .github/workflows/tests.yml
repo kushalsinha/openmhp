@@ -13,6 +13,7 @@ permissions:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25              # a hung test fails the leg instead of running for hours
     strategy:
       fail-fast: false
       matrix:
@@ -34,18 +35,26 @@ jobs:
         # would report only the exit code of the last one
         shell: bash
         env:
+          PYTHONUNBUFFERED: "1"            # the log shows where a script is, even when it hangs
           OPENMHP_NO_UPDATE_CHECK: "1"     # no PyPI calls from CI; the tests that need the check turn it on themselves
         run: |
           python tests/test_adapters.py
           python tests/test_runs.py
           python tests/test_safety_gates.py
+          python tests/test_device_states.py
           python tests/test_inclusion.py
           python tests/test_methods.py
           python tests/test_write_face.py
           python tests/test_relay.py
+          python tests/test_guide_and_versions.py
+          python tests/test_node_add.py
+          python tests/test_node_setup.py
+          python tests/test_setup_states.py
           python tests/test_gateway_runs.py
           python tests/test_gateway_charter.py
           python tests/test_gateway_supervisor.py
+          python tests/test_gateway_run_states.py
+          python tests/test_state_docs.py
           python tests/test_gateway_planner.py
           python tests/test_gateway_watcher.py
           python tests/test_gateway_demo.py
