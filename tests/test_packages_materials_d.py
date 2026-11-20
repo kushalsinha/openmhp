@@ -78,7 +78,7 @@ def fault_on_read(dev, sig):
     except RemoteError as e:
         assert "injected fault" in str(e), e
     if dev.read("state") != "idle":
-        dev.reset()
+        dev.reset(approved=True)
     assert dev.read("state") == "idle" and dev.read(sig) is not None
 
 
@@ -103,7 +103,7 @@ def test_packages_validate_and_real_drivers_load():
             try:                                                           # pyserial / pymodbus absent: fail cleanly, never half-load
                 dev = LocalDevice(load_driver(ROOT / name))
                 assert dev.read("connected") is False
-            except (ImportError, RemoteError, RuntimeError):
+            except (ImportError, OSError, RemoteError, RuntimeError):   # OSError: pyserial present, no port
                 pass
     for name, ref in (("retsch-planetary-mill", "protocol.md"), ("aja-sputter-system", "registers.md"),
                       ("arbin-battery-cycler", "file_formats.md"), ("neware-battery-cycler", "bts_api.md"),
@@ -158,7 +158,7 @@ def test_neware_battery_cycler_twin():
         raise AssertionError("expected the protected channel to fail the job")
     except RemoteError as e:
         assert "protect" in str(e) and dev.read("state") == "fault", e
-    dev.reset()
+    dev.reset(approved=True)
     stop = dev.wait(dev.invoke("stop_channel", channel="1-1-2"), poll=0.02)["result"]
     assert stop["channel"] == "1-1-2" and stop["channel_state"] == "protect"      # a stop does not clear the alarm
     # cancelling a running protocol sends stop to that channel
@@ -333,7 +333,7 @@ def test_aja_sputter_system_twin():
         raise AssertionError("expected the failed ignition to fail the job")
     except RemoteError as e:
         assert "did not strike" in str(e) and ("coil", 10, [1]) not in plc.log[-6:], e
-    dev.reset()
+    dev.reset(approved=True)
     # cancelling mid-film closes the shutter and turns the supply off
     j = dev.invoke("deposit", approved=True, power_w=100, presputter_s=0, duration_s=7200, rate_nm_per_min=8.5)
     wait_until(lambda: dev.read("shutter_open"), timeout=10)

@@ -37,9 +37,11 @@ def _parse_value(s: str):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
-    ap.add_argument("target", help="lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
-    ap.add_argument("verb", nargs="?", help="find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
+    ap.add_argument("target", nargs="?", help="status | guide | lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
+    ap.add_argument("verb", nargs="?", help="ping|find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")
     ap.add_argument("args", nargs="*")
+    ap.add_argument("--version", "-V", action="store_true", help="this OpenMHP's version; with gateway, node or agent, also what the running service or the joined gateway runs")
+    ap.add_argument("--json", action="store_true", help="(status|inclusion|rubric|conformance) machine-readable output")
     ap.add_argument("--wait", action="store_true", help="block until an invoked job finishes")
     ap.add_argument("--approved", action="store_true", help="assert human confirmation was obtained")
     ap.add_argument("--dry-run", action="store_true")
@@ -55,7 +57,7 @@ def main(argv=None):
     ap.add_argument("--dry-run-service", action="store_true", help="(node --install-service) print what would be written and run, but do neither")
     ap.add_argument("--check", action="store_true", help="(node) check the packages and ports and say what to fix, without serving")
     ap.add_argument("--name", help="(gateway init) the address lab PCs and agents will use for the gateway; (node|agent --join) this machine's name at the gateway")
-    ap.add_argument("--listen", type=int, metavar="PORT", help="(gateway init|serve) TLS port, default 443")
+    ap.add_argument("--listen", type=int, metavar="PORT", help="(gateway init|serve) TLS port; init suggests 8443 (443 needs administrator rights)")
     ap.add_argument("--cert", metavar="FILE", help="(gateway init) TLS certificate from IT; a self-signed one is made otherwise")
     ap.add_argument("--key", metavar="FILE", help="(gateway init) private key for --cert")
     ap.add_argument("--join", nargs=2, metavar=("GATEWAY_URL", "CODE"), help="(node|agent) pair this machine with a gateway once, using a code from `mhp gateway pair` (node) or `mhp gateway pair-agent` (agent) there; later runs connect by themselves")
@@ -67,6 +69,19 @@ def main(argv=None):
     ap.add_argument("--no-pip", action="store_true", help="(node add|setup) do not install the vendor client; name it instead")
     ap.add_argument("--from", dest="from_", metavar="FOLDER|ARCHIVE", help="(node add) take the package from a local checkout, a copied folder or a .tar.gz instead of downloading it")
     a = ap.parse_args(argv)
+    if a.version:                           # mhp --version | mhp gateway|node|agent --version
+        from . import versions
+        return versions.main(a.target)
+    if not a.target:
+        ap.print_help()
+        print("\nThe user guide ships with this package, for machines without web access:  mhp guide", file=sys.stderr)
+        return 2
+    if a.target == "status":                # mhp status [--json]: this machine, every part, the next step
+        from . import status
+        return status.main(["--json"] if a.json else [])
+    if a.target == "guide":                 # mhp guide [topic | search <words> | path]
+        from . import guide
+        return guide.main(([a.verb] if a.verb else []) + a.args)
 
     def _serve_token():
         """What the operator asked for: a token of their own, none at all, or the default (one is
@@ -128,6 +143,12 @@ def main(argv=None):
             cmd = U.node_upgrade_command(rec.get("folder") or a.verb or "<devices folder>", as_service=True, python=rec.get("python"))
             print(f"OpenMHP {__version__} here" + (f"; {latest} is out. The instruments keep working. To update:  {cmd}"
                                                     if U.newer(latest) else " (current)"), file=sys.stderr)
+            from . import relay as R
+            link = R.load_link() if R.load_node_config() else None
+            if link:
+                print(f"gateway link: {link.get('state')} ({link.get('gateway')}{', ' + link['detail'] if link.get('detail') else ''}, "
+                      f"since {link.get('since')})", file=sys.stderr)
+            print("everything about this machine, with next steps:  mhp status", file=sys.stderr)
             return 0
 
         base = a.http or 18900
@@ -140,6 +161,26 @@ def main(argv=None):
         if not folders:
             ap.error(f"no device packages in {short(root)}. Add one with:  mhp node add <package>" + ("" if root == default_dir() else f" {short(root)}")
                      + "   (`mhp node add` alone lists them)")
+
+        from . import relay as R
+        service_on = not a.dry_run_service and (a.install_service or svc.status()["installed"])
+        if a.join and service_on:
+            # pairing is separate from serving: the background service holds the ports and the instruments, so join
+            # here without touching either, then (re)start the service, which connects to the gateway on its own
+            try:
+                cfg = R.join(a.join[0], a.join[1], {}, name=a.name)
+            except SystemExit as e:
+                print(f"COULD NOT JOIN THE GATEWAY: {e}", file=sys.stderr)
+                return 1
+            print(f"joined gateway {cfg['gateway']} as '{cfg['name']}'; saved to {R.NODE_FILE}", file=sys.stderr)
+            if not a.install_service:
+                rec = svc.installed_record() or {}
+                r = svc.restart(rec.get("folder") or root, int(rec.get("http") or base))
+                for step in r.get("steps", []):
+                    print(f"  {step}", file=sys.stderr)
+                print("the background service restarted and now serves these instruments through the gateway too."
+                      if r["ok"] else f"FAILED to restart the service: {r.get('error') or 'see above'}", file=sys.stderr)
+                return 0 if r["ok"] else 1
 
         if a.install_service or a.dry_run_service:
             # already installed: reinstall AND restart, so an update or new packages take effect now
@@ -197,7 +238,6 @@ def main(argv=None):
             print(f"  {drv.descriptor['device']['id']:24s} http://{host}:{port}  ({folder})", file=sys.stderr)
 
         # the relay: this PC dials OUT to a gateway so agents beyond the firewall can reach these devices
-        from . import relay as R
         relay_cfg = None
         if a.join:
             try:
@@ -242,7 +282,7 @@ def main(argv=None):
             print("  Nothing to open on the lab network. If the gateway is down, this PC keeps retrying by itself.", file=sys.stderr)
         elif served:
             print("\nAgents beyond the firewall: pair this PC with your lab's gateway once. Ask whoever runs it for a code", file=sys.stderr)
-            print(f"  (`mhp gateway pair` there), then:  mhp node {root} --join https://<gateway> <code>", file=sys.stderr)
+            print(f"  (`mhp gateway pair` there), then:  mhp node {root} --join https://<gateway>:<port> <code>", file=sys.stderr)
         if token is False and on_lan:
             print("\nWARNING: --no-auth: anyone on this network can drive these instruments, and agents cannot be asked for approvals.", file=sys.stderr)
         print("=" * 72, file=sys.stderr)
@@ -316,11 +356,11 @@ def main(argv=None):
 
     if a.target == "inclusion":             # mhp inclusion <device package folder> [--json]
         from .inclusion import main as imain
-        return imain([a.verb, *a.args] if a.verb else [])
+        return imain(([a.verb, *a.args] if a.verb else []) + (["--json"] if a.json else []))
 
     if a.target == "rubric":                # mhp rubric <device package folder> [--json]
         from .rubric import main as rmain
-        return rmain([a.verb, *a.args] if a.verb else [])
+        return rmain(([a.verb, *a.args] if a.verb else []) + (["--json"] if a.json else []))
 
     if a.target == "log":                   # mhp log [since] | mhp log audit
         from .runs import RunLog
@@ -343,7 +383,7 @@ def main(argv=None):
             ap.error("mhp conformance <pkg:folder | http://host:port | local:mod:Class>")
         dev = connect(a.verb, "device-under-test")
         result = crun(dev)
-        if "--json" in (a.args or []):
+        if a.json:
             print(_json.dumps(result, indent=2, default=str))
         else:
             print(creport(result))
@@ -361,19 +401,21 @@ def main(argv=None):
         return serve_http(d, host=a.host or "127.0.0.1", port=a.http, token=_serve_token()) if a.http \
             else serve_stdio(d)
 
+    from .driver import TERMINAL
     v, x = a.verb, a.args
     if not a.target.startswith(("http://", "https://", "stdio:", "local:", "pkg:", "sim:")):
         from . import __version__
         from .update_check import upgrade_command
         print(f"mhp: {a.target!r} is not a command of OpenMHP {__version__} here, nor a device address "
               "(http://host:port, pkg:<folder>, ...).\n"
-              "Commands: agent, gateway, node, lab, serve, serve-directory, skills, validate, inclusion, rubric, log, "
+              "Commands: status, guide, agent, gateway, node, lab, serve, serve-directory, skills, validate, inclusion, rubric, log, "
               "conformance.\nIf the instructions you follow are newer than this install, update it:  "
               + upgrade_command(), file=sys.stderr)
         return 2
     try:
         dev = connect(a.target, token=a.token)
         if v == "find":      out = dev.call("directory/search", {"query": " ".join(x)})["results"]
+        elif v == "ping":    out = dev.call("ping")
         elif v == "describe":
             out = dev.call("device/describe", {"detail": x[0]} if x else {})
         elif v == "resources":
@@ -389,17 +431,65 @@ def main(argv=None):
         elif v == "cancel":  out = dev.cancel(x[0])
         elif v == "wait":    out = dev.wait(x[0])
         elif v == "estop":   out = dev.estop(" ".join(x))
-        elif v == "reset":   out = dev.reset()
+        elif v == "reset":   out = dev.reset(approved=a.approved)
         elif v == "acquire": out = dev.acquire()
         elif v == "release": out = dev.release()
         elif v == "rpc":     out = dev.call(x[0], _parse_value(x[1]) if len(x) > 1 else {})
         else:
             ap.error(f"unknown verb {v}")
     except RemoteError as e:
-        print(json.dumps({"error": {"code": e.code, "message": e.message, "data": e.data}}, indent=2))
+        err = {"code": e.code, "message": e.message, "data": e.data}
+        for k in ("transient", "effect", "recovery"):
+            if getattr(e, k, None) is not None:
+                err[k] = getattr(e, k)
+        if getattr(e, "device_state", None):
+            err["state"] = e.device_state
+        print(json.dumps({"error": err}, indent=2))
+        if e.code == -32012 and not a.approved and v in ("write", "invoke", "reset"):
+            print(f"you are the person this asks: if you have checked it, run the same command with --approved",
+                  file=sys.stderr)
+        else:
+            _say_next(a.target, getattr(e, "next", None))
+        _done_with(dev, v)
         return 1
     print(json.dumps(out, indent=2))
+    if v == "ping" and isinstance(out, dict):
+        _say_next(a.target, out.get("next"))
+    if v == "invoke" and not a.wait and not a.dry_run and isinstance(out, dict) and out.get("state") not in TERMINAL:
+        try:
+            wd = dev.call("safety/limits").get("watchdog_s")
+        except RemoteError:
+            wd = None
+        if wd:
+            print(f"this device's watchdog acts if its lease holder is silent for {wd}s, and this command ends now: "
+                  f"run it with --wait to stay with the job, or drive it from a script or an agent", file=sys.stderr)
+    _done_with(dev, v)
     return 0
+
+
+# the mhp command for a wire method, so a person at a terminal reads steps they can type
+_CLI_VERB = {"device/describe": "describe summary", "safety/limits": "limits", "signals/read": "read <signal>",
+             "settings/write": "write <setting> <value>", "actions/invoke": "invoke <action> '<params json>' --dry-run",
+             "jobs/status": "status <job id>", "jobs/cancel": "cancel <job id>", "jobs/list": "rpc jobs/list",
+             "safety/reset": "reset --approved", "safety/estop": "estop <reason>", "ping": "ping",
+             "session/acquire": "acquire"}
+
+
+def _say_next(target: str, steps) -> None:
+    """The device's next steps (SPEC 5.9), as lines a person can act on."""
+    for st in steps or []:
+        verb = _CLI_VERB.get(st.get("method") or "")
+        print("next: " + (f"mhp {target} {verb}   ({st['does']})" if verb else st["does"]), file=sys.stderr)
+
+
+def _done_with(dev, verb: str) -> None:
+    """A one-shot command gives back the lease it took, so the next command (a new session) is not refused.
+    `acquire` is the exception: holding it is what was asked."""
+    if verb != "acquire":
+        try:
+            dev.close()
+        except Exception:                          # noqa: BLE001
+            pass
 
 
 if __name__ == "__main__":

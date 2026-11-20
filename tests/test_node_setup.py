@@ -12,9 +12,13 @@ import sys
 import tempfile
 import types
 
+import faulthandler
+faulthandler.dump_traceback_later(300, exit=True)   # a hang prints every thread's stack and fails, never runs on
+
 HERE = pathlib.Path(__file__).resolve()
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO))
+os.environ["OPENMHP_SERVICE_MANAGER"] = "none"     # setup takes "install the service" by default: never on this machine
 _tmp_home = tempfile.mkdtemp()
 os.environ["OPENMHP_HOME"] = _tmp_home                                  # relay/node.json and the default devices dir stay out of ~
 from openmhp import node_setup as NS                                     # noqa: E402
@@ -161,15 +165,36 @@ def test_setup_package_installs_asks_probes_and_offers_fix_or_stop():
                 pass
         finally:
             NS.probe = real_probe
-        # the simulated twin needs no instrument
-        s = Script("n", "2")
-        r = NS.setup_package(folder, s.ask, s.say, sim=True, pip_run=pip_run)
+        # the simulated twin needs no instrument (the port list is fixed: a CI machine may have real ports)
+        NS.serial_ports = lambda: ["COM20", "COM21"]
+        try:
+            s = Script("n", "2")
+            r = NS.setup_package(folder, s.ask, s.say, sim=True, pip_run=pip_run)
+        finally:
+            NS.serial_ports = real_ports
         assert r["probe"] is True and "simulated" in r["probe_text"]
         # a package without settings
         folder2 = _copy("ika-c-mag-hs7", pathlib.Path(td))
         s = Script("n")
         r = NS.setup_package(folder2, s.ask, s.say, sim=True, pip_run=pip_run)
         assert r["configured"] and s.heard("needs no settings")
+
+
+def test_no_terminal_and_an_instrument_that_does_not_answer_saves_and_stops_asking():
+    """--yes on a PC where the check fails (no instrument on that port yet): nobody can fix an answer, so setup
+    saves, says how to check again, and ends. It once looped forever on Windows, re-asking itself the same port."""
+    with tempfile.TemporaryDirectory() as td:
+        folder = _copy("globalfia-flopro-sampler", pathlib.Path(td))
+        real_probe = NS.probe
+        calls = []
+        NS.probe = lambda f, cfg, sim=False: (calls.append(cfg["port"]), (False, "COM4 cannot be opened"))[1]
+        said = []
+        try:
+            r = NS.setup_package(folder, NS.auto_ask, said.append, answers={"port": "COM4"}, sim=False, pip=False)
+        finally:
+            NS.probe = real_probe
+        assert calls == ["COM4"] and r["configured"] and r["probe"] is False, (calls, r)
+        assert any("saved anyway" in t and "mhp node setup globalfia-flopro-sampler" in t for t in said), said
 
 
 def test_finish_pairs_with_the_gateway_and_installs_the_service():
@@ -220,26 +245,28 @@ def test_cli_setup_with_yes_and_set_asks_nothing_and_check_then_passes():
     with tempfile.TemporaryDirectory() as td:
         env = {**os.environ, "OPENMHP_HOME": td, "PYTHONPATH": str(REPO)}
         cli = [sys.executable, "-m", "openmhp.cli", "node"]
-        r = subprocess.run([*cli, "add", "globalfia-flopro-sampler", "--from", str(REPO)], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL)
+        r = subprocess.run([*cli, "add", "globalfia-flopro-sampler", "--from", str(REPO)], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 0 and "mhp node setup globalfia-flopro-sampler" in r.stderr, r.stderr   # no terminal: the steps are printed
         folder = pathlib.Path(td) / "devices" / "globalfia-flopro-sampler"
-        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 1 and "not set up yet" in r.stderr and "mhp node setup globalfia-flopro-sampler" in r.stderr, r.stderr
-        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 1 and "port still need an answer" in r.stderr and "--set" in r.stderr, r.stderr
         assert not (folder / "config.json").exists() or json.loads((folder / "config.json").read_text())["port"] == "COM21"
-        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip", "--set", "port=COM4"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip", "--set", "port=COM4"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 0, r.stderr
+        installed = list((pathlib.Path(td) / "services").glob("*.service"))   # "installed", into this test's own folder
+        assert [p.name for p in installed] == ["openmhp-node.service"], (installed, r.stderr)
         assert json.loads((folder / "config.json").read_text())["port"] == "COM4" and "saved" in r.stderr, r.stderr
-        assert "pip install pyserial" in r.stderr, r.stderr                               # --no-pip: named, not run
-        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td)
+        assert "pip install -U pyserial" in r.stderr, r.stderr                               # --no-pip: named, not run
+        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 0 and "ready to serve" in r.stderr, r.stderr
-        r = subprocess.run([*cli, "setup", "nope"], capture_output=True, text=True, env=env, cwd=td)
+        r = subprocess.run([*cli, "setup", "nope"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 1 and "no package named nope" in r.stderr
 
 
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
-            fn(); print("ok ", name)
+            print("..  ", name, flush=True); fn(); print("ok ", name, flush=True)
     shutil.rmtree(_tmp_home, ignore_errors=True)

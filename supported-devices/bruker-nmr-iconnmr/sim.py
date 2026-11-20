@@ -40,10 +40,9 @@ class SimBackend(real.IconNMRBackend):
         now = time.monotonic()
         for token, j in list(self.jobs.items()):
             if now >= j["read_at"] and j["path"].exists():
-                j["path"].unlink()                                   # ICON-NMR has read the job
-            if now >= j["done_at"]:
+                j["path"].unlink(missing_ok=True)                                   # ICON-NMR has read the job
+            if now >= j["done_at"] and self.jobs.pop(token, None) is not None:   # one thread claims it, however many tick
                 self._write_dataset(j)
-                self.jobs.pop(token)
 
     def picked_up(self, token):
         self._tick()

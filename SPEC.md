@@ -497,13 +497,14 @@ A write whose outcome is unknown (the command may have reached the device but th
      "progress":1.0,"result":{"cycles_completed":30,"final_block_temperature":72}}}}
 ```
 
-Job states: `queued → running → done | failed | cancelled`, plus `waiting_operator` for operator-run instruments (§9.1). A `failed` job carries `outcome: "unknown"` and puts the device in `fault` until a verified `safety/reset`. Busy is derived from all active jobs: a non-concurrent action is refused while any job runs, and a `concurrent` one may run alongside. A job's completion and the device state are published together. Settled job records that a device keeps on disk, and reads back as its own history after a restart, carry a digest of the record: one that does not match it is still returned, because dropping evidence is worse, but it carries `unverified` saying so, so an edited result is never presented as what the instrument reported. A result too bulky for a log line or an event buffer is replaced there by a placeholder, which MUST name the call that returns the real one rather than describing it: the device holds a finished job's result in full, and a result too big for its own record on disk is written to a file beside that record with the same lifetime, so the placeholder resolves for as long as the record is kept and says plainly when the file is gone. Data too large even for that belongs in a file in the run folder (§3.5), and the record says so instead of pointing nowhere. Adapters MUST report the backend's terminal outcome (a cancelled or aborted backend job is not `done`) and MUST NOT report a cancel the backend has not honoured.
+Job states: `queued → running → done | failed | cancelled`, plus `waiting_operator` for operator-run instruments (§9.1). A `failed` job carries `outcome: "unknown"` and puts the device in `fault` until a verified `safety/reset`. Busy is derived from all active jobs: a non-concurrent action is refused while any job runs, and a `concurrent` one may run alongside. A job's completion and the device state are published together. Settled job records that a device keeps on disk, and reads back as its own history after a restart, carry a digest of the record: one that does not match it is still returned, because dropping evidence is worse, but it carries `unverified` saying so, so an edited result is never presented as what the instrument reported. A result too bulky for a log line or an event buffer is replaced there by a placeholder, which MUST name the call that returns the real one rather than describing it: the device holds a finished job's result in full, and a result too big for its own record on disk is written to a file beside that record with the same lifetime, so the placeholder resolves for as long as the record is kept and says plainly when the file is gone. Data too large even for that belongs in a file in the run folder (§3.5), and the record says so instead of pointing nowhere. Adapters MUST report the backend's terminal outcome (a cancelled or aborted backend job is not `done`) and MUST NOT report a cancel the backend has not honoured. A job cancelled, or caught by an e-stop or fault, between admission and its start MUST NOT start: it ends `cancelled` with a `note` saying nothing was sent. A cancel that arrives after the action completed does not undo it: the job ends `done` with its result and a `note` saying the cancel came too late, so a caller never repeats a physical step it believes was cancelled.
 
 ### 5.6 Safety
 
 - `safety/limits` returns the effective limits, interlocks and approval levels in one call, for hosts that want to show the envelope to a human.
 - `safety/estop` MUST stop all motion and energy output as fast as the hardware allows, cancel every running job, and put the device in `estop`. It MUST succeed regardless of lease, approval level or interlock state, and MUST NOT wait behind ordinary requests: the reference driver runs it outside the request lock, and the serial driver interrupts in-flight I/O before sending its stop commands. If the stop hook fails, the device stays in `estop` and the response says `stopped: false`. It is the one call an agent may always make. A host that offers a lab-wide stop (`mhp_estop` with `device: "*"`, `Lab.estop_all`) MUST reach every device it is driving, not only the ones its own client session opened: a run and a plan each work through a session of their own, and an in-process driver outlives the session that loaded it, so a stop that walks one connection list silently spares the instrument a script was driving. The reference client walks the lab it was called on, every lab descended from it, and every driver this process hosts for one of that lab's devices.
-- `safety/reset` returns the device to `idle` after `estop` or `fault`. It MUST fail with `DeviceBusy` while any job is still active, and MUST verify recovery first (the reference reads every signal). Only the lease holder, or anyone when the device is unleased, may reset.
+- `safety/reset` returns the device to `idle` after `estop` or `fault`. Only a person who has checked the instrument can say it is safe, so it requires `approved: true` under the same trusted-host rule as `approval: confirm` (§7.2), and fails with `ApprovalRequired` (`data.state`, `data.reason`) otherwise. It MUST fail with `DeviceBusy` while any job is still active, and MUST verify recovery first (the reference reads every signal). Recovery is verified outside the device's lock, so a stop or fault that arrives meanwhile MUST NOT be cleared with the one the reset was asked about: the reference numbers every stop and fault and refuses with the error of the newer one (`EStopActive` or `DeviceFault`). On a device that is neither stopped nor faulted it changes nothing and says so (`{state, reset: false, note}`). Only the lease holder, or anyone when the device is unleased, may reset.
+- A setting write passes the gates of §7 and is then re-checked against the device state as the last step before the instrument is touched: an e-stop that lands in between refuses the write with `EStopActive`, and nothing is sent.
 
 ### 5.7 Session leases
 
@@ -516,6 +517,8 @@ job running unattended. The refusal names what is running and what the watchdog 
 done; re-issuing with `stop: true` winds the work down first and then releases. A device that declares
 `watchdog_action: release` does this handover itself (§6), so a dead holder does not have to be
 forced open by a person.
+
+Releasing **your own** lease follows the same rule. On a device that declares `watchdog_s`, a release while jobs are still active is refused with `DeviceBusy` (`data.activeJobs`, `data.options`), because it too would disarm the watchdog. `stop: true` winds the work down first (§15.1) and then releases; `handover: true` releases and leaves the jobs running for the session that takes the lease next (`handedOver` lists them). A client that closes with jobs still running leaves its lease to the watchdog, which then does what the owner declared. A run's own session waits for the jobs its script started before its leases end, so a run is reported ended only when the work it started has ended.
 
 `session/acquire {ttl}` gives the calling session exclusive write and invoke rights until `ttl` seconds pass without `session/renew`, or until `session/release`. Every client has its own session id, so independent clients never share a lease. That id is a name the caller asserts (`X-MHP-Client` over HTTP), not a secret the device issued, so it identifies a client only as far as the channel does: a caller the device already trusts could claim another session's id and operate a device leased to it. Closing that needs the lease to be a token `session/acquire` hands back and the holder presents, which is not in this draft; until then a device's authentication (§9.1) is what bounds who can make the claim. The reference client renews automatically with a heartbeat while it holds a lease, and each run gets its own session whose leases end with the run. If a lease is lost, the next actuating call fails with `NotLeased`, and the client must not assume it still has control. Reads, `ping`, `describe`, `jobs/status`, `jobs/pause`, `jobs/cancel` and `safety/estop` are never blocked by a lease; `jobs/resume` and `safety/reset` are. On a device that declares `watchdog_s`, operating it requires holding the lease (`NotLeased` with `data.reason: "lease_required"`); the reference client acquires it on first use.
 
@@ -538,6 +541,25 @@ method-capable answers `list` and `find` with nothing and refuses `save` with `N
 any write and require no lease, since they touch files, not hardware.
 
 ---
+
+### 5.9 Device states and next steps
+
+A device is always in one of four states, and moves between them only as follows:
+
+```
+idle <-> busy            a job starts / the last job ends
+idle | busy -> fault     a job failed in a way that may have reached the instrument, or the driver latched a fault
+any -> estop             safety/estop, the watchdog, a shutdown that ran out of time, or the instrument's own stop
+fault | estop -> idle    safety/reset, approved by a person who checked the instrument (§5.6)
+```
+
+A directory adds `unreachable` for a device that did not answer its ping (§3.2): a fact about the path to it, not a state the device is in.
+
+Every answer that reports the state carries the facts behind it, so nobody infers them from a state's name: `ping` returns `{ok, state, fault_reason, active_jobs, stop?, shutting_down?, next, lease, ts}`, and `device/describe` at `summary` and `full` carries the same fields (the `card` stays small for directory listings). `stop` is present in `estop`: `{source, clearable, clearance?}`, where `source` is `client`, `watchdog`, `hardware` or `fault` and `clearable: false` marks a stop latched at the instrument (§15.1). `shutting_down: {deadline}` is present while an orderly shutdown runs; new work is refused until it settles or escalates.
+
+`next` lists what can be done from here, most useful first, as `{tool?, method?, does}`: the MCP tool an agent calls, the wire method a script calls, and what it does in words. A step with neither is something a person does (check the instrument, release a stop). Every error carries `next` too: first what to do about that error (the limits to read for `LimitViolation`, the interlock to read for `InterlockOpen`), then, when the device's state is why it refused, that state's steps. `next` is advisory and additive: a server SHOULD send it, a client MUST NOT depend on it, and it never grants anything the gates of §7 would refuse. The reference implementation declares the machine and its steps once, in `openmhp/states.py`.
+
+A job that failed with a typed error keeps it: the job carries `errorDetail` `{code, message, transient, effect, recovery, motion, data?}` beside the `error` string, so a caller can tell an interlock that opened mid-run from a vendor exception.
 
 ## 6. Lifecycle
 
@@ -637,7 +659,7 @@ Servers push notifications (JSON-RPC requests without `id`) for anything a super
 | `notifications/safety/watchdog` | `{action, holder, silent_s, watchdog_s, reason, activeJobs, stopped}` | the lease holder went silent; `action` is what the device did about it |
 | `notifications/safety/fault` | `{reason}` | the device latched a fault with an unknown outcome |
 | `notifications/operator/instruction` | `{text, job?}` | an operator-run instrument asks a person to act |
-| `notifications/safety/reset` | `{by}` | device returned to idle |
+| `notifications/safety/reset` | `{by, verified}` | device returned to idle by a confirmed reset |
 | `notifications/methods/saved`, `methods/retired` | `{method: card, by}` | a method was saved (new version or new method) or retired |
 
 A supervising host consumes these without asking: the reference bridge subscribes to every device it opens
@@ -715,6 +737,28 @@ The node answers a request with the same `dispatch` the HTTP transport uses, wit
 
 **What the relay does not change.** The node serves its instruments locally exactly as before, with its own device token for callers on the lab network. Emergency stop, the device-side watchdog (§6) and the operator's own controls are on the bench and do not depend on the link; a dropped link is seen by the device as any other silent client, and `watchdog_action` applies.
 
+
+### 9.3 Runs on a gateway
+
+A gateway that runs experiments for scientists (`mhp-gw` over SSH, the reference supervisor) keeps one state per run. The states, their moves and each state's next steps are declared once (`openmhp/states.py`); every move is checked there before anything else happens, so a refused move writes, releases and records nothing.
+
+| State | Waiting on | Moves to |
+|---|---|---|
+| `open` | scientist | `planning` (request), `waiting_approval`, `stopped`, `failed` |
+| `planning` | gateway | `waiting_approval` (a charter), `stopped`, `failed` |
+| `waiting_approval` | scientist | `queued` (approved), `planning` (changes asked), `stopped` |
+| `queued` | gateway | `running` (instruments allocated), `stopped`, `failed` |
+| `running` | gateway | `waiting_scientist`, `finished`, `stopped`, `failed`, `interrupted` |
+| `waiting_scientist` | scientist | `running` (answered), `finished`, `stopped`, `failed`, `interrupted` |
+| `interrupted` | scientist | `queued` (`resume`), `stopped` |
+| `finished`, `stopped`, `failed` | nobody | ended |
+
+- A run ends once. `finish` and `stop` claim the ending before they write anything; the second is refused, or answered with what already happened. Ending closes the run's open questions (`questions_closed`), releases its instruments and its token, and writes a results manifest.
+- `interrupted` means the gateway restarted while the run held instruments: their leases lapsed and their watchdogs acted. It is not ended. `resume` gives the approved charter a new token and queues the run again; its agent is told first to check every instrument and its notebook. A planner interrupted by a restart carries on by itself, since planning moves nothing.
+- `failed` means the gateway could not run it (for example, it could not prepare the run's environment); `failed_because` says why.
+- A message or answer sent while a run is `queued` or `interrupted` is held and given to its agent when it starts. An answer after a run ended is refused.
+- Question ids and the agent's spend are kept in the run's record, so a restart neither reuses an id nor resets a budget.
+- Every `mhp-gw` answer about a run carries `state`, `waiting_on` (`scientist`, `gateway`, `nobody`) and `next`: the commands that make sense now, each with what it does. A request the gateway has not finished acting on when `mhp-gw` stops waiting is answered `pending`; its answer comes back in `earlier` with the next command for that run.
 ---
 
 ## 10. Three control surfaces
@@ -764,9 +808,23 @@ mhp http://bench:18921 invoke open_lid --approved      # the person at this term
 mhp http://bench:18921 estop "smoke from lid"
 mhp lab accept thermocycler-01                         # the owner accepts an edited package as this lab's rulebook
 mhp log audit                                          # is the record on disk still what was written?
+mhp status                                             # this machine: what it is set up as, each part's state, next steps
 ```
 
-The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool.
+The CLI is the debugging and shell-scripting surface, and what an agent reaches for inside a Bash tool. `mhp status` (`--json` for an agent or a script) reports every part of the machine it runs on, whichever roles it has: the install, the agent machine's gateway link and skills, the instrument PC's packages, background service and gateway link, the gateway and its service. Each part that needs something names its next step, and the exit code is 1 when anything does.
+
+The parts and the states each is reported in are declared once (`openmhp/states.py`), and `mhp status` reports nothing else:
+
+| Part | Machine | States |
+|---|---|---|
+| `install` | every | `current`, `outdated` (the next step is the upgrade command for this install) |
+| `gateway link` | agent machine, instrument PC | `connected`, `unreachable` (network, VPN, or the gateway is down), `unpaired` (the gateway answered but no longer accepts this machine: pair again), `certificate_changed` (something answers there with a certificate this machine did not pin), `error`, `unknown` (not tried since pairing) |
+| `runs over SSH` | agent machine | `set up`, `not set up` |
+| `agent skills` | agent machine | `current`, `needs update`; each skill is `current`, `outdated`, `newer` or `changed` (newer and hand-edited copies are left alone), or `missing` |
+| `instruments` | instrument PC | `ready`, `not ready` (a package needs `mhp node setup`), `none` |
+| `background service` | instrument PC | `running`, `stopped`, `installed` (the OS cannot say whether it runs), `not installed`, `broken` (it serves a folder that is gone) |
+| `gateway` | lab gateway | `running`, `running old code` (restart it), `not running` |
+| `gateway service` | lab gateway | `not installed` (it stops when its terminal closes) |
 
 ### 10.3 Code files (SDK)
 
@@ -813,15 +871,15 @@ Packages are versioned folders checked into the lab's repository. Changing a lim
 | -32015 | MethodRequired | a method-driven action was invoked with neither `method` nor `params`; `data` carries `choice`, `candidates` and `ask` (§4.5 M7) |
 | -32020 | DeviceFault | device in `fault` (or a write's outcome is unknown, `data.outcome`); verified reset required |
 | -32021 | DeviceBusy | non-concurrent job running, or reset attempted mid-job |
-| -32022 | EStopActive | device in `estop`; reset required |
-Every error also carries a **recovery taxonomy**, so a caller branches on fields instead of reading prose: `transient` (could the identical request succeed later with nothing changed), `effect` (`none`, `partial` or `unknown`: what reached the device), `recovery` (`retry`, `retry_after`, `abort` or `operator`), `motion` (does recovering move the device, so a neighbour must stay clear) and `state` (what the device is in now). A failed job carries `recovery` for the same reason. Without these a model must infer from wording whether a fault is temporary, and on a non-idempotent operation a wrong inference means repeated actuation rather than a controlled abort.
-
-Every error carries `ts`, the device's own clock at the moment it refused, so a client can align a refusal with its own receipt time and with the `ts` on reads and the `started`/`finished` on jobs.
-
+| -32022 | EStopActive | device in `estop`; reset required (`data.clearable: false` and `data.clearance` for a stop still engaged at the instrument, §15.1) |
 | -32030 | NotLeased | another session holds the lease (`data.holder`), the lease was lost, or a watchdog device needs one (`data.reason: "lease_required"`) |
 | -32040 | UnknownName | no such signal/setting/action |
 | -32041 | JobNotFound | no such job id |
 | -32050 | NotSupported | the action does not support pause or cancel; use `safety/estop` |
+
+Every error also carries a **recovery taxonomy**, so a caller branches on fields instead of reading prose: `transient` (could the identical request succeed later with nothing changed), `effect` (`none`, `partial` or `unknown`: what reached the device), `recovery` (`retry`, `retry_after`, `abort` or `operator`), `motion` (does recovering move the device, so a neighbour must stay clear) and `state` (what the device is in now). The MCP bridge passes all of them to the agent unchanged, with `next`. A failed job carries `recovery` for the same reason. Without these a model must infer from wording whether a fault is temporary, and on a non-idempotent operation a wrong inference means repeated actuation rather than a controlled abort.
+
+Every error carries `ts`, the device's own clock at the moment it refused, so a client can align a refusal with its own receipt time and with the `ts` on reads and the `started`/`finished` on jobs, and `next`: the steps that get past it (§5.9).
 
 ---
 
@@ -966,10 +1024,15 @@ connected device in parallel.
 A stop records **who caused it**: `client`, `watchdog`, `hardware` or `fault`. A driver that
 can detect a physical stop (a button, a light curtain, a safety relay) calls
 `latch_external_stop(reason, clearance)`, which latches like any e-stop but marks itself
-**not clearable from software**. `safety/reset` then refuses and repeats the `clearance` text
-describing what a person must do at the instrument, rather than appearing to succeed against a
-latch it has no authority over. The descriptor should declare `safety.hardware_stop` so an
-agent knows one exists before it starts.
+**not clearable from software** (`stop.clearable: false` in `ping`, §5.9). A driver that can read the
+instrument's own stop overrides `hardware_stop_engaged()`: while it returns true, `safety/reset`
+refuses with `EStopActive` and repeats the `clearance` text describing what a person must do at the
+instrument, whoever approves, rather than appearing to succeed against a latch it has no authority
+over. Once it returns false the stop is cleared by an ordinary person-approved reset. A driver that
+cannot read it returns `None`; the reset is then put to the person with the `clearance` text and
+the statement that the software cannot see the stop, because refusing for ever would leave the
+device stopped until its process restarted. The descriptor should declare `safety.hardware_stop`
+so an agent knows one exists before it starts.
 
 ### 15.2 Simulated twins and fault injection
 

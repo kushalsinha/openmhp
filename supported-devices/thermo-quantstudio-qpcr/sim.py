@@ -67,7 +67,7 @@ class SimBackend(real.QuantStudioBackend):
                 setup = pathlib.Path(self.cfg["import_dir"]) / req["plate_setup_file"]
                 rows = list(csv.DictReader(setup.read_text(encoding="utf-8").splitlines(), dialect="excel-tab"))
                 self._export(token, rows)
-                setup.unlink(); req_path.unlink()
+                setup.unlink(missing_ok=True); req_path.unlink(missing_ok=True)
             except OSError:                               # withdrawn: the person never started it
                 pass
             if self.running == token:

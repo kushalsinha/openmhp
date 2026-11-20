@@ -74,7 +74,7 @@ def _common(name):
     except RemoteError as e:
         assert "injected fault" in str(e), e
     if d.read("state") != "idle":
-        d.reset()
+        d.reset(approved=True)
     assert d.read("state") == "idle" and d.read(sig) is not None
     return drv, d, desc
 
@@ -211,7 +211,7 @@ def test_ni_daqmx():
     d.write("ao0", 2.5)
     assert abs(d.read("ai1") - 2.5) < 0.05                                   # the twin jumpers ao0 to ai1
     refused(-32020, lambda: d.write("ao1", -3))                              # a 6009 cannot do negative AO: DaqError
-    d.reset()
+    d.reset(approved=True)
     d.write("port0_line1", True)
     assert d.read("port0_state") == 0b0010 and "write port0_line1 high" in drv.link.log
     rec = d.wait(d.invoke("sample", channels=["ai1", "ai2"], rate_hz=100, seconds=2))

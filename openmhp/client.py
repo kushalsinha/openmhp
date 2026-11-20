@@ -55,11 +55,12 @@ def _remote(code: int, message: str, data: Any = None, envelope: dict | None = N
     err.recovery = env.get("recovery")
     err.motion = env.get("motion")
     err.device_state = env.get("state")
+    err.next = env.get("next") or []                       # SPEC 5.9: what to do about it, in steps
     return err
 
 
 ACTUATING = {"settings/write", "actions/invoke", "jobs/resume", "safety/reset"}
-_APPROVABLE = {"settings/write", "actions/invoke", "session/release"}  # forcing a lease open needs a person
+_APPROVABLE = {"settings/write", "actions/invoke", "session/release", "safety/reset"}  # a person confirms each
 _OBSERVED = {"settings/write", "actions/invoke", "signals/read", "jobs/pause", "jobs/resume", "jobs/cancel",
              "safety/estop", "safety/reset", "session/acquire", "session/release"}
 
@@ -129,7 +130,7 @@ class Device:
                 if self.approver(self, method, params):
                     return self.call(method, params, _auto_lease=_auto_lease, _approved=True, _note=_note)
                 self._observe(method, params, error={"code": e.code, "message": "declined by a person"})
-                raise _remote(ApprovalRequired.code, f"a person declined '{params.get('name')}'",
+                raise _remote(ApprovalRequired.code, f"a person declined '{params.get('name') or method}'",
                               {"approval": "confirm", "answer": "decline"}) from None
             self._observe(method, params, error={"code": e.code, "message": e.message}, **extra)
             raise
@@ -230,7 +231,14 @@ class Device:
             j = self.status(job)
             if j["state"] in ("done", "failed", "cancelled"):
                 if j["state"] == "failed":
-                    raise _remote(-32020, f"job {j['id']} failed: {j['error']}", j)
+                    try:                                       # the device after the failure: usually a fault
+                        now = self.call("ping")
+                    except Exception:                          # noqa: BLE001
+                        now = {}
+                    raise _remote(-32020, f"job {j['id']} failed: {j['error']}", j,
+                                  {"transient": False, "effect": j.get("outcome") or "unknown",
+                                   "recovery": j.get("recovery") or "operator", "motion": False,
+                                   "state": now.get("state"), "next": now.get("next")})
                 return j
             if timeout and time.monotonic() - t0 > timeout:
                 raise TimeoutError(f"job {j['id']} still {j['state']} after {timeout}s")
@@ -277,11 +285,17 @@ class Device:
             self._hb_stop.set()
             self._hb_stop = None
 
-    def release(self) -> dict:
+    def release(self, stop: bool = False, handover: bool = False) -> dict:
+        """Give the lease back. With jobs still running the device refuses (the watchdog would be disarmed):
+        stop=True winds them down first, handover=True leaves them to the session that takes the lease next."""
+        p = {**({"stop": True} if stop else {}), **({"handover": True} if handover else {})}
+        r = self.call("session/release", p)
         self._stop_heartbeat()
-        return self.call("session/release")
+        return r
 
     def close(self) -> None:
+        """Release if nothing is running. With jobs still running the lease is left to the device's watchdog,
+        which does what the owner declared (stop, or hand the instrument over) once heartbeats stop."""
         self._stop_heartbeat()
         try:
             self._raw_call("session/release")
@@ -289,7 +303,9 @@ class Device:
             pass
 
     def estop(self, reason: str = "") -> dict:   return self.call("safety/estop", {"reason": reason})
-    def reset(self) -> dict:                     return self.call("safety/reset")
+    def reset(self, approved: bool = False) -> dict:
+        """Clear an e-stop or fault. A person confirms it: approved=True, or the client's approver asks them."""
+        return self.call("safety/reset", {"approved": approved})
 
     def __enter__(self):
         self.acquire()
@@ -687,10 +703,32 @@ class Lab:
         return self.directory.rpc(method, params, "lab")
 
     def find(self, query: str = "", limit: int = 5, **filters) -> list[dict]:
-        if self.directory is None:           # small labs: scan our own devices' cards
-            cards = [self[n].call("device/describe", {"detail": "card"}) for n in list(self.targets)]
+        if self.directory is None:           # small labs: scan our own devices' cards, with the same filters
+            cards = []
+            for n in list(self.targets):
+                try:
+                    cards.append(self[n].call("device/describe", {"detail": "card"}))
+                except Exception as e:                       # noqa: BLE001  one silent device must not hide the rest
+                    from .states import DEVICE_UNREACHABLE, device_next
+                    cards.append({"id": n, "state": DEVICE_UNREACHABLE, "error": f"{type(e).__name__}: {e}"[:300],
+                                  "next": device_next(DEVICE_UNREACHABLE)})
             q = query.lower().split()
-            return [c for c in cards if all(t in str(c).lower() for t in q)][:limit]
+            cls, tags, loc, state = (filters.get("cls") or filters.get("class"), filters.get("tags"),
+                                     filters.get("location"), filters.get("state"))
+            def keep(c: dict) -> bool:
+                if cls and c.get("class") != cls and c.get("state") != "unreachable":
+                    return False
+                if tags and not set(tags) <= set(c.get("tags") or []) and c.get("state") != "unreachable":
+                    return False
+                if loc and loc.lower() not in str(c.get("location") or "").lower() and c.get("state") != "unreachable":
+                    return False
+                if state and c.get("state") != state:
+                    return False
+                return all(t in str(c).lower() for t in q) or c.get("state") == "unreachable" and not state
+            kept = [c for c in cards if keep(c)]
+            # devices that answered come first; one that did not is listed after them (its card is unknown, so it
+            # cannot be matched), so the agent learns it exists without it crowding out a usable one
+            return sorted(kept, key=lambda c: c.get("state") == "unreachable")[:limit]
         params = {"query": query, "limit": limit}
         params.update({("class" if k == "cls" else k): v for k, v in filters.items() if v is not None})
         return self._dir("directory/search", params)["results"]
@@ -733,12 +771,16 @@ class Lab:
         if dev is not None:
             dev.close()
 
-    def release_all(self) -> None:
-        for d in list(self._devices.values()):
+    def release_all(self, handover: bool = False) -> dict:
+        """Release every lease this lab holds. {device: result or {"error": why it was kept}}: a device with jobs
+        still running keeps its lease (and its watchdog) unless handover=True."""
+        out: dict = {}
+        for n, d in list(self._devices.items()):
             try:
-                d.release()
-            except Exception:                        # noqa: BLE001
-                pass
+                out[n] = d.release(handover=handover)
+            except Exception as e:                   # noqa: BLE001
+                out[n] = {"error": getattr(e, "message", None) or f"{type(e).__name__}: {e}"}
+        return out
 
     def close(self) -> None:
         for d in list(self._devices.values()):

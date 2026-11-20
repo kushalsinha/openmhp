@@ -41,7 +41,10 @@ def test_run_states_and_record():
     rec.to("planning", "request received")
     rec.to("waiting_approval", "charter ready")
     rec.set(charter_digest="sha256:abc", harness="claude-code")
-    rec.to("running", "approved by alice")
+    with raises(ValueError):
+        rec.to("running", "approved by alice")                              # approval queues it; never straight in
+    rec.to("queued", "approved by alice")
+    rec.to("running", "all instruments allocated")
     rec.to("waiting_scientist", "asked about cell 4")
     rec.to("running", "answered")
 
@@ -49,13 +52,13 @@ def test_run_states_and_record():
     meta = json.loads((pub / "meta.json").read_text())
     assert meta["state"] == "running" and meta["harness"] == "claude-code" and "history" not in meta
     seen = [json.loads(l)["state"] for l in (pub / "events.jsonl").read_text().splitlines() if '"kind": "state"' in l]
-    assert seen == ["planning", "waiting_approval", "running", "waiting_scientist", "running"]
+    assert seen == ["planning", "waiting_approval", "queued", "running", "waiting_scientist", "running"]
 
     # the gateway's copy is the truth: editing the scientist's mirror changes nothing
     (pub / "meta.json").write_text(json.dumps({**meta, "state": "finished"}))
     again = SV.RunRecord(PRIVATE / rid, rid, "alice")
     assert again.state == "running" and [h["state"] for h in again.doc["history"]][-1] == "running"
-    assert [e["kind"] for e in again.events()].count("state") == 5
+    assert [e["kind"] for e in again.events()].count("state") == 6
 
     # a gateway restart interrupts live runs and leaves ended ones alone
     done = S.open_run("alice")["id"]
@@ -257,8 +260,10 @@ with open(os.path.join(work, "turns.log"), "a") as f:
     f.write(prompt.replace("\\n", " | ") + "\\n")
 busy = "busy" in charter["objective"]
 if busy and "] start:" in prompt:
-    post("/bench/thermocycler-01/rpc", {"jsonrpc": "2.0", "id": 1, "method": "actions/invoke", "params": {
+    got = post("/bench/thermocycler-01/rpc", {"jsonrpc": "2.0", "id": 1, "method": "actions/invoke", "params": {
         "name": "run_protocol", "params": {"steps": [{"temp": 40, "hold_s": 2}], "cycles": 2}}})
+    with open(os.path.join(work, "posts.log"), "a") as f:
+        f.write(json.dumps(got) + "\\n")
 elif busy:
     post("/runs/finish", {"summary": "protocol done", "outcome": "objective met"})
 print(json.dumps({"ok": True, "session": session, "text": "I set things up and will wait.", "cost_usd": 0.0, "tokens": 1}))
@@ -300,14 +305,14 @@ for line in sys.stdin:
 """
 
 
-def wait_until(pred, timeout=30, what="condition"):
+def wait_until(pred, timeout=120, what="condition"):     # generous: Windows CI machines are slow
     import time
     end = time.time() + timeout
     while time.time() < end:
         if pred():
             return
         time.sleep(0.1)
-    raise TimeoutError(what)
+    raise TimeoutError(what() if callable(what) else what)
 
 
 def test_supervised_run_from_approval_to_results():
@@ -327,7 +332,7 @@ def test_supervised_run_from_approval_to_results():
 
     def gw_cmd(command, stdin=""):
         out = io.StringIO()
-        code = GW.Shell("alice", out=out, env={"SSH_ORIGINAL_COMMAND": command}, stdin=io.StringIO(stdin), wait_s=30).run()
+        code = GW.Shell("alice", out=out, env={"SSH_ORIGINAL_COMMAND": command}, stdin=io.StringIO(stdin), wait_s=180).run()   # slow CI machines; WAITING has its own test
         return code, json.loads(out.getvalue())
 
     def charter(rid, objective):
@@ -335,6 +340,21 @@ def test_supervised_run_from_approval_to_results():
                 "instruments": {"tc": "bench/thermocycler-01"},
                 "envelope": {"tc": {"settings": {"target_temperature": {"min": 4, "max": 99}}, "actions": {}}},
                 "cleanup": "block to 4 C"}
+
+    def why_not(rid):
+        """Where a run is, for a failure message: its state, its last events, and what its agent was told."""
+        rec = sup.record(rid)
+        work = S.run_folder("alice", rid) / "work"
+        said = {f.name: f.read_text(errors="replace")[-600:] for f in (work / "turns.log", work / "posts.log") if f.is_file()}
+        return json.dumps({"state": rec.state, "events": rec.events()[-8:], **said}, default=str)[:4000]
+
+    def approve(rid, digest):
+        """Approve; on a slow machine mhp-gw may stop waiting first (WAITING, by design): then the run must still start."""
+        code, ans = gw_cmd(f"mhp-gw approve {rid} --charter-digest {digest}")
+        assert code in (GW.OK, GW.WAITING), ans
+        if code == GW.WAITING:
+            wait_until(lambda: sup.record(rid).state != "waiting_approval", timeout=120, what=f"{rid} to be approved")
+        assert sup.record(rid).state in ("queued", "running", "waiting_scientist", "finished"), sup.record(rid).state
 
     # ---- run 1: approve, the agent works and asks, the scientist answers, the agent finishes ----------
     code, ans = gw_cmd("mhp-gw open")
@@ -384,7 +404,7 @@ def test_supervised_run_from_approval_to_results():
     code, ans = gw_cmd("mhp-gw open")
     rid2 = ans["run"]
     d2 = sup.propose(rid2, "alice", charter(rid2, "hold the block"), harness="stand-in")
-    assert gw_cmd(f"mhp-gw approve {rid2} --charter-digest {d2}")[0] == GW.OK
+    approve(rid2, d2)
     wait_until(lambda: sup.record(rid2).state == "running" and any(e["kind"] == "turn" for e in sup.record(rid2).events()),
                what="first turn of run 2")
     gw.events(gw.nodes["bench"], {"events": [{"device": "thermocycler-01",
@@ -394,7 +414,7 @@ def test_supervised_run_from_approval_to_results():
     code, ans = gw_cmd(f"mhp-gw message {rid2} keep it at 30 C overnight")
     assert code == GW.OK
     code, ans = gw_cmd(f"mhp-gw stop {rid2}")
-    assert code == GW.OK and ans["state"] == "stopped"
+    assert code == GW.OK and ans["state"] == "stopped", (code, ans, why_not(rid2))
     assert (S.run_folder("alice", rid2) / "out" / "cleanup.txt").is_file()
     assert drivers["thermocycler-01"]._lease_holder() is None
     code, ans = gw_cmd(f"mhp-gw message {rid2} hello?")
@@ -408,7 +428,7 @@ def test_supervised_run_from_approval_to_results():
     rid3 = gw_cmd("mhp-gw open")[1]["run"]
     c3 = charter(rid3, "hold the block")
     c3["envelope"]["tc"]["actions"] = {"run_protocol": {}}
-    assert gw_cmd(f"mhp-gw approve {rid3} --charter-digest {sup.propose(rid3, 'alice', c3, harness='quiet')}")[0] == GW.OK
+    approve(rid3, sup.propose(rid3, 'alice', c3, harness='quiet'))
     wait_until(lambda: sup.record(rid3).state == "waiting_scientist", what="the idle run's question")
     work3 = S.run_folder("alice", rid3) / "work"
     turns = (work3 / "turns.log").read_text().splitlines()
@@ -416,16 +436,20 @@ def test_supervised_run_from_approval_to_results():
     q = next(iter(sup.record(rid3).doc["open_questions"].values()))["question"]
     assert "has stopped" in q and "I set things up and will wait" in q, q
     assert [e["action"] for e in sup.record(rid3).events() if e["kind"] == "idle"] == ["nudged", "asked the scientist"]
-    gw_cmd(f"mhp-gw stop {rid3}")
+    code, ans = gw_cmd(f"mhp-gw stop {rid3}")
+    assert code == GW.OK, (code, ans)
+    wait_until(lambda: sup.record(rid3).state == "stopped", what=lambda: f"run 3 to stop: {why_not(rid3)}")
 
     # ---- run 4: an agent waiting on a running instrument job is not stuck; the finished job wakes it ------
     rid4 = gw_cmd("mhp-gw open")[1]["run"]
     c4 = charter(rid4, "run one protocol, busy")
     c4["envelope"]["tc"]["actions"] = {"run_protocol": {}}
-    assert gw_cmd(f"mhp-gw approve {rid4} --charter-digest {sup.propose(rid4, 'alice', c4, harness='quiet')}")[0] == GW.OK
     tc = drivers["thermocycler-01"]
-    wait_until(lambda: any(j.snapshot().get("state") not in ("done", "failed", "cancelled") for j in tc.jobs.values()),
-               what="the protocol to start")
+    jobs_before = set(tc.jobs)
+    approve(rid4, sup.propose(rid4, 'alice', c4, harness='quiet'))
+    # the agent's protocol is a new job; on a slow machine the agent itself can take a while to start
+    wait_until(lambda: bool(set(tc.jobs) - jobs_before), timeout=120,
+               what=lambda: f"the protocol to start: {why_not(rid4)}; thermocycler lease {tc._lease_holder()}")
     wait_until(lambda: all(j.snapshot().get("state") in ("done", "failed", "cancelled") for j in tc.jobs.values()),
                timeout=120, what="the protocol to end")
     job_done = time.time()
@@ -438,7 +462,7 @@ def test_supervised_run_from_approval_to_results():
     sup.adapters["live"] = H.Command([sys.executable, str(live)], live=True)
     rid5 = gw_cmd("mhp-gw open")[1]["run"]
     c5 = charter(rid5, "sweep the ramp with a background script")
-    assert gw_cmd(f"mhp-gw approve {rid5} --charter-digest {sup.propose(rid5, 'alice', c5, harness='live')}")[0] == GW.OK
+    approve(rid5, sup.propose(rid5, 'alice', c5, harness='live'))
     wait_until(lambda: sup.record(rid5).state == "finished", what="run 5 to finish")
     # finish arrives during the session's reply; the supervisor records the reply and closes the session after it
     wait_until(lambda: any(e["kind"] == "session" and e["action"] == "closed" for e in sup.record(rid5).events()),
@@ -455,7 +479,7 @@ def test_supervised_run_from_approval_to_results():
     # ---- run 6: the session dies between messages; the next message starts it again on the same conversation --
     rid6 = gw_cmd("mhp-gw open")[1]["run"]
     c6 = charter(rid6, "hold the block")
-    assert gw_cmd(f"mhp-gw approve {rid6} --charter-digest {sup.propose(rid6, 'alice', c6, harness='live')}")[0] == GW.OK
+    approve(rid6, sup.propose(rid6, 'alice', c6, harness='live'))
     work6 = S.run_folder("alice", rid6) / "work"
     wait_until(lambda: (work6 / "live.log").is_file() and sup.ctl[rid6].live is not None, what="run 6's session")
     first_pid = json.loads((work6 / "live.log").read_text().splitlines()[0])["pid"]

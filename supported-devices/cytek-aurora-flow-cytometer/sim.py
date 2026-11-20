@@ -100,7 +100,7 @@ class SimBackend(real.SpectroFloBackend):
             try:
                 row = list(csv.DictReader(wl.read_text(encoding="utf-8").splitlines()))[0]
                 self._export(token, row)
-                wl.unlink()
+                wl.unlink(missing_ok=True)
             except OSError:                               # withdrawn: nobody acquired it
                 pass
             del self.due[token]

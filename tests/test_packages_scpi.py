@@ -84,6 +84,9 @@ def test_packages_validate_and_the_real_driver_needs_only_pyvisa():
             assert dev.read("connected") is False
         except ModuleNotFoundError as e:
             assert e.name == "pyvisa", e
+        except Exception:                                              # noqa: BLE001  pyvisa present, nothing at that address:
+            import importlib.util                                      # any VISA error, never a missing module of ours
+            assert importlib.util.find_spec("pyvisa") is not None, name
         drv, dev = _twin(name)
         assert dev.read("connected") is True
         drv.close()
@@ -261,7 +264,7 @@ def test_injected_faults_and_estop_commands_reach_the_fake_link():
                 dev.write(*spec["write"]); raise AssertionError("writes must be refused during e-stop")
             except RemoteError as e:
                 assert "stop" in str(e).lower(), e
-            dev.reset()
+            dev.reset(approved=True)
             assert dev.read("state") == "idle"
         drv.close()
 

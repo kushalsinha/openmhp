@@ -3,7 +3,7 @@ serves its instruments through that connection. Nothing listens for the outside;
 the node contacting the gateway over HTTPS, which also passes corporate proxies (urllib honours
 HTTPS_PROXY).
 
-    mhp node C:\\lab\\devices --join https://gw.office ab12-cd34     once, with a code from `mhp gateway pair`
+    mhp node C:\\lab\\devices --join https://gw.office:8443 ab12-cd34     once, with a code from `mhp gateway pair`
     mhp node C:\\lab\\devices                                        from then on: serves locally AND relays
 
 The gateway's certificate is pinned at join (its fingerprint is shown, and `mhp gateway pair` prints
@@ -34,6 +34,7 @@ from .transport import dispatch
 HOME = Path(os.environ.get("OPENMHP_HOME", "~/.openmhp")).expanduser()
 NODE_FILE = HOME / "node.json"
 PIN_FILE = HOME / "gateway-pin.pem"
+LINK_FILE = HOME / "relay-status.json"   # this PC's link to its gateway, as last seen: for status commands
 POLL_S = 25                  # the gateway holds /relay/next this long before answering empty
 EVENT_BATCH_S = 0.5
 
@@ -43,7 +44,41 @@ def say(*lines: str) -> None:
 
 
 def load_node_config() -> dict | None:
-    return json.loads(NODE_FILE.read_text(encoding="utf-8")) if NODE_FILE.is_file() else None
+    try:
+        return json.loads(NODE_FILE.read_text(encoding="utf-8")) if NODE_FILE.is_file() else None
+    except (OSError, ValueError):
+        say(f"relay: {NODE_FILE} cannot be read; this PC serves locally until it pairs again (mhp node --join <url> <code>)")
+        return None
+
+
+def link_problem(e: Exception) -> tuple[str, str]:
+    """What a failed call to the gateway means for the person at this PC: (state, what to do)."""
+    import urllib.error
+    if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
+        return ("unpaired", "the gateway no longer accepts this PC's pairing (it was removed there, or the gateway was "
+                "set up again). Pair again: `mhp gateway pair` on the gateway, then here  mhp node --join <url> <code>")
+    reason = getattr(e, "reason", e)
+    if isinstance(reason, ssl.SSLCertVerificationError) or isinstance(e, ssl.SSLCertVerificationError):
+        return ("certificate_changed", "the gateway's certificate is not the one this PC pinned when it paired. If the "
+                "gateway was set up again, pair again (`mhp gateway pair` there, then  mhp node --join <url> <code>); "
+                "if not, something else is answering at that address")
+    return ("unreachable", f"{type(e).__name__}: {getattr(e, 'code', '') or e}".strip())
+
+
+def save_link(state: str, detail: str = "", gateway: str = "") -> None:
+    try:
+        HOME.mkdir(parents=True, exist_ok=True)
+        LINK_FILE.write_text(json.dumps({"state": state, "detail": detail, "gateway": gateway,
+                                         "since": time.strftime("%Y-%m-%dT%H:%M:%S")}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def load_link() -> dict | None:
+    try:
+        return json.loads(LINK_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def save_node_config(cfg: dict) -> None:
@@ -147,17 +182,23 @@ class RelayClient:
                 self.register()
                 if not self.connected:
                     say(f"relay: connected to {self.base} as '{self.cfg['name']}'")
+                    save_link("connected", f"as '{self.cfg['name']}'", self.base)
                 self.connected, backoff, self.last_error = True, 1.0, None
                 while not self.stop.is_set():
                     batch = self._call("/relay/next", timeout=POLL_S + 15)
                     for req in batch.get("requests", []):
                         threading.Thread(target=self._handle, args=(req,), daemon=True).start()
             except Exception as e:                             # noqa: BLE001  link down, gateway restarting, ...
-                msg = f"{type(e).__name__}: {getattr(e, 'code', '') or e}".strip()
+                state, msg = link_problem(e)
                 if self.connected or self.last_error != msg:
-                    say(f"relay: {self.base} unreachable ({msg}); retrying every {backoff:.0f}s. Instruments keep working locally.")
+                    if state == "unreachable":
+                        say(f"relay: {self.base} unreachable ({msg}); retrying every {backoff:.0f}s. Instruments keep "
+                            "working locally.")
+                    else:                                      # retrying cannot fix these: say what will
+                        say(f"relay: {msg}. Instruments keep working locally; this PC checks again every 5 minutes.")
+                    save_link(state, msg, self.base)
                 self.connected, self.last_error = False, msg
-                self.stop.wait(backoff)
+                self.stop.wait(300 if state != "unreachable" else backoff)
                 backoff = min(backoff * 2, 30)
 
     def _handle(self, req: dict) -> None:
@@ -210,11 +251,12 @@ def join(gateway_url: str, code: str, drivers: dict, name: str | None = None, *,
         raise SystemExit(f"cannot reach {gateway_url} ({e}). Is `mhp gateway serve` running there, and does this PC "
                          "have a route out (try opening the address in a browser)?") from None
     HOME.mkdir(parents=True, exist_ok=True)
-    PIN_FILE.write_text(pem, encoding="utf-8")
+    new_pin = PIN_FILE.with_name(PIN_FILE.name + ".new")   # the working pairing keeps its pin until this one succeeds
+    new_pin.write_text(pem, encoding="utf-8")
     fp = fingerprint(pem)
     if not quiet:
         say(f"gateway certificate fingerprint: {fp}", "  (compare with what `mhp gateway pair` printed; stop if it differs)")
-    ctx = ssl_context(str(PIN_FILE))
+    ctx = ssl_context(str(new_pin))
     req = urllib.request.Request(gateway_url + "/relay/join", method="POST",
                                  data=json.dumps({"code": code, "name": name, "devices": device_payload(drivers)}).encode(),
                                  headers={"Content-Type": "application/json"})
@@ -229,5 +271,6 @@ def join(gateway_url: str, code: str, drivers: dict, name: str | None = None, *,
         raise SystemExit(f"the gateway answered {e.code}: {detail[:200]}") from None
     cfg = {"gateway": gateway_url, "token": ans["node_token"], "name": ans.get("name", name), "pin": str(PIN_FILE),
            "fingerprint": fp, "joined": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    os.replace(new_pin, PIN_FILE)
     save_node_config(cfg)
     return cfg

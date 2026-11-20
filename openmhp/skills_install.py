@@ -9,8 +9,10 @@ Skills ship inside the package, so a new OpenMHP release is also how skills are 
 carries a small marker (.openmhp-skill.json) recording what was installed. When this package is newer than an
 installed copy, `refresh()` replaces it: the MCP server, the background watcher and `mhp agent --join` call it,
 so a scientist's agent picks up new skills after an upgrade without anyone remembering `mhp skills install`.
-A copy someone changed by hand is never overwritten; they are told instead. Anything replaced is backed up
-first, under ~/.openmhp/skill-backups/.
+A copy someone changed by hand is never overwritten by a refresh, and a copy newer than this package's (put
+there by a newer install) is never downgraded; they are told instead. `mhp skills install` replaces a hand-changed
+copy only because a person asked, and backs it up first. Anything replaced is backed up, under
+~/.openmhp/skill-backups/.
 """
 from __future__ import annotations
 
@@ -66,17 +68,49 @@ def _newer(a: str | None, b: str | None) -> bool:
     return key(a) > key(b)
 
 
-def install(dest: Path, names: list[str] | None = None) -> list[str]:
+def backup_root() -> Path:
+    return Path(os.environ.get("OPENMHP_HOME", "~/.openmhp")).expanduser() / "skill-backups"
+
+
+def _backup(target: Path, stamp: str, root: Path | None = None) -> Path:
+    keep = (root or backup_root()) / stamp / target.parent.parent.name.lstrip(".") / target.name
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(target, keep, dirs_exist_ok=True)
+    return keep
+
+
+def install(dest: Path, names: list[str] | None = None, *, replace_changed: bool = False,
+            skipped: list | None = None, backup: bool = True) -> list[str]:
+    """Copy the bundled skills into one harness folder. A copy newer than this package's is never replaced; a copy
+    changed by hand is replaced only with replace_changed=True (a person asked), and anything replaced is backed up
+    first. `skipped` collects what was left alone, with why."""
     from . import __version__
     dest.mkdir(parents=True, exist_ok=True)
+    states = {r["name"]: r for r in status([dest])}
+    stamp = time.strftime("%Y%m%dT%H%M%S")
     out = []
     for skill in bundled():
         if names is not None and skill.name not in names:
             continue
         target = dest / skill.name
+        st = states.get(skill.name, {}).get("state")
+        if st == "newer" or (st == "changed" and not replace_changed):
+            if skipped is not None:
+                skipped.append({**states[skill.name], "why": "a newer version is installed" if st == "newer"
+                                else "changed by hand; `mhp skills install` replaces it (backed up first)"})
+            continue
+        if st == "current":
+            out.append(str(target))
+            continue
+        tmp = dest / f".{skill.name}.installing"
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        shutil.copytree(skill, tmp, ignore=shutil.ignore_patterns("__pycache__"))   # whole, before the old one goes
         if target.exists():
+            if backup:
+                _backup(target, stamp)
             shutil.rmtree(target)
-        shutil.copytree(skill, target, ignore=shutil.ignore_patterns("__pycache__"))
+        os.replace(tmp, target)
         (target / MARK).write_text(json.dumps({"name": skill.name, "version": version_of(skill), "digest": digest(target),
                                                "openmhp": __version__, "installed": time.strftime("%Y-%m-%dT%H:%M:%S")},
                                               indent=1), encoding="utf-8")
@@ -93,6 +127,7 @@ def status(dirs: list[Path] | None = None) -> list[dict]:
 
     state: current   - the same as this package's
            outdated  - this package has a newer one and the copy is as installed: safe to replace
+           newer     - the copy is a newer version than this package's (a newer install put it there): left alone
            changed   - someone edited the copy since it was installed: left alone
            missing   - not installed in that harness"""
     rows = []
@@ -117,6 +152,9 @@ def status(dirs: list[Path] | None = None) -> list[dict]:
             else:          # installed before markers existed: ours if it says so and is older than the bundled one
                 text = (target / "SKILL.md").read_text(encoding="utf-8", errors="replace")
                 untouched = "author: openmhp" in text and _newer(version_of(skill), have)
+            if _newer(have, version_of(skill)):
+                rows.append({**row, "state": "newer"})
+                continue
             rows.append({**row, "state": "outdated" if untouched else "changed"})
     return rows
 
@@ -133,11 +171,8 @@ def refresh(dirs: list[Path] | None = None, backup_root: Path | None = None) -> 
         if r["state"] != "outdated":
             continue
         try:
-            src = Path(r["path"])
-            keep = root / stamp / Path(r["dir"]).parent.name.lstrip(".") / r["name"]
-            keep.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(src, keep)
-            install(Path(r["dir"]), [r["name"]])
+            keep = _backup(Path(r["path"]), stamp, root)
+            install(Path(r["dir"]), [r["name"]], backup=False)
             updated.append({**r, "backup": str(keep)})
         except OSError as e:
             changed.append({**r, "error": str(e)})
@@ -156,7 +191,7 @@ def notice(result: dict | None = None) -> str | None:
         names = sorted({f"{r['name']} in {r['dir']}" for r in result["changed"]})
         parts.append("These OpenMHP skills differ from this install's and were changed by hand, so they were left "
                      "as they are: " + "; ".join(names) + ". If the user wants the new versions, `mhp skills install` "
-                     "replaces them (their copies are not kept).")
+                     "replaces them (their copies are backed up first, under ~/.openmhp/skill-backups).")
     return " ".join(parts) or None
 
 
@@ -175,7 +210,12 @@ def main(argv=None):
     dests = [Path(d).expanduser() for d in argv[1:]]
     if not dests:
         dests = harness_dirs() or [HARNESS_DIRS["Claude Code"]]
+    skipped: list = []
     for d in dests:
-        for path in install(d):
+        for path in install(d, replace_changed=True, skipped=skipped):
             print("installed", path)
+    for r in skipped:
+        print(f"left alone {r['path']}: {r['why']} ({r['installed']} there, {r['bundled']} here)")
+    if skipped:
+        print("to use this install's version anyway: delete that folder, then run  mhp skills install  again")
     return 0

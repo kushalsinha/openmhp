@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+os.environ["OPENMHP_SERVICE_MANAGER"] = "none"     # nothing here installs a real background service
 from openmhp import node_add                                              # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -96,6 +97,79 @@ def test_add_from_the_repository_tarball_takes_one_folder_and_nothing_unsafe():
         assert not (dest / "elveflow-ob1").exists() and not (dest / ".elveflow-ob1.partial").exists()
 
 
+def test_shipped_packages_install_with_no_web_or_git():
+    """Every registry package ships in the wheel: `mhp node add <name>` and `mhp lab add github:...` copy it locally."""
+    from openmhp import bundled, fleet
+    def no_network(*a, **kw):
+        raise AssertionError("went to the network for a package that ships with OpenMHP")
+    real_fetch = node_add.fetch
+    node_add.fetch = no_network
+    import subprocess
+    real_sub = subprocess.run
+    subprocess.run = no_network
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            r = node_add.add("ika-c-mag-hs7", pathlib.Path(td) / "devices")
+            assert r["valid"] and "shipped with OpenMHP" in r["origin"], r
+            assert not list((pathlib.Path(td) / "devices").rglob("__pycache__"))
+            f = fleet.Fleet(pathlib.Path(td) / "fleet.json")
+            folder = f.fetch_github("kushalsinha/openmhp/supported-devices/waters-empower-hplc")
+            assert (folder / "DEVICE.md").is_file() and pathlib.Path(td) in folder.parents
+    finally:
+        node_add.fetch = real_fetch
+        subprocess.run = real_sub
+    # every registry entry has its shipped copy, and only the home repository at main is taken from it
+    from openmhp import registry
+    entries = registry.load()
+    assert len(entries) > 50
+    for e in entries:
+        assert bundled.for_target(e["target"]) is not None, e["name"]
+    assert bundled.for_target("github:kushalsinha/openmhp/supported-devices/ika-c-mag-hs7") is not None
+    assert bundled.for_target("github:kushalsinha/openmhp/supported-devices/ika-c-mag-hs7@main") is not None
+    assert bundled.for_target("github:kushalsinha/openmhp/supported-devices/ika-c-mag-hs7@v0.9.0") is None
+    assert bundled.for_target("github:someone/fork/supported-devices/ika-c-mag-hs7") is None
+    assert bundled.for_target("github:kushalsinha/openmhp/supported-devices/no-such-package") is None
+    # `mhp lab add <name>` takes a ready-made package by name, through the shipped copy
+    assert fleet.Fleet._normalize("ika-c-mag-hs7") == "github:kushalsinha/openmhp/supported-devices/ika-c-mag-hs7"
+    try:
+        fleet.Fleet._normalize("no-such-package"); raise AssertionError("expected a refusal")
+    except ValueError as e:
+        assert "ready-made package's name" in str(e)
+
+
+def test_join_on_a_pc_whose_node_runs_as_a_service():
+    """`mhp node --join <url> <code>` where the background service holds the ports: join without serving, then restart
+    the service (it connects by itself). With --install-service, join first, then install. Never only one of the two."""
+    import contextlib, io
+    from openmhp import cli, relay as R, service as svc
+    calls = []
+    saved = (R.join, svc.status, svc.installed_record, svc.restart, svc.install)
+    R.join = lambda url, code, drivers, name=None, **kw: calls.append(("join", url, code, drivers)) or \
+        {"gateway": url, "name": "bench-1"}
+    svc.status = lambda: {"installed": True, "running": True, "path": "/x"}
+    svc.installed_record = lambda: {"folder": "/srv/devices", "http": 19000, "python": sys.executable}
+    svc.restart = lambda folder, base: calls.append(("restart", str(folder), base)) or {"ok": True, "steps": []}
+    svc.install = lambda folder, base, dry_run=False: calls.append(("install", str(folder), base)) or \
+        {"ok": True, "steps": [], "path": "/x", "content": "", "dry_run": False}
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            dev = pathlib.Path(td) / "devices"
+            node_add.add("ika-c-mag-hs7", dev)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = cli.main(["node", str(dev), "--join", "https://gw:8443", "ab12-cd34"])
+            assert code == 0, err.getvalue()
+            assert calls == [("join", "https://gw:8443", "ab12-cd34", {}), ("restart", "/srv/devices", 19000)], calls
+            assert "joined gateway https://gw:8443 as 'bench-1'" in err.getvalue()
+            calls.clear()
+            svc.status = lambda: {"installed": False, "running": None, "path": "/x"}
+            with contextlib.redirect_stderr(io.StringIO()):
+                code = cli.main(["node", str(dev), "--join", "https://gw:8443", "ab12-cd34", "--install-service"])
+            assert code == 0 and [c[0] for c in calls] == ["join", "install"], calls
+    finally:
+        R.join, svc.status, svc.installed_record, svc.restart, svc.install = saved
+
+
 def test_unknown_names_and_bad_sources_are_refused_in_words():
     with tempfile.TemporaryDirectory() as td:
         dest = pathlib.Path(td)
@@ -123,7 +197,7 @@ def test_cli_add_and_plain_node_find_the_default_directory():
         assert r.returncode == 0, r.stderr
         folder = pathlib.Path(td) / "devices" / "globalfia-flopro-sampler"
         assert (folder / "config.json").is_file() and str(folder) in r.stderr and "mhp node setup" in r.stderr, r.stderr
-        assert "pip install pyserial" in r.stderr and "fill in port" in r.stderr, r.stderr
+        assert "pip install -U pyserial" in r.stderr and "fill in port" in r.stderr, r.stderr
         assert "3. mhp node setup globalfia-flopro-sampler   (" in r.stderr and "4. mhp node   (" in r.stderr, r.stderr   # default folder: no path
         # a package without a config.example.json (the IKA hotplate) needs no config step
         r = subprocess.run([sys.executable, "-m", "openmhp.cli", "node", "add", "ika-c-mag-hs7", "--from", str(REPO)],

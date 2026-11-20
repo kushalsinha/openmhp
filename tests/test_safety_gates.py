@@ -25,8 +25,8 @@ HOME = Path(os.environ["OPENMHP_HOME"])
 from openmhp import client as C                                                 # noqa: E402
 from openmhp.adapters import Action, BoundDriver, Setting, Signal               # noqa: E402
 from openmhp.client import Lab, LocalDevice, RemoteError                        # noqa: E402
-from openmhp.driver import (ApprovalRequired, DeviceBusy, DeviceFault, Forbidden, InterlockOpen,  # noqa: E402
-                            InvalidValue, LimitViolation, NotLeased, NotSupported)
+from openmhp.driver import (ApprovalRequired, DeviceBusy, DeviceFault, EStopActive, Forbidden,  # noqa: E402
+                            InterlockOpen, InvalidValue, Job, LimitViolation, NotLeased, NotSupported)
 from openmhp.mcp_bridge import TOOLS, Bridge, StdioLoop, make_mcp_http_server   # noqa: E402
 from openmhp.runs import PlanLab, RunLog                                         # noqa: E402
 
@@ -203,8 +203,8 @@ def test_sessions_have_their_own_leases():
     assert v == [3]
     d.rpc("safety/estop", {}, "someone")
     a.acquire()
-    expect(NotLeased.code, lambda: b.reset())                  # recovery belongs to the holder
-    a.reset(); a.release()
+    expect(NotLeased.code, lambda: b.reset(approved=True))                  # recovery belongs to the holder
+    a.reset(approved=True); a.release()
     lab = Lab()
     assert lab.child().session != lab.session
 
@@ -237,7 +237,7 @@ def test_plan_mode_never_actuates():
     pd = plan["test"]
     pd.call("settings/write", {"name": "x", "value": 2})
     pd.call("actions/invoke", {"name": "go"})
-    pd.call("safety/reset", {})
+    pd.call("safety/reset", {"approved": True})
     pd.call("jobs/cancel", {"id": "x"})
     pd.write("x", 3); pd.invoke("go")
     assert v == []
@@ -316,7 +316,9 @@ def test_estop_does_not_wait_and_fleet_stop_reaches_every_device():
     C._inprocess["local:orphan.t6stop"] = (SimThermocycler(), "")
     b2 = Bridge(home=HOME / "t6stop2")
     b2.lab.targets["orphan"] = "local:orphan.t6stop"
-    b2.call_tool("mhp_run", {"script": protocol % "orphan"})
+    left = C.connect("local:orphan.t6stop", "left-behind")         # a client that handed its lease on and went away
+    left.invoke("run_protocol", steps=[{"temp": 95, "hold_s": 30}], cycles=20)
+    left.release(handover=True)
     orphan = C._inprocess["local:orphan.t6stop"][0]
     assert orphan.state == "busy" and not b2.lab.devices           # nobody holds it open any more
     assert b2.call_tool("mhp_estop", {"device": "*"})["orphan"]["ok"]
@@ -422,9 +424,9 @@ def test_uncertain_write_latches_fault_and_reaches_a_safe_state():
         return 1
     d3 = LocalDevice(drv(signals=[Signal("t", read=read_t)], settings=[Setting("x", fails(OSError("lost")), limits={"min": 0, "max": 1})]))
     expect(DeviceFault.code, lambda: d3.write("x", 1))
-    expect(DeviceFault.code, lambda: d3.reset())               # recovery must be verified
+    expect(DeviceFault.code, lambda: d3.reset(approved=True))               # recovery must be verified
     sensor["ok"] = True
-    assert d3.reset()["state"] == "idle"
+    assert d3.reset(approved=True)["state"] == "idle"
 
 
 def test_serial_booleans_fail_closed():
@@ -1545,18 +1547,35 @@ def test_shutdown_is_orderly_and_escalates_when_it_cannot_settle():
 
 
 def test_a_hardware_stop_cannot_be_cleared_from_software():
-    from openmhp.driver import NotSupported
+    """A stop latched at the instrument: refused while the driver sees it engaged; cleared only by a person's
+    approved reset once it is released, and that person is told when the software cannot see it."""
+    from openmhp.driver import ApprovalRequired, EStopActive
     from openmhp.client import LocalDevice
     from openmhp.devices.sim_thermocycler import SimThermocycler
     t = SimThermocycler()
     d = LocalDevice(t)
     t.latch_external_stop("red button at the bench", clearance="twist the release, then press reset")
-    assert d.call("device/describe", {"detail": "card"})["state"] == "estop"
-    expect(NotSupported.code, lambda: d.call("safety/reset", {}))
+    ping = d.call("ping")
+    assert ping["state"] == "estop" and ping["stop"] == {"source": "hardware", "clearable": False,
+                                                          "clearance": "twist the release, then press reset"}, ping
+    assert any("twist the release" in s["does"] for s in ping["next"]) and ping["next"][-1]["tool"] == "mhp_reset"
+    # the driver cannot see the button: the person confirming is told to release it first
     try:
-        d.call("safety/reset", {})
-    except Exception as e:
-        assert "twist the release" in str(e), e
+        d.call("safety/reset", {}); assert False
+    except RemoteError as e:
+        assert e.code == ApprovalRequired.code and "twist the release" in e.message and "cannot see" in e.message, e.message
+    # the driver sees it engaged: refused, whoever approves, and it says what to do at the instrument
+    t.hardware_stop_engaged = lambda: True
+    try:
+        d.call("safety/reset", {"approved": True}); assert False
+    except RemoteError as e:
+        assert e.code == EStopActive.code and e.recovery == "operator" and "still engaged" in e.message, e.message
+        assert "twist the release" in e.message and e.next, e.next
+    assert t.state == "estop"
+    # released at the instrument: an ordinary, person-approved reset
+    t.hardware_stop_engaged = lambda: False
+    assert d.reset(approved=True)["state"] == "idle"
+    assert "stop" not in d.call("ping")
 
 
 def test_a_forced_release_will_not_quietly_disarm_the_watchdog():
@@ -2014,6 +2033,134 @@ def test_a_package_edit_is_detected_with_the_size_and_timestamp_put_back():
     except Exception as e:                                            # noqa: BLE001
         assert "accepted it" in str(e), e
     assert b2.call_tool("mhp_lab", {"op": "status"})["configuration_changed"] == [did]
+
+
+# ---- every move of the device's state machine checked where it happens (story 1) ------------------------------
+def test_reset_is_a_persons_call_and_says_so():
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    d = LocalDevice(SimThermocycler())
+    r = d.reset()                                                  # nothing stopped: nothing to confirm
+    assert r == {"state": "idle", "reset": False, "note": "nothing to reset: the device is idle"}, r
+    d.estop("test")
+    try:
+        d.reset(); assert False
+    except RemoteError as e:
+        assert e.code == ApprovalRequired.code and "a person who has checked the instrument" in e.message
+        assert e.data["state"] == "estop" and e.data["approval"] == "confirm"
+    assert d.call("device/describe", {"detail": "card"})["state"] == "estop"
+    r = d.reset(approved=True)
+    assert r["state"] == "idle" and r["reset"] is True and r["verified"], r
+    assert d.call("device/describe", {"detail": "card"})["state"] == "idle"
+
+
+def test_a_stop_that_lands_while_a_reset_is_checked_is_not_cleared():
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    t = SimThermocycler()
+    d = LocalDevice(t)
+    d.estop("first")
+    real = t.verify_recovery
+
+    def meanwhile():
+        t.latch_external_stop("red button pressed during the check", clearance="twist the release")
+        return real()
+    t.verify_recovery = meanwhile
+    try:
+        d.reset(approved=True); assert False
+    except RemoteError as e:
+        assert e.code == EStopActive.code and "arrived while the reset was being checked" in e.message, e.message
+    assert t.state == "estop" and t.stop_clearable is False          # the hardware latch is still in force
+    t.verify_recovery = real
+    t.hardware_stop_engaged = lambda: True                           # the instrument still reports its stop
+    expect(EStopActive.code, lambda: d.reset(approved=True))         # and software still cannot clear it
+
+
+def test_a_write_never_reaches_the_instrument_after_an_estop():
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    t = SimThermocycler()
+    d = LocalDevice(t)
+    sent = []
+    real_write, real_trip = t.on_write, t._sim_trip
+    t.on_write = lambda name, value: sent.append((name, value)) or real_write(name, value)
+
+    def trip(kind, pre=False):                                     # the e-stop lands after the gate, before the write
+        if kind == "write" and pre:
+            t.rpc("safety/estop", {"reason": "between gate and write"}, "someone-else")
+        return real_trip(kind, pre=pre)
+    t._sim_trip = trip
+    expect(EStopActive.code, lambda: d.write("target_temperature", 50))
+    assert sent == [] and t.state == "estop"
+
+
+def test_a_job_cancelled_or_stopped_before_it_starts_never_runs():
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    t = SimThermocycler()
+    ran = []
+    t.on_invoke = lambda job: ran.append(job.id) or {"ok": True}
+    for why in ("cancel", "estop"):
+        job = Job(id=f"job_{why}", action="close_lid", params={}, owner="c")
+        with t._state_lock:
+            t.jobs[job.id] = job
+            t._active.add(job.id)
+            if why == "cancel":
+                job.cancel_requested = True
+            else:
+                t._enter_estop_locked("client")
+        t._run_job(job)
+        assert job.state == "cancelled" and ran == [] and "nothing was sent" in job.note, (why, job.snapshot())
+        assert job.snapshot()["note"] == job.note
+        with t._state_lock:
+            t.state = "idle"
+
+
+def test_a_cancel_that_comes_after_the_action_completed_reports_done():
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    t = SimThermocycler()
+    job = Job(id="job_late", action="close_lid", params={}, owner="c")
+
+    def finishes(j):
+        j.cancel_requested = True                                  # arrives while the instrument is already done
+        return {"lid_closed": True}
+    t.on_invoke = finishes
+    with t._state_lock:
+        t.jobs[job.id] = job
+        t._active.add(job.id)
+    t._run_job(job)
+    assert job.state == "done" and job.result == {"lid_closed": True} and "not undone" in job.note
+
+
+def test_releasing_your_own_lease_with_jobs_running_keeps_the_watchdog_armed():
+    from openmhp.package import load_driver
+    t = load_driver("openmhp/devices/thermocycler-01")
+    assert t.watchdog_s
+    d = LocalDevice(t, session="bench")
+    d.acquire()
+    j = d.invoke("run_protocol", steps=[{"temp": 60, "hold_s": 30}], cycles=50)
+    try:
+        d.release(); assert False
+    except RemoteError as e:
+        assert e.code == DeviceBusy.code and "disarm the watchdog" in e.message
+        assert "handover: true" in e.message and e.data["activeJobs"] == [j["id"]]
+    assert t.lease == "bench"                                       # still held, still watched
+    r = d.release(stop=True)                                        # wind the work down first
+    assert r["holder"] is None and r["shutdown"]["cancelling"] == [j["id"]]
+    assert d.wait(j, timeout=10)["state"] == "cancelled"
+    d.acquire()
+    j2 = d.invoke("run_protocol", steps=[{"temp": 60, "hold_s": 30}], cycles=50)
+    r = d.release(handover=True)                                    # another session takes it next
+    assert r["holder"] is None and r["handedOver"] == [j2["id"]]
+    d.estop("done with the test")
+
+
+def test_a_run_ends_when_the_jobs_it_started_have_ended():
+    from openmhp.devices.sim_thermocycler import SimThermocycler
+    C._inprocess["local:tc.waits"] = (SimThermocycler(), "")
+    b = Bridge(home=HOME / "run-waits")
+    b.lab.targets["tc"] = "local:tc.waits"
+    out = b.call_tool("mhp_run", {"script": "j = lab['tc'].invoke('run_protocol', steps=[{'temp': 50, 'hold_s': 0}], cycles=2)\n"
+                                             "print('started', j['state'])"})
+    tc = C._inprocess["local:tc.waits"][0]
+    assert tc.state == "idle" and not tc._active, (tc.state, out)  # the run did not leave its job behind
+    assert "waiting for tc job" in out["stdout"], out
 
 if __name__ == "__main__":
     failed = 0

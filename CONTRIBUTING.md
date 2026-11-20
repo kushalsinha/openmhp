@@ -57,6 +57,7 @@ python tests/test_runs.py
 python tests/test_safety_gates.py
 python tests/test_inclusion.py
 python tests/test_methods.py
+python tests/test_guide_and_versions.py
 ```
 
 ## Repository guide
@@ -80,7 +81,10 @@ python tests/test_methods.py
 | `openmhp/relay.py` | Node side of the relay: `mhp node --join` dials out and serves through the gateway |
 | `openmhp/supervisor.py` | Gateway runs: the planner, the run's session, and the scientist's questions and approvals |
 | `openmhp/gw_shell.py` | `mhp-gw`: the verbs a scientist's agent sends to the gateway over SSH |
+| `openmhp/guide.py`, `openmhp/guide/` | `mhp guide`: the user guide shipped in the wheel, for machines with no web access. The pages are generated from the website by `scripts/build_guide.py`; `troubleshooting.md` is written here |
+| `openmhp/versions.py` | `mhp --version`, and `mhp gateway\|node\|agent --version`: what the running service or the joined gateway runs |
 | `openmhp/node_add.py` | `mhp node add <package>`: puts a ready-made device package on the instrument PC |
+| `openmhp/bundled.py` | The ready-made packages shipped in the wheel: `supported-devices/` installs as `openmhp/supported_devices`, so `node add` and `lab add` need no download. `pyproject.toml` lists the Python packages by hand for this; add a new one there |
 | `openmhp/node_setup.py` | `mhp node setup`: the questions (from `config.schema.json`), `config.json`, the driver's probe, gateway pairing, the service |
 | `tests/` | Simulator and fake-client coverage, plus relay and gateway end-to-end tests |
 
@@ -97,6 +101,8 @@ python tests/test_methods.py
   injected fakes when real hardware is not available, and clearly say what was not exercised.
 - A device package for `supported-devices/` must pass `mhp inclusion <folder>` in both tiers.
   Run it before opening the PR; `tests/test_inclusion.py` runs it over every shipped package.
+- When the website's pages change, regenerate the shipped guide with
+  `python scripts/build_guide.py --site <openMHP-website>/src` and commit `openmhp/guide/`.
 - Keep commits focused and describe validation in the pull request.
 
 ## Building your own lab integration

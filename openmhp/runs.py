@@ -499,6 +499,28 @@ class ScriptLab(_ScriptFacade):
         return "<lab>"
 
 
+def _await_own_jobs(lab: Lab, run) -> None:
+    """Jobs the script started and left running stay under this run's lease, so its watchdog keeps watching them,
+    until they end. Only then is the lease released and the run reported as ended."""
+    from .driver import TERMINAL
+    for name, d in list(getattr(lab, "_devices", {}).items()):
+        try:
+            jobs = d.call("jobs/list").get("jobs", [])
+        except Exception:                                   # noqa: BLE001  a device that cannot say: nothing to wait for
+            continue
+        for j in jobs:
+            if j.get("owner") == d.session and j.get("state") not in TERMINAL:
+                try:
+                    run.out.write(f"[the script ended; waiting for {name} job {j['id']} ({j.get('action')}) it started]\n")
+                    run.out.flush()
+                except Exception:                           # noqa: BLE001
+                    pass
+                try:
+                    d.wait(j["id"])
+                except Exception:                           # noqa: BLE001  its outcome is in the device's own record
+                    pass
+
+
 class Runs:
     def __init__(self, lab: Lab, log: RunLog, home: Path | None = None, observer=None):
         self.lab, self.log, self.home = lab, log, home or HOME
@@ -593,6 +615,7 @@ class Runs:
                 run.state, run.error = "failed", f"{type(e).__name__}: {e}" + (f" (script line {line})" if line else "")
             finally:
                 if own_lab is not None:
+                    _await_own_jobs(own_lab, run)          # a run ends when the work it started has ended
                     own_lab.close()                         # releases this run's leases
                 run.finished = time.time()
                 run.out.close()

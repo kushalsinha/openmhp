@@ -463,8 +463,9 @@ def same_json(a: Path, b: Path) -> bool:
         return False
 
 
-def preflight_problems(folders: list[Path], host: str, base: int) -> list[str]:
-    """What stops each package from serving, in words a person at the bench can act on."""
+def preflight_problems(folders: list[Path], host: str, base: int, check_ports: bool = True) -> list[str]:
+    """What stops each package from serving, in words a person at the bench can act on. check_ports=False when this
+    PC's background service holds the ports: it is restarted onto the new packages, not competed with."""
     from .node_add import config_keys, short
     problems = []
     for i, folder in enumerate(folders):
@@ -474,6 +475,8 @@ def preflight_problems(folders: list[Path], host: str, base: int) -> list[str]:
             keys = ", ".join(config_keys(folder)) or "the values it asks for"
             problems.append(f"{folder.name}: not set up yet ({keys}). Run:  mhp node setup {folder.name}"
                             + ("" if folder.parent == _default_dir() else f" {short(folder.parent)}"))
+        if not check_ports:
+            continue
         try:
             with socket.socket() as sock:
                 sock.bind((host, base + i))
@@ -559,6 +562,10 @@ def setup_package(folder: Path, ask=default_ask, say=default_say, *, answers: di
             say(f"  {name} is ready: {text}")
             break
         say(f"  {name} did not answer: {text}")
+        if ask is auto_ask:                         # no person to fix an answer: asking again would loop forever
+            say(f"  saved anyway. Check the cable and the values, then  mhp node setup {name}  at a terminal "
+                "(or --set key=value) to check again.")
+            break
         try:
             choice = ask("  (f)ix an answer, (c)arry on anyway, or (s)top? [f/c/s]", "f").strip().lower()[:1]
         except Unanswered:
@@ -595,7 +602,8 @@ def finish(root: Path, base: int, ask=default_ask, say=default_say, *, host: str
     joiner = joiner or R.join
     out = {"serve": False, "joined": None, "service": None}
     folders = sorted(p.parent for p in root.glob("*/DEVICE.md"))
-    problems = preflight_problems(folders, host, base)
+    service_here = bool(svc.status().get("installed"))      # it holds the ports now and is restarted below
+    problems = preflight_problems(folders, host, base, check_ports=not service_here)
     if problems:
         say("\nnot serving yet:")
         for p in problems:
@@ -616,7 +624,7 @@ def finish(root: Path, base: int, ask=default_ask, say=default_say, *, host: str
             pair = parse_pair_line(ans)
             if pair is None:
                 try:
-                    ans = ask("  that is not an address and a code (like  https://gw.lab.local ab12-cd34). Try again, or Enter to skip", None)
+                    ans = ask("  that is not an address and a code (like  https://gw.lab.local:8443 ab12-cd34). Try again, or Enter to skip", None)
                 except Unanswered:
                     ans = ""
                 continue
@@ -635,7 +643,7 @@ def finish(root: Path, base: int, ask=default_ask, say=default_say, *, host: str
                 continue
             break
         if not out["joined"]:
-            say("  (later:  mhp node" + ("" if root == _default_dir() else f" {short(root)}") + " --join https://<gateway> <code>)")
+            say("  (later:  mhp node" + ("" if root == _default_dir() else f" {short(root)}") + " --join https://<gateway>:<port> <code>)")
     # the service
     st = svc.status()
     if st.get("installed"):

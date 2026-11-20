@@ -1,6 +1,6 @@
 """`mhp agent`: the agent-machine half of gateway pairing (SPEC 9.2), the mirror of `mhp node --join`.
 
-    mhp agent --join https://gw.office ab12-cd34     pair this machine once, with a code from `mhp gateway pair-agent`
+    mhp agent --join https://gw.office:8443 ab12-cd34     pair this machine once, with a code from `mhp gateway pair-agent`
     mhp agent                                        which gateway this machine is paired with, and whether it answers
     mhp agent leave                                  forget the gateway (the operator revokes with `mhp gateway remove-agent`)
 
@@ -138,11 +138,12 @@ def join(gateway_url: str, code: str, name: str | None = None, *, quiet: bool = 
         raise SystemExit(f"cannot reach {gateway_url} ({e}). Is `mhp gateway serve` running there, and can this "
                          "machine open the address in a browser?") from None
     HOME.mkdir(parents=True, exist_ok=True)
-    PIN_FILE.write_text(pem, encoding="utf-8")
+    new_pin = PIN_FILE.with_name(PIN_FILE.name + ".new")   # the working pairing keeps its pin until this one succeeds
+    new_pin.write_text(pem, encoding="utf-8")
     fp = fingerprint(pem)
     if not quiet:
         say(f"gateway certificate fingerprint: {fp}", "  (compare with what `mhp gateway pair-agent` printed; stop if it differs)")
-    ctx = ssl_context(str(PIN_FILE))
+    ctx = ssl_context(str(new_pin))
     ssh_key = ensure_ssh_key(name)
     req = urllib.request.Request(gateway_url + "/agent/join", method="POST",
                                  data=json.dumps({"code": code, "name": name, "ssh_key": ssh_key}).encode(),
@@ -168,6 +169,7 @@ def join(gateway_url: str, code: str, name: str | None = None, *, quiet: bool = 
                       "scientist": ssh["scientist"]}
     elif ssh and ssh.get("error"):
         cfg["ssh_error"] = ssh["error"]
+    os.replace(new_pin, PIN_FILE)
     save_agent_config(cfg)
     return cfg
 
@@ -202,7 +204,7 @@ def status() -> int:
     cfg = load_agent_config()
     if cfg is None:
         say("not paired with a gateway. Ask the operator for a code (`mhp gateway pair-agent` there), then:",
-            "  mhp agent --join https://<gateway> <code> --name <your name, e.g. alice>",
+            "  mhp agent --join https://<gateway>:<port> <code> --name <your name, e.g. alice>",
             "  (on a gateway that runs experiments, the name is your folder there; without it, this computer's name)")
         return 1
     if cfg.get("ssh"):
@@ -253,10 +255,13 @@ def main(verb: str | None, args: list[str], *, join_args: list[str] | None = Non
         elif cfg.get("ssh_error"):
             say("", f"the gateway did not set up SSH for this machine: {cfg['ssh_error']}")
         from . import skills_install as SK
-        installed = [p for d in (SK.harness_dirs() or [SK.HARNESS_DIRS["Claude Code"]]) for p in SK.install(d)]
+        skipped: list = []
+        installed = [p for d in (SK.harness_dirs() or [SK.HARNESS_DIRS["Claude Code"]]) for p in SK.install(d, skipped=skipped)]
         say("", f"installed the OpenMHP skills for the agents on this machine ({len(installed)} copies), including "
             "openmhp-lab-gateway, which teaches them to talk to the gateway for you in plain English.",
             "They load the next time an agent starts; new OpenMHP versions update them by themselves.")
+        for r in skipped:
+            say(f"  left alone {r['path']}: {r['why']}")
         return 0
     if verb in (None, "status"):
         return status()

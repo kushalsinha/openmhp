@@ -114,7 +114,7 @@ def test_lcms_worklist_twin():
         raise AssertionError("an empty worklist was written")
     except RemoteError as e:
         assert "at least one sample" in str(e), e
-    dev.reset()
+    dev.reset(approved=True)
     # every other vendor renders and reads back through the same code
     for vendor, first in (("xcalibur", "Bracket Type=4"), ("masshunter", "﻿Sample Name,Barcode"),
                           ("sciexos", "Sample Name,Sample ID")):
@@ -147,10 +147,11 @@ def test_bruker_nmr_iconnmr_twin():
     refused(-32014, lambda: dev.invoke("queue_experiment", approved=True, **{**base, "title": "a\tb"}))
     refused(-32015, lambda: dev.invoke("queue_experiment", approved=True))                # a method or params
     j = dev.invoke("queue_experiment", approved=True, **base, ns=16, d1_s=1.0, title="batch12 crude")
-    deadline = time.time() + 5
-    while dev.read("sample_changer_position") is None and time.time() < deadline:
+    deadline, pos, busy = time.time() + 5, None, None
+    while pos is None and time.time() < deadline:                 # keep what was read: the run may end before a second read
+        pos, busy = dev.read("sample_changer_position"), dev.read("busy")
         time.sleep(0.005)
-    assert dev.read("sample_changer_position") == 3 and dev.read("busy") is True
+    assert pos == 3 and busy is True, (pos, busy)
     r = dev.wait(j, poll=0.02)
     assert r["state"] == "done" and r["resultMismatch"] is None, r
     res = r["result"]
@@ -224,10 +225,11 @@ def test_ta_dsc_tga_twin():
     refused(-32014, lambda: dev.invoke("queue_run", approved=True, **common, instrument="dsc", program={"segments": []}))
     assert dev.method_find("demo compound", "demo-assay")["method"]["name"] == "dsc_10k_to_300"
     j = dev.invoke("queue_run", approved=True, **common, instrument="dsc", program={"segments": [seg]})
-    deadline = time.time() + 5
-    while dev.read("sample_temperature") is None and time.time() < deadline:
+    deadline, temp = time.time() + 5, None
+    while temp is None and time.time() < deadline:                # keep the reading: the run may end before a second read
+        temp = dev.read("sample_temperature")
         time.sleep(0.005)
-    assert 25 <= dev.read("sample_temperature") <= 300
+    assert temp is not None and 25 <= temp <= 300, temp
     r = dev.wait(j, poll=0.02)
     assert r["state"] == "done" and r["resultMismatch"] is None, r
     res = r["result"]

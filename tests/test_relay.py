@@ -77,6 +77,22 @@ def test_gateway_binds_only_the_address_it_was_named_with():
     assert G.bind_address({"server_name": "nosuchhost.invalid"}) is None     # serve() then refuses with a sentence
 
 
+def test_status_asks_the_address_serve_listens_on():
+    """`serve` listens only on the init name's address, so `status` and `check` must ask there, not on loopback:
+    a gateway named by its LAN IP was reported NOT running while it served."""
+    from openmhp import gateway as G
+    seen = []
+    real_load, real_bind, real_open = G.load, G.bind_address, G.urllib.request.urlopen
+    G.load = lambda: {"server_name": "10.9.9.9", "listen": 9443, "admin_token": "t", "self_signed": False}
+    G.bind_address = lambda state: "10.9.9.9"
+    G.urllib.request.urlopen = lambda req, **kw: seen.append(req.full_url) or (_ for _ in ()).throw(OSError("no"))
+    try:
+        assert G._live() is None
+    finally:
+        G.load, G.bind_address, G.urllib.request.urlopen = real_load, real_bind, real_open
+    assert seen == ["https://10.9.9.9:9443/relay/status"], seen
+
+
 def test_relay_end_to_end():
     from openmhp import gateway as G, relay as R
     from openmhp.client import RemoteError, connect
@@ -311,5 +327,6 @@ if __name__ == "__main__":
         print("skipped:", SKIP)
     else:
         test_gateway_binds_only_the_address_it_was_named_with()
+        test_status_asks_the_address_serve_listens_on()
         test_relay_end_to_end()
         print("ok: relay end to end")
