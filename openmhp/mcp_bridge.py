@@ -7,7 +7,7 @@ searched for and the one descriptor it chose to open.
 
     mhp_find      search the directory        (deferred loading: cards, not descriptors)
     mhp_describe  open one descriptor         (card | summary | full | select one action | a resource)
-    mhp_read / mhp_write / mhp_invoke / mhp_job / mhp_estop
+    mhp_read / mhp_write / mhp_invoke / mhp_job / mhp_estop / mhp_reset
     mhp_run       run a script or recipe      (plan=true rehearses it; background=true for long runs)
     mhp_lab       the lab: status, scan, add, onboard, recipes, safety card, events
     mhp_data      runs and their files (readings, images, logs); updates pushed by devices
@@ -39,7 +39,9 @@ from .update_check import notice as update_notice, refresh_in_background
 from .client import (Lab, PackageChanged, RemoteError, _inprocess, _remote, drop_inprocess,
                      package_fingerprint, package_folder, pin_package)
 from .directory import Directory
+from .states import DEVICE_LISTED_STATES
 from .driver import ApprovalRequired, Forbidden
+from .bundled import package as bundled_package
 from .fleet import safe_id
 from .package import declared_rulebook, rulebook_diff
 from .runs import PlanLab, RunLog, Runs
@@ -83,7 +85,7 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "query": {"type": "string", "description": "free text: what you need the device to do"},
          "class": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}},
-         "location": {"type": "string"}, "state": {"type": "string", "enum": ["idle", "busy", "fault", "estop"]},
+         "location": {"type": "string"}, "state": {"type": "string", "enum": list(DEVICE_LISTED_STATES)},
          "limit": {"type": "integer", "default": 5}}},
      "input_examples": [
          {"query": "heat a 96-well plate to 95 C", "class": "thermal_cycler", "state": "idle"},
@@ -149,6 +151,13 @@ TOOLS = [
      "description": "EMERGENCY STOP one device, or every device this session has touched with device='*'. Always allowed. Use whenever anything looks unsafe.",
      "inputSchema": {"type": "object", "properties": {"device": {"type": "string"}, "reason": {"type": "string"}}, "required": ["device"]},
      "input_examples": [{"device": "arm-01", "reason": "person inside keep-out ring"}, {"device": "*", "reason": "smoke"}]},
+    {"name": "mhp_reset",
+     "description": ("Clear a device's e-stop or fault and return it to idle, after a person has checked the instrument. "
+                     "The server asks that person itself (elicitation); you cannot approve for them. Refused while jobs "
+                     "still run, and for a stop latched at the instrument (the answer says what must be done there). "
+                     "Tell the user what stopped it and ask them to check before you call this."),
+     "inputSchema": {"type": "object", "properties": {"device": {"type": "string"}}, "required": ["device"]},
+     "input_examples": [{"device": "thermocycler-01"}]},
     {"name": "mhp_run",
      "description": ("Run a Python orchestration script, or a named recipe, against the lab. Returns ONLY what it prints (capped), "
                      "so large intermediate data never enters your context. The script sees `lab`, `run_dir` (a folder to save "
@@ -182,7 +191,8 @@ TOOLS = [
                      "produces a SAFETY CARD to read back, and tells you to op='add' it. Hand-operated ('manual') and serial/USB "
                      "('serial') instruments need no code. op='scan' finds MHP devices on the network not yet in the lab (hosts=[...] "
                      "to probe specific machines). op='add' registers a target: http://host:port, a package folder, a package id under "
-                     "~/.openmhp/devices, or github:owner/repo/path (community packages; sim=true adds its simulated twin for rehearsal). "
+                     "~/.openmhp/devices, a ready-made package's name from op='registry' (shipped with OpenMHP: nothing to download), "
+                     "or github:owner/repo/path (community packages; sim=true adds its simulated twin for rehearsal). "
                      "op='registry' searches known community packages. op='recipes' searches tested cross-instrument procedures to run "
                      "with mhp_run. op='safety_card' reviews a device before first use. op='events' returns what happened since a "
                      "sequence number (job finished, e-stop, refusals). op='location' records where an instrument stands (id, location); ask the human for it after adding a shared package, because a package cannot know. "
@@ -197,7 +207,7 @@ TOOLS = [
                                            "location", "remove", "reload", "release", "list", "new", "write", "validate", "home"]},
          "force": {"type": "boolean", "description": "remove/reload: proceed even if the device has active jobs"},
          "answers": {"type": "object", "description": "onboard: {question key: answer in the given shape}"},
-         "target": {"type": "string", "description": "add: http://host:port | pkg:/folder | folder | package id | github:owner/repo/path"},
+         "target": {"type": "string", "description": "add: http://host:port | pkg:/folder | folder | package id | ready-made package name | github:owner/repo/path"},
          "sim": {"type": "boolean", "description": "add: use the package's simulated twin"},
          "location": {"type": "string", "description": "add/location: where the instrument stands, e.g. 'bay 3, fume hood 2'"},
          "id": {"type": "string", "description": "device id (remove/new/write/validate/safety_card/onboard)"},
@@ -297,7 +307,7 @@ _MHP_WRITE_WRAPPED = {
     "input_examples": [
         {"device": "thermocycler-01", "name": "target_temperature", "value": "95"},
         {"device": "arm-01", "name": "speed", "value": "30", "dryRun": True},
-        {"device": "scope-01", "name": "trigger_source", "value": '\\"CH2\\"'},
+        {"device": "scope-01", "name": "trigger_source", "value": '"CH2"'},
         {"device": "scope-01", "name": "ch1_enabled", "value": "true"}]}
 
 INSTRUCTIONS = (
@@ -323,7 +333,9 @@ INSTRUCTIONS = (
     "project's own). None: ask the person for the parameters, run once with them, then op='save' under the project. Adapt "
     "between runs with `overrides`; save what worked as the next version. Results are pushed: mhp_data op='updates' shows "
     "each new result (a run's events.jsonl keeps them) so you can decide the next run without polling.\n"
-    "- mhp_estop is always allowed. Use it the moment anything looks wrong. mhp_job op='pause' lets a human step in."
+    "- mhp_estop is always allowed. Use it the moment anything looks wrong. mhp_job op='pause' lets a human step in. "
+    "After a stop or fault, tell the user what stopped and ask them to check the instrument; mhp_reset then asks them to "
+    "confirm before the device returns to idle."
 )
 
 PROMPTS = {
@@ -415,6 +427,8 @@ class Bridge:
                 r = self._device(a["device"]).estop(a.get("reason", ""))
             self.notify_harness("error", f"E-STOP {a['device']}: {a.get('reason', '')}")
             return r
+        if name == "mhp_reset":
+            return self._device(a["device"]).reset()
         if name == "mhp_run":
             if not self.scripts:
                 raise _remote(Forbidden.code,
@@ -525,6 +539,13 @@ class Bridge:
             self.log.write("write/restore", session=self.lab.session, device=device, name=name,
                            category="unrestorable", declared_type=typ, wrapped=raw,
                            parsed_type=type(parsed).__name__)
+            if typ == "string" and not isinstance(parsed, str):
+                # the plain-text hint would re-send exactly these bytes and come back here: show
+                # the nested-quote form for the exact text that was sent
+                raise _remote(-32602, f"the string {raw!r} parses as a JSON {type(parsed).__name__}, so the "
+                              f"plain text would be refused again. A {typ} setting wants that exact text "
+                              f"wrapped in nested quotes. Send {{\"value\": {json.dumps(json.dumps(raw))}}}.",
+                              {"category": "unrestorable", "declared_type": typ})
             raise _remote(-32602, f"the string {raw!r} does not encode a {typ}. For a {typ} setting "
                           f"send {form}.",
                           {"category": "unrestorable", "declared_type": typ})
@@ -737,6 +758,12 @@ class Bridge:
         name = params.get("name")
         if method == "settings/write":
             what = f"{dev.name}: set {name} = {json.dumps(params.get('value'), default=str)}"
+        elif method == "safety/reset":
+            name = "safety/reset"
+            what = f"{dev.name}: you have checked the instrument and it is safe; clear its stop and return it to idle"
+        elif method == "session/release":
+            name = "session/release"
+            what = f"{dev.name}: force its lease open, taking it from the session that holds it"
         else:
             args = params.get("params") or {}
             what = f"{dev.name}: run {name}" + (f" with {json.dumps(args, default=str)}" if args else "")
@@ -746,7 +773,8 @@ class Bridge:
                           f"'{name}' needs a person's confirmation, and this harness has no trusted confirmation channel "
                           "(MCP elicitation). Ask the user to do this step at the instrument or from a harness that supports "
                           "elicitation.", {"approval": "confirm", "channel": "unavailable"})
-        spec = self._spec(dev, "settings" if method == "settings/write" else "actions", name)
+        spec = self._spec(dev, "settings" if method == "settings/write" else "actions", name) \
+            if method in ("settings/write", "actions/invoke") else {}
         ans = self.elicit(what + "?" + (f" Note from the owner: {spec['notes']}" if spec.get("notes") else ""))
         self.log.write("confirm", device=dev.name, name=name, answer=ans, request=params)
         return ans == "accept"
@@ -811,7 +839,7 @@ class Bridge:
                 out["error"] = res["error"]
             self.log.write("plan", name=name, verdict=summary["verdict"], steps=len(plan.plan))
             return out
-        self.lab.release_all()                   # hand this session's leases to the run's own session
+        self.lab.release_all(handover=True)      # hand this session's leases, and any running jobs, to the run's own session
         return self.runs.start(script, name=name, timeout_s=float(a.get("timeout_s", 600)),
                                background=bool(a.get("background")), params=params)
 
@@ -938,7 +966,9 @@ class Bridge:
         if op == "add":
             target = a["target"]
             if not target.startswith(("http", "pkg:", "sim:", "local:", "stdio:", "github:")) and "/" not in target and not Path(target).exists():
-                target = str(fleet.packages_dir() / safe_id(target))  # a package id under ~/.openmhp/devices
+                mine = fleet.packages_dir() / safe_id(target)          # a package id under ~/.openmhp/devices,
+                if (mine / "DEVICE.md").is_file() or not bundled_package(target):   # else a ready-made one shipped here
+                    target = str(mine)
             card = fleet.add(target, sim=bool(a.get("sim")), location=a.get("location"), accept=False)
             entry = fleet.devices[card["id"]]
             folder = package_folder(entry["target"])
@@ -999,8 +1029,11 @@ class Bridge:
                            was=was, now=new.get("fingerprint"))
             return {"reloaded": card, "accepted": changes or "nothing the device enforces changed"}
         if op == "release":
-            self.lab.release_all()
-            return {"released": sorted(self.lab.devices)}
+            res = self.lab.release_all()
+            kept = {n: r["error"] for n, r in res.items() if "error" in r}
+            return {"released": sorted(n for n in res if n not in kept),
+                    **({"kept": kept, "next": "wait for those jobs (mhp_job), or stop them, then release again"}
+                       if kept else {})}
         if op == "list":
             return {"devices": fleet.list(), "fleet": str(fleet.path)}
         if op == "home":
@@ -1015,7 +1048,7 @@ class Bridge:
                             "are ordinary mhp_write/mhp_invoke calls you can make one at a time.")}
         if op == "registry":
             from .registry import search as rsearch
-            return {"packages": rsearch(a.get("query", "")), "how": "mhp_lab op='add' target='github:...' (sim=true for a rehearsal twin)"}
+            return {"packages": rsearch(a.get("query", "")), "how": "mhp_lab op='add' target='<name>' (shipped with OpenMHP, no download; sim=true for a rehearsal twin)"}
         if op == "location":
             card = fleet.set_location(a["id"], a.get("location", ""))
             if isinstance(self.lab.directory, Directory):
@@ -1177,8 +1210,17 @@ class Bridge:
                     content.append({"type": "text", "text": f"Notice from the OpenMHP server: {n}"})
                 return self._ok(mid, {"content": content})
             except RemoteError as e:
-                txt = json.dumps({"mhpError": {"code": e.code, "message": e.message,
-                                               "data": e.data, "ts": getattr(e, "ts", None)}}, default=str)
+                # everything the device said about the refusal: whether trying again can work, what reached the
+                # instrument, who has to act, the state it is in now, and the next steps (SPEC 5.9)
+                err = {"code": e.code, "message": e.message, "data": e.data, "ts": getattr(e, "ts", None)}
+                for k in ("transient", "effect", "recovery", "motion"):
+                    if getattr(e, k, None) is not None:
+                        err[k] = getattr(e, k)
+                if getattr(e, "device_state", None):
+                    err["state"] = e.device_state
+                if getattr(e, "next", None):
+                    err["next"] = e.next
+                txt = json.dumps({"mhpError": err}, default=str)
                 return self._ok(mid, {"content": [{"type": "text", "text": txt}], "isError": True})
             except Exception as e:                # noqa: BLE001
                 return self._ok(mid, {"content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}], "isError": True})
