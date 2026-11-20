@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 import hmac
+import math
 import os
 import secrets
 import uuid
@@ -285,6 +286,30 @@ TOOLS = [
          {"op": "list", "device": "thermocycler-01", "compound": "plasmid-x"}]},
 ]
 
+# The wrapped write face (--write-face=wrapped): one form on the wire. `value` is one string whose
+# content is the JSON text of the value; the bridge restores the target's declared descriptor type
+# before the device gate sees it, so the model never picks a JSON type. A value that cannot be
+# restored is refused with a correction naming the exact form to send. Weak tool-calling models
+# emit typed JSON reliably only when the schema offers no other form, so this face announces no
+# direct or union-typed alternative. The default face keeps the typed schema unchanged for
+# existing clients.
+_MHP_WRITE_WRAPPED = {
+    "name": "mhp_write",
+    "description": 'Write a setting (setpoint). The value travels as ONE string holding the JSON text of the value -- never as a raw number, boolean or array. The server restores the declared descriptor type before the device checks it. Examples: 95 -> "95", the text CH2 -> "\\"CH2\\"", true -> "true", [1,2] -> "[1,2]". The driver checks the restored value against the descriptor type and limits and refuses anything else (InvalidValue, LimitViolation). Settings with approval=confirm need a person\'s yes: the server asks them itself through MCP elicitation; you cannot approve on their behalf, and without elicitation such settings are unavailable. dryRun=true checks every gate without touching hardware.',
+    "inputSchema": {"type": "object", "properties": {
+        "device": {"type": "string"},
+        "name": {"type": "string",
+                 "description": 'setting name; names, declared types and legal values come from mhp_describe'},
+        "value": {"type": "string",
+                  "description": 'The value as a JSON document encoded inside this string. Numbers: "95" or "0.5". Booleans: "true" / "false". Text: the text WITH its quotes inside, e.g. "\\"CH2\\"" for CH2. Lists and objects as JSON, e.g. "[1,2]". For a setting that takes one of a fixed set of words, wrap the exact spelling mhp_describe lists, e.g. "\\"AC\\"". Never send a bare word without quotes inside.'},
+        "dryRun": {"type": "boolean"}},
+        "required": ["device", "name", "value"]},
+    "input_examples": [
+        {"device": "thermocycler-01", "name": "target_temperature", "value": "95"},
+        {"device": "arm-01", "name": "speed", "value": "30", "dryRun": True},
+        {"device": "scope-01", "name": "trigger_source", "value": '"CH2"'},
+        {"device": "scope-01", "name": "ch1_enabled", "value": "true"}]}
+
 INSTRUCTIONS = (
     "OpenMHP gives you safe control of laboratory and factory instruments. The user may be a scientist who does not "
     "program; do the work for them and ask only for what you cannot know.\n"
@@ -349,9 +374,12 @@ class Bridge:
     """
 
     def __init__(self, targets: dict[str, str] | None = None, directory=None, fleet=None, home: Path | None = None,
-                 scripts: bool | None = None):
+                 scripts: bool | None = None, write_face: str = "typed"):
         off = os.environ.get("OPENMHP_NO_SCRIPTS", "").strip().lower() not in ("", "0", "false", "no")
         self.scripts = (not off) if scripts is None else bool(scripts)   # --no-scripts: no code from the model runs here
+        if write_face not in ("typed", "wrapped"):
+            raise ValueError(f"unknown write face {write_face!r}; use --write-face=typed or --write-face=wrapped")
+        self.write_face = write_face
         # a run on a gateway (OPENMHP_RUN_SCOPE): its instruments come from the gateway, already chosen; it never
         # scans, adds or onboards devices, so mhp_lab is not offered at all
         self.run_scope = os.environ.get("OPENMHP_RUN_SCOPE", "").strip().lower() not in ("", "0", "false", "no")
@@ -428,6 +456,8 @@ class Bridge:
         if name == "mhp_read":
             return dev.call("signals/read", {"names": a["names"]} if a.get("names") else {})
         if name == "mhp_write":                  # any model-supplied `approved` is ignored
+            if self.write_face == "wrapped":
+                return self._write_wrapped(dev, a)
             return dev.call("settings/write", {"name": a.get("name"), "value": a.get("value"), "dryRun": a.get("dryRun") is True})
         if name == "mhp_invoke":
             req = {"name": a.get("name"), "params": a.get("params") or {}, "dryRun": a.get("dryRun") is True}
@@ -449,11 +479,112 @@ class Bridge:
             return fn(a["id"])
         raise ValueError(f"unknown tool {name}")
 
+    # ---- wrapped write face ------------------------------------------------
+    _UNWRAP_FORM = {          # exact arguments-JSON fragments shown in corrections, copy-pasteable
+        "boolean": '{"value": "true"} or {"value": "false"} (the value is the bare text true/false, no extra quotes)',
+        "integer": '{"value": "10"}',
+        "number": '{"value": "0.5"}',
+        "string": '{"value": "CH2"} (the plain text inside the string, no nested quotes)',
+        "object": '{"value": "{\\"key\\": 1}"}',
+        "array": '{"value": "[1, 2]"}'}
+
+    @staticmethod
+    def _reject_constant(token: str):
+        raise ValueError(f"{token} is not valid JSON")
+
+    def _write_wrapped(self, dev, a: dict) -> dict:
+        """The wrapped write face. `value` must be one string whose content is the JSON text of the
+        value; the target's declared descriptor type decides the restore, and the typed result goes
+        through the unchanged device gate. Nothing is repaired silently: every refusal is
+        model-visible, names the form to send, and carries one `category` in its data so runlog
+        counters attribute each failure to exactly one layer."""
+        device, name = a.get("device"), a.get("name")
+        spec = self._setting_spec(dev, name)
+        typ = (spec or {}).get("type", "number")
+        form = self._UNWRAP_FORM.get(typ, "the JSON text of the value inside the string")
+        if a.get("value_json") is not None:
+            self.log.write("write/restore", session=self.lab.session, device=device, name=name,
+                           category="form_mismatch", declared_type=typ, wrapped=a.get("value_json"))
+            raise _remote(-32602, f"this write face has no value_json parameter: pass the same string as "
+                          f"value. For a {typ} setting send {form}.",
+                          {"category": "form_mismatch", "declared_type": typ})
+        raw = a.get("value")
+        if not isinstance(raw, str):
+            self.log.write("write/restore", session=self.lab.session, device=device, name=name,
+                           category="form_mismatch", declared_type=typ,
+                           received_type=type(raw).__name__ if raw is not None else None)
+            raise _remote(-32602, f"value must be ONE string holding the JSON text of the value -- got "
+                          f"{type(raw).__name__ if raw is not None else 'no value'}. For a {typ} setting "
+                          f"send {form}.",
+                          {"category": "form_mismatch", "declared_type": typ})
+        try:
+            parsed = json.loads(raw, parse_constant=self._reject_constant)
+        except ValueError as e:
+            if typ == "string":
+                # deterministic string-target rule: content that is not JSON text IS the literal
+                # string. No guessing: any content that PARSES as a non-string still refuses below.
+                parsed = raw
+            else:
+                self.log.write("write/restore", session=self.lab.session, device=device, name=name,
+                               category="unrestorable", declared_type=typ, wrapped=raw)
+                raise _remote(-32602, f"value is not valid JSON ({e}); the string must hold the JSON document "
+                              f"itself. For a {typ} setting send {form}.",
+                              {"category": "unrestorable", "declared_type": typ}) from e
+        ok = {"boolean": isinstance(parsed, bool),
+              "integer": isinstance(parsed, int) and not isinstance(parsed, bool),
+              "number": isinstance(parsed, (int, float)) and not isinstance(parsed, bool) and math.isfinite(parsed),
+              "string": isinstance(parsed, str),
+              "object": isinstance(parsed, dict), "array": isinstance(parsed, list)}.get(typ, True)
+        if not ok:
+            self.log.write("write/restore", session=self.lab.session, device=device, name=name,
+                           category="unrestorable", declared_type=typ, wrapped=raw,
+                           parsed_type=type(parsed).__name__)
+            if typ == "string" and not isinstance(parsed, str):
+                # the plain-text hint would re-send exactly these bytes and come back here: show
+                # the nested-quote form for the exact text that was sent
+                raise _remote(-32602, f"the string {raw!r} parses as a JSON {type(parsed).__name__}, so the "
+                              f"plain text would be refused again. A {typ} setting wants that exact text "
+                              f"wrapped in nested quotes. Send {{\"value\": {json.dumps(json.dumps(raw))}}}.",
+                              {"category": "unrestorable", "declared_type": typ})
+            raise _remote(-32602, f"the string {raw!r} does not encode a {typ}. For a {typ} setting "
+                          f"send {form}.",
+                          {"category": "unrestorable", "declared_type": typ})
+        self.log.write("write/restore", session=self.lab.session, device=device, name=name,
+                       category="restored", declared_type=typ, wrapped=raw, value=parsed)
+        try:
+            return dev.call("settings/write", {"name": name, "value": parsed, "dryRun": a.get("dryRun") is True})
+        except RemoteError as e:
+            if e.code == -32014 and isinstance(e.data, dict) and "type" in e.data:
+                # a restored value refused by the device's own type gate is a bridge defect (the
+                # restore, not the model, picked the type); count it, then surface the refusal.
+                self.log.write("write/restore", session=self.lab.session, device=device, name=name,
+                               category="device_type_error", declared_type=typ, wrapped=raw,
+                               value=parsed, message=e.message)
+            raise
+
+    def _setting_spec(self, dev, name) -> dict | None:
+        """The descriptor spec of one setting, fetched per write (describe touches no hardware).
+        None when the device does not declare the name: the device's own unknown-setting refusal
+        then stays the single source of truth for names."""
+        if not name:
+            return None
+        try:
+            out = dev.call("device/describe", {"select": {"settings": [name]}})
+        except RemoteError:
+            return None
+        for s in out.get("settings", []):
+            if isinstance(s, dict) and s.get("name") == name:
+                return s
+        return None
+
     def tools(self) -> list:
         """The tool surface this bridge offers. A bridge that runs no scripts does not offer mhp_run, rather than
         offering it and refusing every call: an absent tool is a capability the model never plans around."""
         hidden = ({"mhp_run"} if not self.scripts else set()) | ({"mhp_lab"} if self.run_scope else set())
-        return [t for t in TOOLS if t["name"] not in hidden]
+        tools = [t for t in TOOLS if t["name"] not in hidden]
+        if self.write_face == "wrapped":
+            tools = [_MHP_WRITE_WRAPPED if t["name"] == "mhp_write" else t for t in tools]
+        return tools
 
     def _device(self, name: str):
         try:
@@ -1280,6 +1411,12 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
     directory, http_port, fleet, origins = None, None, None, []
     scripts = None
+    write_face = "typed"
+    for arg in [x for x in argv if x.startswith("--write-face")]:
+        argv.remove(arg)
+        if not arg.startswith("--write-face="):
+            raise SystemExit("--write-face needs a value: --write-face=wrapped or --write-face=typed")
+        write_face = arg.split("=", 1)[1]
     if "--no-scripts" in argv:
         argv = [x for x in argv if x != "--no-scripts"]
         scripts = False
@@ -1318,7 +1455,7 @@ def main(argv=None):
             from .client import connect
             directory = connect(joined["directory"], "directory")
             print(f"MHP bridge: directory {joined['directory']} (gateway joined as '{joined['name']}')", file=sys.stderr)
-    bridge = Bridge(targets, directory, fleet, scripts=scripts)
+    bridge = Bridge(targets, directory, fleet, scripts=scripts, write_face=write_face)
     refresh_in_background()              # never blocks; a newer release is mentioned to the agent once per session
     if not bridge.scripts:
         print("MHP bridge: running no scripts; mhp_run is not offered and recipes are read-only", file=sys.stderr)
