@@ -364,6 +364,7 @@ class Bridge:
         from .runs import HOME
         self.home = home or (fleet.path.parent if fleet is not None else HOME)
         self._update_told = False
+        self._shapes: dict = {}           # device name -> descriptor-derived coercion table (best effort)
         self._inbox_told = False
         self._skills_told = False
         self.log = RunLog(self.home)
@@ -387,6 +388,65 @@ class Bridge:
         self._pin_packages()
 
     # ---- tools ------------------------------------------------------------
+    def _shape_table(self, device_name: str, dev):
+        """descriptor-derived coercion table for one device, cached:
+        {"settings": {name: type}, "actions": {name: {param: type}}}.
+        Best effort: no descriptor, no coercion - the device gates keep the
+        final word and their truthful errors."""
+        cached = self._shapes.get(device_name)
+        if cached is not None:
+            return cached
+        try:
+            desc = dev.call("device/describe", {"detail": "full"})
+        except Exception:
+            return None
+        setting_types = {s.get("name"): s.get("type") for s in desc.get("settings") or []
+                         if isinstance(s, dict) and s.get("name")}
+        action_types = {}
+        for act in desc.get("actions") or []:
+            if isinstance(act, dict) and act.get("name"):
+                params = act.get("params") or {}
+                action_types[act["name"]] = {k: p.get("type") for k, p in params.items()
+                                             if isinstance(p, dict) and p.get("type")}
+        shaped = {"settings": setting_types, "actions": action_types}
+        self._shapes[device_name] = shaped
+        return shaped
+
+    @staticmethod
+    def _coerce_value(typ: str, v):
+        """bring a client-supplied value to its declared type when the form is
+        unambiguous; anything questionable passes through untouched so the
+        device gates still raise their own precise errors."""
+        if typ not in ("number", "boolean", "string", "array"):
+            return v
+        if typ == "array":
+            if isinstance(v, str) and v.strip():
+                return [v.strip()]           # one bare item is a one-item list
+            return v
+        if v is None or isinstance(v, (dict, list)):
+            return v
+        if typ == "number":
+            if isinstance(v, str):
+                try:
+                    return float(v.strip())
+                except ValueError:
+                    return v
+            return v                          # numbers pass; a bool stays wrong on purpose
+        if typ == "boolean":
+            if isinstance(v, str):
+                return {"true": True, "false": False}.get(v.strip().lower(), v)
+            if isinstance(v, int) and v in (0, 1):
+                return bool(v)
+            return v
+        # string
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, float):
+            return str(int(v)) if v.is_integer() else str(v)
+        return v
+
     def call_tool(self, name: str, a: dict):
         lab = self.lab
         if name == "mhp_find":
@@ -426,11 +486,26 @@ class Bridge:
                 p["select"] = a["select"]
             return dev.call("device/describe", p)
         if name == "mhp_read":
-            return dev.call("signals/read", {"names": a["names"]} if a.get("names") else {})
+            names = a.get("names")
+            if isinstance(names, str):
+                names = [names]                  # a bare signal name is not a character list
+            return dev.call("signals/read", {"names": names} if names else {})
         if name == "mhp_write":                  # any model-supplied `approved` is ignored
-            return dev.call("settings/write", {"name": a.get("name"), "value": a.get("value"), "dryRun": a.get("dryRun") is True})
+            value = a.get("value")
+            shapes = self._shape_table(a["device"], dev)
+            if shapes:
+                typ = shapes["settings"].get(a.get("name"))
+                if typ:
+                    value = self._coerce_value(typ, value)
+            return dev.call("settings/write", {"name": a.get("name"), "value": value, "dryRun": a.get("dryRun") is True})
         if name == "mhp_invoke":
-            req = {"name": a.get("name"), "params": a.get("params") or {}, "dryRun": a.get("dryRun") is True}
+            params = a.get("params") or {}
+            shapes = self._shape_table(a["device"], dev)
+            if shapes and isinstance(params, dict):
+                ptypes = shapes["actions"].get(a.get("name")) or {}
+                params = {k: (self._coerce_value(ptypes[k], v) if k in ptypes else v)
+                          for k, v in params.items()}
+            req = {"name": a.get("name"), "params": params, "dryRun": a.get("dryRun") is True}
             for k in ("method", "project", "compound"):        # a saved method in place of params; provenance for the run
                 if a.get(k):
                     req[k] = a[k]
