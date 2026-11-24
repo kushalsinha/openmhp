@@ -119,6 +119,15 @@ print(j["result"])
   interleaved by another agent. Release it when done. A release while your jobs still run is
   refused (it would disarm the watchdog): wait for the jobs, or release with `stop=True` to wind
   them down. A script's run ends only when the jobs it started have ended.
+  Trap: any actuating call auto-acquires a lease and starts a heartbeat thread that renews it
+  indefinitely — dropping the Device object does not stop it, so the lease outlives the code that
+  made it. The holder is a random session id (`client-…`), not the name passed to connect(); and
+  within one process every connect() to the same package shares one driver instance, so a second
+  connect() of your own counts as "another client". Reads never need a lease.
+  On `leased to another client`: get the holder from the error data. Same process: find the old
+  Device among live objects (match by display name) and call `release()` on it — that stops the
+  heartbeat. A long-lived bridge holds its own leases: `mhp_lab op='release'` hands them back.
+  Otherwise the lease dies only when the holder process does (TTL expires once heartbeats stop).
 - **Report** what you read, not what you intended. "Block reached 95.0 °C at 14:02" beats
   "started the protocol".
 
