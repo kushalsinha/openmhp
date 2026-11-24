@@ -1,6 +1,6 @@
 ---
 name: openmhp-operate
-description: Operate laboratory instruments and factory machines safely through the Open Model Hardware Protocol using the mhp-mcp tools (mhp_find, mhp_describe, mhp_read, mhp_write, mhp_invoke, mhp_job, mhp_estop, mhp_run). Use whenever a task involves running an experiment, protocol, calibration, measurement or physical process on connected hardware, or when an MHP lab, directory, thermocycler, liquid handler, robot arm, microscope or similar device is available as an MCP server.
+description: Operate laboratory instruments and factory machines safely through the Open Model Hardware Protocol using the mhp-mcp tools (mhp_find, mhp_describe, mhp_read, mhp_write, mhp_invoke, mhp_job, mhp_estop, mhp_reset, mhp_run, mhp_lab, mhp_data, mhp_method). Use whenever a task involves running an experiment, protocol, calibration, measurement or physical process on connected hardware, or when an MHP lab, directory, thermocycler, liquid handler, robot arm, microscope or similar device is available as an MCP server.
 license: Apache-2.0
 compatibility: Needs an MCP connection to an mhp-mcp bridge (stdio or HTTP). Works in any harness that supports MCP tools.
 metadata:
@@ -40,7 +40,9 @@ skill: a short interview, then `mhp_lab` writes and registers the package.
 4. **Rehearse.** `mhp_write` / `mhp_invoke` with `dryRun: true` first for anything that heats,
    moves or dispenses. A dry run runs every gate without touching hardware.
 5. **Act.** Invoke. Long actions return a job; poll with `mhp_job`, do not spin in a tight loop.
-6. **Verify.** Read the signals that prove the outcome before reporting success.
+6. **Verify.** Read the signals that prove the outcome before reporting success. Re-read until
+   the value is stable: an instrument that just finished a job may report a stale reading until
+   its measurement engine has recomputed.
 
 ## Rehearse before you act
 
@@ -76,8 +78,12 @@ print(j["result"])
 ## Rules
 
 - **`approval: confirm`** means a human must say yes to *this* call. If your harness supports
-  elicitation the server asks them directly; otherwise ask them, show the action's notes, and only
-  then re-send with `approved: true`. Never set it on your own judgment.
+  elicitation the server asks them directly. Without an elicitation channel the call is simply
+  unavailable: `approved: true` may only be set by the host after a person confirmed that exact
+  request — never by you, and re-sending it yourself does not work. The ways out are human-held:
+  the CLI prints the command to re-run with `--approved` once that person has checked it, and the
+  SDK accepts an `approver` callback bound to the exact request — set on each `Device`; a
+  `Lab(approver=...)` forwards it to every device it connects.
 - **`approval: forbid`** is listed so you know the capability exists. Do not look for another
   path to it.
 - **The package is the rulebook, not a workaround.** `descriptor.yaml` is what the server enforces,

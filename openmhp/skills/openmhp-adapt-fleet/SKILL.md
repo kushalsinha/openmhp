@@ -11,7 +11,7 @@ metadata:
 # Bring a fleet under OpenMHP
 
 Goal: every device becomes an MHP server (a few lines each), a directory indexes them, and
-one `mhp-mcp` process exposes the lab to agents through eight tools, whatever the fleet size.
+one `mhp-mcp` process exposes the lab to agents through twelve tools, whatever the fleet size.
 
 ## Step 1. Inventory
 
@@ -79,7 +79,7 @@ manifest is a week old. Re-run `build_manifest.py` when devices are added or ren
 
 ## Step 4. Expose to agents
 
-One bridge, eight tools, any harness:
+One bridge, twelve tools, any harness:
 
 ```bash
 mhp-mcp --directory http://localhost:18900                # stdio (Claude Code, Claude Desktop, Cursor...)
@@ -101,7 +101,7 @@ followed by `reset`. Record the results next to the manifest.
 - [ ] every device is a package: frontmatter complete, DEVICE.md procedure written, numeric settings have limits
 - [ ] energetic actions have interlocks or `approval: confirm`; estop wired or explicitly declined
 - [ ] directory finds each device by a plain-language query; live state reflects a busy device
-- [ ] `mhp-mcp` shows exactly eight tools; `mhp_find` then `mhp_describe` reach every device
+- [ ] `mhp-mcp` shows exactly twelve tools; `mhp_find` then `mhp_describe` reach every device
 
 ## When the web is out of reach
 

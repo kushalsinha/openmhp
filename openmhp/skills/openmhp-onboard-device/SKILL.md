@@ -68,6 +68,16 @@ Ask in order. Do not invent answers.
    at each end. → `settings` with `limits`.
 6. **What can it do?** Each operation, how long, its parameters, one or two realistic parameter
    sets. → `actions` with `examples`.
+6.5 **How do you know a write took effect?** Does the instrument raise an error, clamp to the
+   nearest valid value, or silently ignore an out-of-range or off-grid one? Is the accepted grid
+   uniform (`resolution`) or a 1-2-5 sequence? → `settings` notes; the driver must read back
+   after every write and diff the instrument's error queue (see Step 5).
+6.6 **Which settings only mean something in a mode, or reshape others?** A trigger level bounded
+   by the channel's volts/div; a depth that follows the timebase; a mode that locks or re-arms
+   other settings. → `notes`; prefer wrapping such couplings in one intent-level action (see
+   Step 5).
+6.7 **How do you know a reading is current?** Does the instrument need settling time or a re-read
+   before a value reflects the world? → the driver re-reads and compares before trusting a value.
 7. **What must be true first?** Lid closed, homed, nobody in the cell. → boolean signals + `interlocks`.
 8. **What always needs a human?** → `approval: confirm`; never by an agent → `approval: forbid`.
 9. **How does it stop?** The command that cuts motion or energy → `on_estop`. How long may the
@@ -122,6 +132,22 @@ driver reopens the hole like this:
 - **Answer writes through the gates, not instead of them.** `on_write` runs after the gates; it is
   not the place to decide whether a value is allowed.
 
+**Verify every write.** Real firmware is not always honest: an out-of-range or off-grid value may
+  be silently dropped with an empty error queue, or refused with a late `-200` after the write
+  seemed to land. So a driver proves every write: read the setting back and compare with the
+  intended value (cast both sides the same way — `1` is not `true`), diff the instrument's error
+  queue around the write, and snap values to the instrument's grid (a 1-2-5 sequence, for
+  example) before sending. Put this in one place every action shares, not in each caller.
+
+**Wrap couplings in intent-level actions.** Many instruments are systems, not independent knobs:
+  a trigger level is only valid within the channel's volts/div, an acquisition depth follows the
+  timebase, a mode change re-arms or locks other settings. The dividing line: if a value's
+  meaning depends on instrument state, do not leave it as a bare setting for callers to sequence.
+  Write one action that states the intent (`configure_acquisition(duration_s=7)`), resolves the
+  couplings against the live instrument, and returns what it actually allocated (scale, depth,
+  sample rate). Keep the raw settings reachable for exploration and tuning; the workflow-facing
+  surface is the composed actions.
+
 Changing a safety value is a person editing the package and the lab accepting it
 (`mhp_lab op='reload'`), never a runtime call — there is no API for it, and the package's
 fingerprint covers file contents, so an edited package is not enforced until someone accepts the
@@ -154,7 +180,12 @@ mhp http://localhost:18921 invoke <action> --dry-run
 ```
 
 Register the folder in the lab's directory manifest or `mhp-mcp` arguments, and hand the owner
-DEVICE.md to review. Changing a limit later is a code review, not a runtime action.
+DEVICE.md to review. Changing a limit later is a code review, not a runtime action. The CLI lab
+and a running `mhp-mcp` bridge are separate processes, so editing package files is not enough:
+with the CLI lab, `mhp lab accept <id>` re-records the manifest after an edit and the bridge
+picks it up on reload or restart; without the accept, the bridge refuses the changed package
+(`PackageChanged`). In this build (0.12.0+mimi.1) `mhp validate` and `mhp inclusion` choke on the
+`pkg:` prefix — pass the bare absolute path instead.
 
 ## Step 7. Check it the way the repository checks it
 
@@ -191,6 +222,10 @@ Authoring, for any device:
 - [ ] a watchdog window, unless the device is operator-run and the notes say so
 - [ ] no assignment to `self.descriptor` outside `setup()`, none to `_enforced`/`_index`; no gate
       overridden; any descriptor material an added RPC returns is deep-copied
+- [ ] every write is verified: read-back compared with the intended value (same caster
+      both sides), error-queue diff around the write, values snapped to the instrument grid
+- [ ] state-coupled settings are wrapped in intent-level actions that resolve the
+      couplings and report what they allocated, not left as bare settings to sequence
 - [ ] `mhp inclusion <folder>` Package tier passes, with every `[-]` skip read and accepted
 - [ ] owner reviewed DEVICE.md
 
