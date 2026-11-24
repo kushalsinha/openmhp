@@ -43,8 +43,12 @@ the instruction itself arrives as a `notifications/operator/instruction` event, 
 to the person rather than act it. E-stop is a request to the operator, never an automatic stop,
 and a manual device claims no watchdog. Protocols still sequence correctly: a protocol's `wait()`
 blocks until the person acknowledges, and upgrading to a real driver later is a one-file change.
-A `serial` package is code-free too: the owner pastes the manual's text commands into
-`descriptor.yaml` under `serial:` and `openmhp.drivers.serial_ascii` drives the port. The server
+A `serial` package skips driver code, but the manual is a starting point, never the finished
+integration: settings on a real instrument constrain each other, and firmware quietly drops or
+ignores commands the manual lists. Probe every command from a Python script against the real
+instrument first; keep `serial:` only for surfaces the probe confirmed decoupled, and once
+couplings appear move the verified combinations into intent-level actions in a code driver
+(`kind: adapter`) instead. The server
 returns a safety card at the end: read it back to the owner before `op='add'`. Check
 `mhp_lab op='registry'` first; a community package for the model may already exist. Use the
 steps below when you are writing the package yourself, or to check the server's output.
