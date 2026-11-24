@@ -34,7 +34,17 @@ reply, send it back with `answers={...}`. When every required answer is in, the 
 DEVICE.md, descriptor.yaml and driver.py, validates the package, and tells you to `op='add'`.
 Instruments operated by hand (`kind: manual`) and serial/USB instruments (`kind: serial`) need
 no code. If the owner has a manual or SOP, read it first and submit every answer it supports in
-one `answers` call, then ask the human only to confirm limits and the procedure. The server
+one `answers` call, then ask the human only to confirm limits and the procedure. A `manual`
+package keeps every gate but swaps the hands: a setting write records a *request* for the
+operator, an action parks in `waiting_operator` until someone runs the device-added
+`acknowledge` action, and readings enter only through `record`. Both are `approval: confirm`, so
+a person confirms each one (the CLI prints the `--approved` command; the SDK takes an approver) —
+the instruction itself arrives as a `notifications/operator/instruction` event, and you relay it
+to the person rather than act it. E-stop is a request to the operator, never an automatic stop,
+and a manual device claims no watchdog. Protocols still sequence correctly: a protocol's `wait()`
+blocks until the person acknowledges, and upgrading to a real driver later is a one-file change.
+A `serial` package is code-free too: the owner pastes the manual's text commands into
+`descriptor.yaml` under `serial:` and `openmhp.drivers.serial_ascii` drives the port. The server
 returns a safety card at the end: read it back to the owner before `op='add'`. Check
 `mhp_lab op='registry'` first; a community package for the model may already exist. Use the
 steps below when you are writing the package yourself, or to check the server's output.
