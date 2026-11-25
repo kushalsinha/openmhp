@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /* openmhp: one command to run the OpenMHP MCP server in any agent harness.
- * Always start it as `npx -y openmhp-cli@latest ...`: plain `npx openmhp-cli` reuses whatever
- * launcher npx cached the first time, however old.
+ * Install it once with `npm install -g openmhp-cli`: that also puts `mhp` and `mhp-mcp` on PATH, the same
+ * commands a pip install gives, so every `mhp ...` in the docs works as written. Without installing, start it
+ * as `npx -y openmhp-cli@latest ...` (plain `npx openmhp-cli` reuses whatever launcher npx cached first).
  *
  * On the agent's machine (a scientist's laptop):
  *   setup                    install the Python runtime and the skills, register with Claude Code and Codex
@@ -32,7 +33,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
-const { HOME, log, ensureRuntime, run, tool } = require("../lib/runtime");
+const { HOME, KIND, log, ensureRuntime, recordKind, run, tool } = require("../lib/runtime");
 const { nodeSetup } = require("../lib/node_setup");
 const SELF = require("../package.json").version;
 
@@ -61,9 +62,13 @@ function newerLauncher() {
 
 async function warnIfOld(verb) {
   const latest = await newerLauncher();
-  if (latest) {
+  if (latest && KIND === "npx") {
     log(`this is openmhp-cli ${SELF}, an old copy npx kept; ${latest} is out. Run instead:`);
     log(`  npx -y openmhp-cli@latest ${verb}`);
+  } else if (latest) {
+    log(`this is openmhp-cli ${SELF}; ${latest} is out. Update the command first, then run this again:`);
+    log("  npm install -g openmhp-cli@latest");
+    log(`  openmhp ${verb}`);
   }
   return latest;
 }
@@ -78,15 +83,28 @@ function installedVersion() {
 function otherMhp() {
   const r = require("child_process").spawnSync(process.platform === "win32" ? "where" : "which", ["mhp"], { encoding: "utf8" });
   const found = (r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
-    .filter((p) => !path.resolve(p).startsWith(path.resolve(HOME)));
+    .filter((p) => !path.resolve(p).startsWith(path.resolve(HOME)) && !ours(p));
   if (!found.length) return;
   const v = require("child_process").spawnSync(found[0].replace(/mhp(\.exe)?$/i, process.platform === "win32" ? "python.exe" : "python"),
     ["-I", "-c", "import openmhp;print(openmhp.__version__)"], { encoding: "utf8" });
   log("");
   log(`note: another OpenMHP is on your PATH: ${found[0]}${v.status === 0 ? ` (version ${v.stdout.trim()})` : ""}.`);
-  log("a bare `mhp ...` runs that one, not this install. Run commands through this launcher instead:");
-  log("  npx -y openmhp-cli@latest mhp <args>");
-  log("or remove the other copy (pip uninstall openmhp) or update it (pip install -U openmhp).");
+  log("a bare `mhp ...` runs that one, not this install. Either remove the other copy (pip uninstall openmhp)");
+  log("and use this one (npm install -g openmhp-cli puts `mhp` on PATH), or keep only the pip one and update it");
+  log("with  pip install -U \"openmhp[all]\".");
+}
+
+// The `mhp` that `npm install -g openmhp-cli` puts on PATH is this package's own forwarder, not another copy:
+// a symlink to bin/mhp.js (macOS, Linux) or a small .cmd/.ps1/sh wrapper naming openmhp-cli (Windows).
+function ours(p) {
+  try {
+    if (fs.realpathSync(p) === fs.realpathSync(path.join(__dirname, "mhp.js"))) return true;
+    const head = Buffer.alloc(4096);
+    const fd = fs.openSync(p, "r");
+    const n = fs.readSync(fd, head, 0, head.length, 0);
+    fs.closeSync(fd);
+    return head.subarray(0, n).toString("latin1").includes("openmhp-cli");
+  } catch { return false; }
 }
 
 async function update() {
@@ -105,11 +123,13 @@ async function setup() {
   ensureRuntime({ upgrade: true });     // rerunning setup on an old install upgrades it instead of keeping it
   log("installing Agent Skills into the harnesses found on this machine");
   run("mhp", ["skills", "install"]);
-  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+  // a global install runs its own `mhp-mcp`, as a pip install does; npx fetches the launcher each time
+  const win = process.platform === "win32";
+  const [command, cargs] = KIND === "npm" ? [win ? "mhp-mcp.cmd" : "mhp-mcp", []] : [win ? "npx.cmd" : "npx", ["-y", "openmhp-cli"]];
   const registered = [];
   // Claude Code
   if (require("child_process").spawnSync("claude", ["--version"], { encoding: "utf8" }).status === 0) {
-    const r = require("child_process").spawnSync("claude", ["mcp", "add", "--scope", "user", "openmhp", "--", npx, "-y", "openmhp-cli"], { encoding: "utf8" });
+    const r = require("child_process").spawnSync("claude", ["mcp", "add", "--scope", "user", "openmhp", "--", command, ...cargs], { encoding: "utf8" });
     if (r.status === 0 || /already exists/i.test(r.stderr + r.stdout)) registered.push("Claude Code");
   }
   // Codex
@@ -117,23 +137,27 @@ async function setup() {
   if (fs.existsSync(path.dirname(codex))) {
     const cur = fs.existsSync(codex) ? fs.readFileSync(codex, "utf8") : "";
     if (!/\[mcp_servers\.openmhp\]/.test(cur)) {
-      fs.appendFileSync(codex, `\n[mcp_servers.openmhp]\ncommand = "${npx}"\nargs = ["-y", "openmhp-cli"]\n`);
+      fs.appendFileSync(codex, `\n[mcp_servers.openmhp]\ncommand = "${command}"\nargs = ${JSON.stringify(cargs)}\n`);
     }
     registered.push("Codex");
   }
   console.error("");
   log(registered.length ? `registered with: ${registered.join(", ")}` : "no harness config written automatically");
   log("for any other MCP-capable harness (OpenClaw, Hermes, Claude Science, Open Science, ...) add:");
-  console.error(JSON.stringify({ mcpServers: { openmhp: { command: "npx", args: ["-y", "openmhp-cli"] } } }, null, 2));
+  console.error(JSON.stringify({ mcpServers: { openmhp: KIND === "npm" ? { command: "mhp-mcp" } : { command: "npx", args: ["-y", "openmhp-cli"] } } }, null, 2));
   console.error("");
-  log("next: open your agent and say \"find the instruments on my network\" or \"onboard my hotplate\".");
-  log("if your lab has a gateway: npx -y openmhp-cli@latest join <gateway url> <code from mhp gateway pair-agent> --name <your name>");
+  log(KIND === "npm" ? "next: add two simulated instruments:  mhp lab demo"
+                     : "next: add two simulated instruments:  npx -y openmhp-cli@latest demo");
+  log("then restart your agent and say \"find a thermocycler\", \"find the instruments on my network\" or \"onboard my hotplate\".");
+  log(KIND === "npm" ? "if your lab has a gateway:  mhp agent --join <gateway url> <code from mhp gateway pair-agent>"
+                     : "if your lab has a gateway:  npx -y openmhp-cli@latest join <gateway url> <code from mhp gateway pair-agent>");
   otherMhp();
   log(`lab lives in ${HOME}`);
 }
 
 function main() {
   const [cmd = "serve", ...rest] = process.argv.slice(2);
+  recordKind();
   switch (cmd) {
     case "serve": case "mcp":
       ensureRuntime();

@@ -145,7 +145,7 @@ def main(args: list[str]) -> int:
     print(f"{i['detail']}" + (f"   -> {i['next']}" if i.get("next") else ""))
     if not doc["roles"]:
         print("\nThis machine is not set up as anything yet. Depending on what it is for:",
-              "  where your agent runs:            npx -y openmhp-cli@latest setup   (or pip install -U \"openmhp[all]\")",
+              "  where your agent runs:            mhp skills install, then register mhp-mcp with your agent  (mhp guide quickstart)",
               "  wired to an instrument:           mhp node add <package>            (mhp guide instruments lists them)",
               "  the lab's gateway:                mhp gateway init", sep="\n")
         return 1

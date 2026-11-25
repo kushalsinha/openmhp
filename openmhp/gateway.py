@@ -830,7 +830,7 @@ def pair() -> int:
         f"  {url} {code}", "      paste this line when `mhp node add` asks about a gateway",
         f"  mhp node --join {url} {code}", "      a PC set up with `mhp node add`: joins, and restarts its background service if it has one",
         f"  mhp node <devices folder> --join {url} {code}", "      packages kept in a folder of their own",
-        f"  npx -y openmhp-cli@latest node --join {url} {code}", "      a PC set up with npx", "",
+        f"  npx -y openmhp-cli@latest node --join {url} {code}", "      a PC that runs OpenMHP through npx without installing it", "",
         f"It will show the gateway certificate fingerprint {fingerprint_of(state['cert'])}; stop if it differs.",
         "From then on the lab PC reconnects by itself.")
     return 0
@@ -877,7 +877,7 @@ def pair_agent(name: str | None = None) -> int:
                       "  mhp gateway pair-agent alice", ""]
     say(f"agent code (1 hour, one machine{', named ' + entry['name'] if name else ''}):  {code}", "",
         "Send it to the person. On their machine, once:", "",
-        join_line, join_line.replace("mhp agent --join", "npx -y openmhp-cli@latest join") + "   (if they installed with npx)",
+        join_line, join_line.replace("mhp agent --join", "npx -y openmhp-cli@latest join") + "   (if they run OpenMHP through npx without installing it)",
         "", *about_name,
         f"It will show the gateway certificate fingerprint {fingerprint_of(state['cert'])}; they should stop if it differs.",
         "From then on `mhp-mcp` on that machine reaches every instrument behind this gateway. Nothing to paste.")
