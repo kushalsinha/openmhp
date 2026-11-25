@@ -8,9 +8,11 @@ instruments across reboots without a terminal staying open.
 Linux:   a systemd `--user` unit, enabled now and at login. Needs `systemctl` and a
          user session that lingers (`loginctl enable-linger $USER` if the bench PC
          is headless and nobody stays logged in).
-Windows: a batch file in the current user's Startup folder. Any file there runs
-         automatically at login; this is not a Windows Service in the formal
-         sense, so it only starts once someone logs in, and needs no admin rights.
+Windows: started now, hidden (pythonw, no console window), and again at every login from a batch file in
+         the current user's Startup folder. Needs no admin rights. It is not a Windows Service in the formal
+         sense: it runs in the signed-in user's session, which is also where instrument software such as
+         UNICORN, Empower and FloZF runs. A PC that restarts to the sign-in screen serves again once someone
+         signs in (or set Windows to sign in automatically).
 macOS:   a LaunchAgent, loaded now and at every login.
 
 Every function that generates a service definition is pure (given the same
@@ -81,10 +83,22 @@ def launchd_plist(packages_dir: str | Path, http_base: int, log_path: Path) -> s
     )
 
 
+def windowless(argv: list[str]) -> list[str]:
+    """On Windows, the same command under pythonw.exe: no console window to close by mistake. Its output goes to
+    ~/.openmhp/<name>.log (cli.main sends it there when there is no console)."""
+    exe = Path(argv[0])
+    if exe.name.lower() == "python.exe" and exe.with_name("pythonw.exe").is_file():
+        return [str(exe.with_name("pythonw.exe")), *argv[1:]]
+    return list(argv)
+
+
+def _bat(argv: list[str]) -> str:
+    quoted = " ".join(f'"{a}"' if " " in a else a for a in argv)
+    return f'@echo off\r\nstart "" {quoted}\r\n'
+
+
 def windows_startup_script(packages_dir: str | Path, http_base: int) -> str:
-    args = _command(packages_dir, http_base)
-    quoted = " ".join(f'"{a}"' if " " in a else a for a in args)
-    return f'@echo off\r\nstart "" /min {quoted}\r\n'
+    return _bat(windowless(_command(packages_dir, http_base)))
 
 
 # ---- paths --------------------------------------------------------------------------------
@@ -150,9 +164,33 @@ def _content(label: str, argv: list[str], description: str) -> str:
                 f"  <key>StandardOutPath</key><string>{log}</string>\n  <key>StandardErrorPath</key><string>{log}</string>\n"
                 "</dict>\n</plist>\n")
     if system == "Windows":
-        quoted = " ".join(f'"{a}"' if " " in a else a for a in argv)
-        return f'@echo off\r\nstart "" /min {quoted}\r\n'
+        return _bat(windowless(argv))
     raise NotImplementedError(f"no service integration for {system!r} yet; run the command in a terminal that stays open")
+
+
+_VERBS = {LABEL: ("node",), "openmhp-gateway": ("gateway", "serve"), "openmhp-watch": ("agent", "watch")}
+
+
+def _verb(label: str) -> tuple[str, ...]:
+    return _VERBS.get(label, ())
+
+
+def start_windows(argv: list[str], label: str = LABEL) -> dict:
+    """Windows has no service manager here: stop the copy that runs now, if any, then start this command
+    detached and windowless, so it outlives the terminal that installed it. The Startup file starts it at login."""
+    steps = []
+    if manager_off():
+        return {"ok": True, "steps": ["(service manager off: not started)"]}
+    for pid, _ in _servers(label):
+        steps.append(f"stopped the running copy (pid {pid})" if stop_process(pid) else f"could not stop pid {pid}")
+    flags = sum(getattr(subprocess, f, 0) for f in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"))
+    try:
+        p = subprocess.Popen(windowless(argv), creationflags=flags, close_fds=True, cwd=str(Path.home()),
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as e:
+        return {"ok": False, "steps": steps, "error": f"could not start it: {type(e).__name__}: {e}"}
+    steps.append(f"started in the background (pid {p.pid})")
+    return {"ok": True, "steps": steps, "pid": p.pid}
 
 
 def install_command(label: str, argv: list[str], description: str, dry_run: bool = False) -> dict:
@@ -188,7 +226,12 @@ def install_command(label: str, argv: list[str], description: str, dry_run: bool
             if result["ok"]:
                 result["note"] = "running now, and at every login."
         elif system == "Windows":
-            result["note"] = "will start at the next login. To start it now too, run the file it just wrote."
+            s = start_windows(argv, label)
+            result["steps"] += s["steps"]
+            result["ok"] = s["ok"]
+            if not s["ok"]:
+                result["error"] = s.get("error")
+            result["note"] = "running now in the background, and again at every login."
     except OSError as e:
         result["ok"] = False
         result["error"] = f"{type(e).__name__}: {e}"
@@ -239,7 +282,13 @@ def install(packages_dir: str | Path, http_base: int, dry_run: bool = False) -> 
             if result["ok"]:
                 result["note"] = "running now, and at every login."
         elif system == "Windows":
-            result["note"] = "will start at the next login. To start it now too, run the file it just wrote."
+            s = start_windows(_command(packages_dir, http_base))
+            result["steps"] += s["steps"]
+            result["ok"] = s["ok"]
+            if s["ok"]:
+                result["note"] = "running now in the background, and again at every login."
+            else:
+                result["error"] = s.get("error")
         result["command"] = " ".join(_command(packages_dir, http_base))
         record_path().parent.mkdir(parents=True, exist_ok=True)
         record_path().write_text(json.dumps({"python": sys.executable, "folder": str(Path(packages_dir).resolve()),
@@ -261,6 +310,9 @@ def uninstall() -> dict:
         elif system == "Darwin" and path.is_file():
             _manage(["launchctl", "unload", str(path)], capture_output=True, text=True)
             result["steps"].append("launchctl unload")
+        elif system == "Windows" and path.is_file() and not manager_off():
+            for pid, _ in _servers(LABEL):
+                result["steps"].append(f"stopped pid {pid}" if stop_process(pid) else f"could not stop pid {pid}")
         if path.is_file():
             path.unlink()
         if record_path().is_file():
@@ -300,8 +352,8 @@ def status() -> dict:
             r = _manage(["launchctl", "list", "com.openmhp.node"], capture_output=True, text=True)
             result["running"] = r.returncode == 0
         elif system == "Windows":
-            result["running"] = None
-            result["note"] = "starts at next login; Windows has no simple way to check without admin tools"
+            result["running"] = bool(_servers(LABEL)) if not manager_off() else None
+            result["note"] = "runs in the background now and starts again at every login"
     except FileNotFoundError:
         result["running"] = None
         result["note"] = "installed but the OS service manager isn't on PATH to check"
@@ -321,8 +373,11 @@ def service_python(label: str = LABEL) -> str | None:
         return None
     import re as _re
     m = (_re.search(r"^ExecStart=(\S+)", text, _re.M) or _re.search(r"<array>\s*<string>([^<]+)</string>", text)
-         or _re.search(r'/min\s+(?:"([^"]+)"|(\S+))', text))
-    return next((g for g in m.groups() if g), None) if m else None
+         or _re.search(r'start ""\s+(?:/min\s+)?(?:"([^"]+)"|(\S+))', text))
+    exe = next((g for g in m.groups() if g), None) if m else None
+    if exe and exe.lower().endswith("pythonw.exe"):          # the windowless twin; python.exe prints the version
+        exe = exe[:-len("pythonw.exe")] + "python.exe"
+    return exe
 
 
 def openmhp_version_of(python: str | None) -> str | None:
@@ -360,6 +415,10 @@ def service_state(label: str = LABEL) -> dict:
             m = _re.search(r'"PID"\s*=\s*(\d+)', r.stdout)
             out["main_pid"] = int(m.group(1)) if m else None
             out["running"] = out["main_pid"] is not None
+        elif system == "Windows" and _verb(label) and not manager_off():
+            procs = _servers(label)
+            out["running"] = bool(procs)
+            out["main_pid"] = procs[0][0] if procs else None
     except (OSError, subprocess.TimeoutExpired, ValueError):
         pass
     return out
@@ -377,9 +436,11 @@ def restart_service(label: str = LABEL) -> dict:
         elif system == "Darwin":
             cmd = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.openmhp.{_short(label)}"]
         elif system == "Windows":
-            if not manager_off():
-                subprocess.Popen(["cmd", "/c", str(path)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            return {"ok": True, "steps": [f"ran {path}"]}
+            argv = _bat_argv(path.read_text(errors="replace"))
+            if not argv:
+                return {"ok": False, "steps": [], "error": f"cannot read the command in {path}"}
+            s = start_windows(argv, label)
+            return {"ok": s["ok"], "steps": s["steps"], "error": s.get("error")}
         else:
             return {"ok": False, "steps": [], "error": f"no service integration for {system!r}"}
         r = _manage(cmd, capture_output=True, text=True, timeout=60)
@@ -387,6 +448,36 @@ def restart_service(label: str = LABEL) -> dict:
                 "error": None if r.returncode == 0 else (r.stderr.strip()[:200] or f"exit {r.returncode}")}
     except (OSError, subprocess.TimeoutExpired) as e:
         return {"ok": False, "steps": [], "error": f"{type(e).__name__}: {e}"}
+
+
+def _split_windows(cmd: str) -> list[str]:
+    """A Windows command line as words, keeping quoted paths with spaces ("C:\\Program Files\\...") whole."""
+    import shlex
+    try:
+        return shlex.split(cmd.replace("\\", "\\\\"), posix=True)
+    except ValueError:
+        return [w.strip('"') for w in cmd.split()]
+
+
+def _servers(label: str) -> list[tuple[int, str]]:
+    """Running copies of what this service serves. `mhp node add`, `setup` and the service flags are a person at
+    the keyboard, not the server, and are left alone."""
+    busy = re.compile(r"\bnode\s+(add|setup)\b|--(uninstall-service|service-status|check)\b")
+    return [(pid, cmd) for pid, cmd in find_processes(_verb(label)) if not busy.search(cmd)] if _verb(label) else []
+
+
+def _bat_argv(text: str) -> list[str]:
+    """The command a Startup batch file starts: `start "" [/min] "C:\\...\\pythonw.exe" -m openmhp.cli ...`."""
+    import shlex
+    for line in text.splitlines():
+        line = line.strip()
+        if line.lower().startswith("start "):
+            rest = re.sub(r'^start\s+""\s+(?:/min\s+)?', "", line, flags=re.I)
+            try:
+                return shlex.split(rest.replace("\\", "\\\\"), posix=True)
+            except ValueError:
+                return []
+    return []
 
 
 def is_openmhp_command(words: list[str], verb: tuple[str, ...]) -> bool:
@@ -397,7 +488,7 @@ def is_openmhp_command(words: list[str], verb: tuple[str, ...]) -> bool:
     name = lambda w: PureWindowsPath(w).name.lower()
     n = len(verb)
     i = 0
-    if words and re.match(r"(python[\d.]*|py)(\.exe)?$", name(words[0])):
+    if words and re.match(r"(pythonw?[\d.]*|pyw?)(\.exe)?$", name(words[0])):
         i = 1
         while i < len(words) and words[i].startswith("-") and words[i] != "-m":
             i += 1                                         # interpreter flags such as -I or -u
@@ -444,7 +535,7 @@ def find_processes(verb: tuple[str, ...]) -> list[tuple[int, str]]:
             r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, timeout=30)
             for line in r.stdout.splitlines():
                 pid, _, cmd = line.partition("\t")
-                words = [w.strip('"') for w in cmd.split()]
+                words = _split_windows(cmd)
                 if pid.strip().isdigit() and int(pid) != me and is_openmhp_command(words, verb):
                     found.append((int(pid), cmd.strip()))
     except (OSError, subprocess.TimeoutExpired):

@@ -280,7 +280,7 @@ def say_available() -> str:
 
 def main(args: list[str], source: str | None = None, *, no_setup: bool = False, yes: bool = False, sets: list[str] | None = None,
          all_fields: bool = False, no_pip: bool = False, base: int = 18900) -> int | str:
-    """``mhp node add``. Returns 0/1, or "serve:<dir>" when the person asked to serve in this window."""
+    """``mhp node add``. Returns 0 or 1; the background service serves what it adds."""
     import sys
     if not args:
         print(say_available(), file=sys.stderr)

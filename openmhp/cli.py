@@ -35,7 +35,27 @@ def _parse_value(s: str):
         return s
 
 
+def _log_without_console(argv: list[str]) -> None:
+    """Under pythonw (a Windows background service) there is no console and print() goes nowhere: send output
+    to ~/.openmhp/<node|gateway|watch>.log instead, so a person can read what the service said."""
+    if sys.stderr is not None and sys.stdout is not None:
+        return
+    import os
+    from pathlib import Path
+    words = [w for w in argv if not w.startswith("-")]
+    name = {"node": "node", "gateway": "gateway", "agent": "watch"}.get(words[0] if words else "", "mhp")
+    home = Path(os.environ.get("OPENMHP_HOME", Path.home() / ".openmhp")).expanduser()
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        f = open(home / f"{name}.log", "a", encoding="utf-8", buffering=1)
+    except OSError:
+        f = open(os.devnull, "w")
+    sys.stdout = sys.stdout or f
+    sys.stderr = sys.stderr or f
+
+
 def main(argv=None):
+    _log_without_console(sys.argv[1:] if argv is None else list(argv))
     ap = argparse.ArgumentParser(prog="mhp", description="Open Model Hardware Protocol CLI")
     ap.add_argument("target", nargs="?", help="status | guide | lab | log | validate | inclusion | rubric | conformance | skills | serve | node | gateway | agent | serve-directory | http://host:port | stdio:<cmd> | local:<mod>:<Class> | pkg:<device folder>")
     ap.add_argument("verb", nargs="?", help="ping|find|describe [card|summary|full]|resources [path]|limits|read|write|invoke|status|cancel|wait|estop|reset|acquire|release|rpc")

@@ -259,8 +259,9 @@ No agent is needed on it. Every ready-made package ships inside OpenMHP, so this
    mhp node add waters-empower-hplc
    ```
    It asks only what a person knows and checks the answers against the instrument. If the lab has a
-   gateway, paste the line from `mhp gateway pair` when it asks. Its last question installs the background
-   service, so the instrument stays served after a reboot.
+   gateway, paste the line from `mhp gateway pair` when it asks. Then it serves the instrument in the
+   background, now and after every restart, and gives you the prompt back. On Windows it starts with the
+   signed-in user's session, where UNICORN, Empower and FloZF run too; its log is `~/.openmhp/node.log`.
 4. Check it:
    ```bash
    mhp status

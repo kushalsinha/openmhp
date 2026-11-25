@@ -4,6 +4,7 @@
 """
 import asyncio
 import json
+import os
 import sys
 import time
 import types
@@ -576,7 +577,40 @@ def test_service_content_is_pure_and_platform_specific():
     assert "<key>Label</key><string>com.openmhp.node</string>" in plist and "RunAtLoad" in plist
 
     bat = svc.windows_startup_script("C:\\instruments", 18900)
-    assert bat.startswith("@echo off") and "/min" in bat and "18900" in bat
+    assert bat.startswith("@echo off") and 'start ""' in bat and "/min" not in bat and "18900" in bat   # no console window
+    # what a Windows service starts and stops: quoted paths with spaces stay whole; setup in progress is left alone
+    line = '@echo off\r\nstart "" "C:\\Users\\Lab User\\.openmhp\\venv\\Scripts\\pythonw.exe" -m openmhp.cli node "C:\\Users\\Lab User\\.openmhp\\devices" --http 18900\r\n'
+    argv = svc._bat_argv(line)
+    assert argv[0].endswith("pythonw.exe") and argv[0].startswith("C:\\Users\\Lab User") and argv[-3:] == [
+        "C:\\Users\\Lab User\\.openmhp\\devices", "--http", "18900"], argv
+    assert svc._bat_argv('@echo off\r\nstart "" /min C:\\py\\python.exe -m openmhp.cli node x\r\n')[0] == "C:\\py\\python.exe"
+    assert svc._split_windows('"C:\\Program Files\\Py\\pythonw.exe" -m openmhp.cli node') == [
+        "C:\\Program Files\\Py\\pythonw.exe", "-m", "openmhp.cli", "node"]
+    real_find = svc.find_processes
+    svc.find_processes = lambda verb: [(11, "pythonw.exe -m openmhp.cli node C:\\d --http 18900"),
+                                       (12, "python.exe -m openmhp.cli node add cytiva-akta-avant"),
+                                       (13, "python.exe -m openmhp.cli node --uninstall-service")]
+    try:
+        assert [p for p, _ in svc._servers(svc.LABEL)] == [11]
+    finally:
+        svc.find_processes = real_find
+    os.environ["OPENMHP_SERVICE_MANAGER"], before = "none", os.environ.get("OPENMHP_SERVICE_MANAGER")
+    try:
+        assert svc.start_windows(["python.exe", "-m", "openmhp.cli", "node"])["ok"]      # never starts anything here
+    finally:
+        if before is None:
+            os.environ.pop("OPENMHP_SERVICE_MANAGER")
+        else:
+            os.environ["OPENMHP_SERVICE_MANAGER"] = before
+    # under pythonw there is no console: what the service says goes to ~/.openmhp/node.log
+    import subprocess, tempfile
+    with tempfile.TemporaryDirectory() as home:
+        code = ("import sys; sys.stdout = sys.stderr = None; from openmhp.cli import _log_without_console; "
+                "_log_without_console(['node', 'C:/d', '--http', '18900']); print('serving', file=sys.stderr); print('out')")
+        r = subprocess.run([sys.executable, "-c", code], env={**os.environ, "OPENMHP_HOME": home, "PYTHONPATH": os.path.abspath(".")},
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, r.stderr
+        assert open(os.path.join(home, "node.log"), encoding="utf-8").read().split() == ["serving", "out"]
 
 
 def test_cli_node_serves_every_package_in_a_directory():
