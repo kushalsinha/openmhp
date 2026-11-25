@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs an MCP connection to an mhp-mcp bridge (stdio or HTTP). Works in any harness that supports MCP tools.
 metadata:
   author: openmhp
-  version: "0.5"
+  version: "0.6"
 ---
 
 # Operating hardware through OpenMHP
@@ -24,7 +24,9 @@ skill: a short interview, then `mhp_lab` writes and registers the package.
 ## The loop
 
 1. **Find.** `mhp_find` with a plain-language query and filters (`class`, `location`,
-   `state: "idle"`). Read the cards. Never guess a device id.
+   `state: "idle"`). Read the cards. Never guess a device id. When several match the person's words
+   (two ÄKTAs behind a gateway, listed as `<lab PC>/<instrument>`), show each one's id and location and
+   ask which; once they have said, keep to that one.
 2. **Open.** `mhp_describe(device)` gives the summary: every signal, setting and action with
    units, limits and approval level. Then `mhp_describe(device, select={"actions": [...],
    "settings": [...]})` for the full spec of only the items you will use, including `notes` and

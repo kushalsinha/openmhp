@@ -6,7 +6,7 @@ command either finishes the job or prints the one thing to do next.
     mhp gateway init                  make this machine the gateway (asks name and port; makes a certificate)
     mhp gateway serve                 run it (add --install-service to keep it running across reboots)
     mhp gateway restart               stop a gateway started by hand, restart the service, wait until it answers
-    mhp gateway pair                  print a one-time code for a lab PC:  mhp node <dir> --join <this url> <code>
+    mhp gateway pair [name]           print a one-time code for a lab PC (naming it):  mhp node --join <this url> <code>
     mhp gateway pair-agent [name]     print a one-time code for an agent machine:  mhp agent --join <this url> <code>
     mhp gateway add-agent <name>      let one agent machine through by hand; prints the token to paste there
     mhp gateway status | check        what is connected, which lab PCs run an old OpenMHP, and what to fix
@@ -378,8 +378,8 @@ class Gateway:
         if code not in codes or codes[code].get("kind", "node") != "node":
             self.persist()
             return 403, {"error": "unknown or expired pairing code"}
-        del codes[code]
-        want = re.sub(r"[^A-Za-z0-9._-]", "-", body.get("name") or "node") or "node"
+        preset = codes.pop(code).get("name")             # the operator named this PC: `mhp gateway pair <name>`
+        want = re.sub(r"[^A-Za-z0-9._-]", "-", preset or body.get("name") or "node") or "node"
         name = want
         n = 2
         # a PC pairing again (reinstalled, lost its node.json) takes its own name back, unless a node by that
@@ -817,16 +817,28 @@ def init(*, server_name: str | None = None, listen: int | None = None, cert: str
     return 0
 
 
-def pair() -> int:
+def pair(name: str | None = None) -> int:
     state = load()
     if state is None:
         say("no gateway on this machine yet. Run `mhp gateway init` first.")
         return 1
+    entry: dict = {"expires": time.time() + CODE_TTL_S}
+    if name:
+        clean = re.sub(r"[^A-Za-z0-9._-]", "-", name.strip())
+        if not re.match(r"^[A-Za-z0-9]", clean):
+            say(f"{name!r} cannot name a lab PC: use letters, digits, '.', '_' or '-', starting with a letter or digit")
+            return 2
+        entry["name"] = clean
     code = new_code()
-    state.setdefault("codes", {})[code] = {"expires": time.time() + CODE_TTL_S}
+    state.setdefault("codes", {})[code] = entry
     save(state)
     url = agent_url(state).rstrip('/')
-    say(f"pairing code (15 minutes, one lab PC):  {code}", "", "On the lab PC, once, whichever fits:", "",
+    named = entry.get("name")
+    about = ([f"It joins as '{named}': agents see its instruments as {named}/<instrument>.", ""] if named else
+             ["It joins under its computer name; agents see its instruments as <that name>/<instrument>.",
+              "To choose the name here instead:  mhp gateway pair <name>, e.g.  mhp gateway pair purif-bay3", ""])
+    say(f"pairing code (15 minutes, one lab PC{', named ' + named if named else ''}):  {code}", "", *about,
+        "On the lab PC, once, whichever fits:", "",
         f"  {url} {code}", "      paste this line when `mhp node add` asks about a gateway",
         f"  mhp node --join {url} {code}", "      a PC set up with `mhp node add`: joins, and restarts its background service if it has one",
         f"  mhp node <devices folder> --join {url} {code}", "      packages kept in a folder of their own",
@@ -1201,7 +1213,7 @@ def main(verb: str | None, args: list[str], *, server_name=None, listen=None, ce
             return 0 if r["ok"] else 1
         return serve(host, listen)
     if verb == "pair":
-        return pair()
+        return pair(args[0] if args else None)
     if verb == "pair-agent":
         return pair_agent(args[0] if args else None)
     if verb == "add-agent":

@@ -67,6 +67,7 @@ def main(argv=None):
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="(node add|setup) answer a config question from the command line; repeatable")
     ap.add_argument("--all", action="store_true", help="(node add|setup) also ask the advanced questions")
     ap.add_argument("--no-pip", action="store_true", help="(node add|setup) do not install the vendor client; name it instead")
+    ap.add_argument("--as", dest="as_id", metavar="NAME", help="(node add) add the package under this name, e.g. a second ÄKTA on the same PC: mhp node add cytiva-akta-avant --as akta-2")
     ap.add_argument("--from", dest="from_", metavar="FOLDER|ARCHIVE", help="(node add) take the package from a local checkout, a copied folder or a .tar.gz instead of downloading it")
     a = ap.parse_args(argv)
     if a.version:                           # mhp --version | mhp gateway|node|agent --version
@@ -112,7 +113,7 @@ def main(argv=None):
 
         if a.verb == "add":                 # mhp node add [<package> [<packages-dir>]] [--from FOLDER|ARCHIVE]
             from . import node_add
-            r = node_add.main(a.args, source=a.from_, no_setup=a.no_setup, yes=a.yes, sets=a.set, all_fields=a.all, no_pip=a.no_pip, base=a.http or 18900)
+            r = node_add.main(a.args, source=a.from_, no_setup=a.no_setup, yes=a.yes, sets=a.set, all_fields=a.all, no_pip=a.no_pip, base=a.http or 18900, as_id=a.as_id)
             if not isinstance(r, str):
                 return r
             a.verb, a.args, a.check = r.split(":", 1)[1], [], False      # "serve:<dir>": the person said to serve in this window

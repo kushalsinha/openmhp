@@ -145,7 +145,7 @@ def test_setup_package_installs_asks_probes_and_offers_fix_or_stop():
         NS.probe = lambda f, cfg, sim=False: probes.pop(0)
         NS.serial_ports = lambda: ["COM20", "COM21"]
         try:
-            s = Script("y", "1", "f", "2")                                           # install, COM20, fix, COM21
+            s = Script("y", "", "", "1", "f", "2")                          # install, keep name and place, COM20, fix, COM21
             r = NS.setup_package(folder, s.ask, s.say, sim=False, pip_run=pip_run)
         finally:
             NS.probe, NS.serial_ports = real_probe, real_ports
@@ -158,7 +158,7 @@ def test_setup_package_installs_asks_probes_and_offers_fix_or_stop():
         # stop means stop: nothing further happens
         NS.probe = lambda f, cfg, sim=False: (False, "still no")
         try:
-            s = Script("n", "1", "s")
+            s = Script("n", "", "", "1", "s")
             try:
                 NS.setup_package(folder, s.ask, s.say, sim=False, pip_run=pip_run); raise AssertionError("expected Stop")
             except NS.Stop:
@@ -168,16 +168,38 @@ def test_setup_package_installs_asks_probes_and_offers_fix_or_stop():
         # the simulated twin needs no instrument (the port list is fixed: a CI machine may have real ports)
         NS.serial_ports = lambda: ["COM20", "COM21"]
         try:
-            s = Script("n", "2")
+            s = Script("n", "", "", "2")
             r = NS.setup_package(folder, s.ask, s.say, sim=True, pip_run=pip_run)
         finally:
             NS.serial_ports = real_ports
         assert r["probe"] is True and "simulated" in r["probe_text"]
         # a package without settings
         folder2 = _copy("ika-c-mag-hs7", pathlib.Path(td))
-        s = Script("n")
+        s = Script("n", "", "")
         r = NS.setup_package(folder2, s.ask, s.say, sim=True, pip_run=pip_run)
         assert r["configured"] and s.heard("needs no settings")
+
+
+def test_setup_names_the_instrument_and_says_where_it_is():
+    """Two ÄKTAs behind one gateway are told apart by name and place: setup asks both, Enter keeps the package's."""
+    from openmhp.node_add import _frontmatter
+    with tempfile.TemporaryDirectory() as td:
+        folder = _copy("ika-c-mag-hs7", pathlib.Path(td))
+        other = _copy("globalfia-flopro-sampler", pathlib.Path(td))
+        taken = _frontmatter(other, "id")
+        s = Script(taken, "_stirrer", "Stirrer Bay3", "Bay 3, purification lab")   # in use, bad, then good ("Stirrer Bay3" -> stirrer-bay3)
+        r = NS.setup_package(folder, s.ask, s.say, sim=True, pip=False)
+        assert r["id"] == "stirrer-bay3" and r["location"] == "Bay 3, purification lab"
+        assert s.heard("already called", taken) and s.asked("What does your lab call this instrument")
+        assert _frontmatter(folder, "id") == "stirrer-bay3"
+        assert '"Bay 3, purification lab"' in (folder / "DEVICE.md").read_text(encoding="utf-8")
+        from openmhp.package import load_package
+        assert load_package(folder).descriptor["device"]["location"] == "Bay 3, purification lab"
+        # Enter keeps both; no terminal keeps both
+        s = Script("", "")
+        assert NS.setup_package(folder, s.ask, s.say, sim=True, pip=False)["id"] == "stirrer-bay3"
+        r = NS.setup_package(folder, NS.auto_ask, lambda *_: None, sim=True, pip=False)
+        assert (r["id"], r["location"]) == ("stirrer-bay3", "Bay 3, purification lab")
 
 
 def test_no_terminal_and_an_instrument_that_does_not_answer_saves_and_stops_asking():

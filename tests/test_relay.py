@@ -315,6 +315,19 @@ def test_relay_end_to_end():
         assert G.check() == 0, log.getvalue()
         assert G.status() == 0
     assert "everything is in order" in log.getvalue() and "lab PC 'bench': online" in log.getvalue()
+
+    # ---- the operator names a lab PC when pairing it: the code carries the name, whatever the PC is called
+    log2 = io.StringIO()
+    with contextlib.redirect_stderr(log2):
+        assert G.pair("purif bay3") == 0                          # spaces become '-'
+        assert G.pair("-x") == 2                                  # must start with a letter or digit
+    assert "It joins as 'purif-bay3'" in log2.getvalue() and "purif-bay3/<instrument>" in log2.getvalue()
+    named = next(c for c, v in G.load()["codes"].items() if v.get("name") == "purif-bay3")
+    with contextlib.redirect_stdout(io.StringIO()):
+        cfg3 = R.join(base, named, {}, name="LAB-PC-0412", quiet=True)
+    assert cfg3["name"] == "purif-bay3"
+    gw.refresh()
+    assert "purif-bay3" in G.load()["nodes"] and "LAB-PC-0412" not in G.load()["nodes"]
     for dev in (a, a2, b, d):
         dev.close()
     node2.close()
