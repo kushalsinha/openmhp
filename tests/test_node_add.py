@@ -97,6 +97,31 @@ def test_add_from_the_repository_tarball_takes_one_folder_and_nothing_unsafe():
         assert not (dest / "elveflow-ob1").exists() and not (dest / ".elveflow-ob1.partial").exists()
 
 
+def test_a_second_instrument_of_the_same_kind_gets_its_own_name():
+    """UNICORN's System2 next to System1: --as installs the package again under its own id and folder."""
+    with tempfile.TemporaryDirectory() as td:
+        dest = pathlib.Path(td) / "devices"
+        first = node_add.add("cytiva-akta-avant", dest)
+        try:
+            node_add.add("cytiva-akta-avant", dest)
+            raise AssertionError("a second copy under the same name must be refused")
+        except FileExistsError as e:
+            assert "--as" in str(e)
+        second = node_add.add("cytiva-akta-avant", dest, as_id="akta-2")
+        assert second["name"] == "akta-2" and second["package"] == "cytiva-akta-avant" and second["valid"], second
+        from openmhp.package import load_package
+        assert load_package(pathlib.Path(second["folder"])).descriptor["device"]["id"] == "akta-2"
+        assert load_package(pathlib.Path(first["folder"])).descriptor["device"]["id"] == "akta-avant-01"
+        assert "mhp node setup akta-2" in node_add.say_next(second, None, False)
+        for bad in ("Akta 2", "../x", "-x"):
+            try:
+                node_add.add("cytiva-akta-avant", dest, as_id=bad)
+                raise AssertionError(f"accepted {bad!r}")
+            except ValueError:
+                pass
+        assert sorted(p.name for p in dest.iterdir()) == ["akta-2", "cytiva-akta-avant"]
+
+
 def test_shipped_packages_install_with_no_web_or_git():
     """Every registry package ships in the wheel: `mhp node add <name>` and `mhp lab add github:...` copy it locally."""
     from openmhp import bundled, fleet

@@ -532,7 +532,9 @@ def setup_package(folder: Path, ask=default_ask, say=default_say, *, answers: di
             except Unanswered:
                 sim = True
     out["sim"] = sim
-    # 3. the questions
+    # 3. what people call it, and where it is
+    out["id"], out["location"] = ask_identity(folder, ask, say)
+    # 4. the questions
     if not (folder / "config.example.json").is_file():
         out["configured"] = True
         say(f"{name} needs no settings.")
@@ -550,7 +552,7 @@ def setup_package(folder: Path, ask=default_ask, say=default_say, *, answers: di
     kept = [k for k, v in _example(folder).items() if k not in {q.key for q in questions if not q.advanced or all_fields}
             and not isinstance(v, str)]
     say(f"saved {short(folder / 'config.json')}" + (f"   ({', '.join(kept[:5])}{', ...' if len(kept) > 5 else ''} kept at their defaults; edit the file to change them)" if kept else ""))
-    # 4. the proof
+    # 5. the proof
     while True:
         say("checking ...")
         ok, text = probe(folder, cfg, sim)
@@ -579,6 +581,44 @@ def setup_package(folder: Path, ask=default_ask, say=default_say, *, answers: di
             break
         write_config(folder, cfg)
     return out
+
+
+def ask_identity(folder: Path, ask=default_ask, say=default_say) -> tuple[str, str]:
+    """The instrument's name and where it is: how people and agents tell two of the same kind apart. The
+    gateway lists it as <this PC's name>/<name>, and an agent's search reads the location ("the ÄKTA in
+    bay 3"). Enter keeps what the package has. Returns (id, location)."""
+    from .fleet import SAFE_ID
+    from .node_add import _frontmatter, set_identity
+    cur_id, cur_loc = _frontmatter(folder, "id"), _frontmatter(folder, "location")
+    taken = {_frontmatter(p.parent, "id") for p in folder.parent.glob("*/DEVICE.md") if p.parent != folder}
+    new_id = cur_id
+    while True:
+        try:
+            ans = ask("\nWhat does your lab call this instrument? A short name such as akta-bay3; agents and the "
+                      "gateway list it by this name", cur_id).strip().lower().replace(" ", "-")
+        except Unanswered:
+            break
+        ans = ans or cur_id
+        problem = ("use lower-case letters, digits, '.', '_' or '-', starting with a letter or digit"
+                   if not SAFE_ID.match(ans) or ".." in ans else
+                   f"another instrument on this PC is already called {ans}" if ans in taken else None)
+        if problem is None:
+            new_id = ans
+            break
+        say(f"  {problem}")
+        if ask is auto_ask:                         # no person to give another name
+            break
+    try:
+        new_loc = ask("Where is it? Room, bench or bay, such as: Bay 3, purification lab (Enter to leave it "
+                      + ("as it is)" if cur_loc else "blank)"), cur_loc or None).strip()
+    except Unanswered:
+        new_loc = cur_loc
+    new_loc = new_loc or cur_loc
+    if (new_id, new_loc) != (cur_id, cur_loc):
+        set_identity(folder, id=new_id if new_id != cur_id else None, location=new_loc if new_loc != cur_loc else None)
+        if new_id != cur_id and cur_id:
+            say(f"  renamed {cur_id} -> {new_id}")
+    return new_id, new_loc
 
 
 def parse_pair_line(text: str) -> tuple[str, str] | None:

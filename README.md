@@ -224,9 +224,11 @@ reach.
 
 Then pair each machine. Every code works once.
 
-- **For each instrument PC**, print a code (valid 15 minutes) and the line to paste there:
+- **For each instrument PC**, print a code (valid 15 minutes) and the line to paste there. Naming the PC
+  sets how agents and scientists see its instruments, here `purif-bay3/<instrument>`; without a name it
+  joins under its computer name:
   ```bash
-  mhp gateway pair
+  mhp gateway pair purif-bay3
   ```
 - **For each scientist**, print a code (valid 1 hour) and send it to them in chat. Naming them sets their
   folder on the gateway, so they type no name:
@@ -258,13 +260,24 @@ No agent is needed on it. Every ready-made package ships inside OpenMHP, so this
    ```bash
    mhp node add waters-empower-hplc
    ```
-   It asks only what a person knows and checks the answers against the instrument. If the lab has a
+   It asks what the lab calls the instrument (for example `akta-bay3`) and where it is (*Bay 3,
+   purification lab*), so a scientist can say *“use the ÄKTA in bay 3”* and the agent picks the right one.
+   Then it asks only what a person knows and checks the answers against the instrument. If the lab has a
    gateway, paste the line from `mhp gateway pair` when it asks. Its last question installs the background
    service, so the instrument stays served after a reboot.
 4. Check it:
    ```bash
    mhp status
    ```
+
+Two instruments of the same kind on one PC (UNICORN's System1 and System2, say) each need a name of their
+own. Add the second one under its own name:
+
+```bash
+mhp node add cytiva-akta-avant --as akta-2
+```
+
+`mhp node setup <name>` asks the questions again, including the name and the place.
 
 With Node instead of pip: `npx -y openmhp-cli@latest node add waters-empower-hplc`. For an instrument not on
 the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Guides:

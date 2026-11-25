@@ -81,6 +81,32 @@ def _frontmatter(folder: Path, key: str) -> str:
     return ""
 
 
+def set_identity(folder: Path, *, id: str | None = None, location: str | None = None) -> None:
+    """Rename the instrument and say where it is, in DEVICE.md's front matter: the two fields people and
+    agents tell instruments apart by. The gateway lists it as <this PC's name>/<id>; the location is part of
+    the card an agent's search reads ("the ÄKTA in bay 3")."""
+    import json
+    import re
+    from .fleet import safe_id
+    path = folder / "DEVICE.md"
+    text = path.read_text(encoding="utf-8")
+    if not text.startswith("---"):
+        raise ValueError(f"{path} has no front matter")
+    end = text.index("\n---", 3)
+    head, rest = text[:end], text[end:]
+    if id is not None:
+        safe_id(id)
+        head, n = re.subn(r"(?m)^id:.*$", f"id: {id}", head, count=1)
+        if not n:
+            raise ValueError(f"{path} has no id")
+    if location is not None:
+        line = f"location: {json.dumps(location.strip(), ensure_ascii=False)}"     # a JSON string is a YAML string
+        head, n = re.subn(r"(?m)^location:.*$", lambda m: line, head, count=1)
+        if not n:
+            head = re.sub(r"(?m)^(id:.*)$", lambda m: m.group(1) + "\n" + line, head, count=1)
+    path.write_text(head + rest, encoding="utf-8")
+
+
 def available() -> list[dict]:
     """Every package the registry knows, by name."""
     return sorted(registry.load(), key=lambda e: e.get("name", ""))
@@ -165,8 +191,14 @@ def pip_lines(folder: Path) -> list[str]:
     return out
 
 
-def add(name: str, dest_dir: Path | str | None = None, source: str | Path | None = None) -> dict:
-    """Install one package into ``dest_dir`` and return what happened and what to do next."""
+def add(name: str, dest_dir: Path | str | None = None, source: str | Path | None = None, as_id: str | None = None) -> dict:
+    """Install one package into ``dest_dir`` and return what happened and what to do next.
+
+    ``as_id`` installs it under that id and folder name instead: a second instrument of the same kind on
+    this PC (UNICORN's System2, a second balance) needs a name of its own."""
+    if as_id is not None:
+        from .fleet import safe_id
+        safe_id(as_id)
     dest_dir = Path(dest_dir or default_dir()).expanduser()
     source = str(source) if source is not None else None
     entry = None
@@ -175,12 +207,13 @@ def add(name: str, dest_dir: Path | str | None = None, source: str | Path | None
         target = entry["target"]
         if not str(target).startswith("github:"):
             raise ValueError(f"{name}: registry target {target!r} is not a github: target; use --from")
-    folder = dest_dir / name
+    folder = dest_dir / (as_id or name)
     if (folder / "DEVICE.md").exists():
+        hint = "" if as_id else f" For a second {name} on this PC, give it its own name:  mhp node add {name} --as <name>."
         raise FileExistsError(f"{folder} already holds a package. To replace it, move that folder away first "
-                              f"(its config.json is your lab's settings; keep a copy).")
+                              f"(its config.json is your lab's settings; keep a copy).{hint}")
     dest_dir.mkdir(parents=True, exist_ok=True)
-    staging = dest_dir / f".{name}.partial"
+    staging = dest_dir / f".{folder.name}.partial"
     if staging.exists():
         shutil.rmtree(staging)
     try:
@@ -206,6 +239,8 @@ def add(name: str, dest_dir: Path | str | None = None, source: str | Path | None
                 raise FileNotFoundError(f"no device package {name!r} under {source} (looked for DEVICE.md in {[str(c) for c in cand]})")
             shutil.copytree(src, staging, ignore=shutil.ignore_patterns("__pycache__", "config.json", ".git"))
             origin = str(src)
+        if as_id is not None:
+            set_identity(staging, id=as_id)
         staging.rename(folder)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
@@ -218,7 +253,7 @@ def add(name: str, dest_dir: Path | str | None = None, source: str | Path | None
     v = validate_path(str(folder))
     setup = next((p for p in (folder / "references" / "setup.md", folder / "SETUP.md") if p.is_file()), None)
     title = " ".join(x for x in (_frontmatter(folder, "make"), _frontmatter(folder, "model")) if x) or (entry or {}).get("model", "")
-    return {"name": name, "title": title, "folder": str(folder), "dir": str(dest_dir),
+    return {"name": folder.name, "package": name, "title": title, "folder": str(folder), "dir": str(dest_dir),
             "dir_is_default": dest_dir.resolve() == default_dir().expanduser().resolve(),
             "origin": origin, "config_created": made_config,
             "config": str(folder / "config.json") if (folder / "config.json").is_file() else None,
@@ -279,7 +314,7 @@ def say_available() -> str:
 
 
 def main(args: list[str], source: str | None = None, *, no_setup: bool = False, yes: bool = False, sets: list[str] | None = None,
-         all_fields: bool = False, no_pip: bool = False, base: int = 18900) -> int | str:
+         all_fields: bool = False, no_pip: bool = False, base: int = 18900, as_id: str | None = None) -> int | str:
     """``mhp node add``. Returns 0/1, or "serve:<dir>" when the person asked to serve in this window."""
     import sys
     if not args:
@@ -287,7 +322,7 @@ def main(args: list[str], source: str | None = None, *, no_setup: bool = False, 
         return 0
     name, dest = args[0], (args[1] if len(args) > 1 else None)
     try:
-        r = add(name, dest, source)
+        r = add(name, dest, source, as_id=as_id)
     except (LookupError, FileExistsError, FileNotFoundError, ValueError, OSError, tarfile.TarError) as e:
         print(f"could not add {name}: {e}", file=sys.stderr)
         return 1
