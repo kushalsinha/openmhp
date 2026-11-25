@@ -199,6 +199,10 @@ def test_no_terminal_and_an_instrument_that_does_not_answer_saves_and_stops_aski
 
 def test_finish_pairs_with_the_gateway_and_installs_the_service():
     from openmhp import relay, service
+    import socket
+    with socket.socket() as sock:                       # a free port: 18900 may be serving on the machine running this
+        sock.bind(("127.0.0.1", 0))
+        base = sock.getsockname()[1]
     with tempfile.TemporaryDirectory() as td:
         root = pathlib.Path(td)
         folder = _copy("ika-c-mag-hs7", root)                                       # no config needed, so nothing blocks serving
@@ -210,32 +214,38 @@ def test_finish_pairs_with_the_gateway_and_installs_the_service():
                                          restart=lambda r, b: {"ok": True})
         real_load = relay.load_node_config; relay.load_node_config = lambda: None
         try:
-            s = Script("nonsense", "https://gw.lab.local ab12-cd34", "y")
-            out = NS.finish(root, 18900, s.ask, s.say, joiner=joiner, svc=fake_svc, load=lambda folders: {"ika-c-mag-hs7-01": object()})
+            s = Script("nonsense", "https://gw.lab.local ab12-cd34")                   # no question about the service
+            out = NS.finish(root, base, s.ask, s.say, joiner=joiner, svc=fake_svc, load=lambda folders: {"ika-c-mag-hs7-01": object()})
         finally:
             relay.load_node_config = real_load
-        assert joins == [("https://gw.lab.local", "ab12-cd34", ["ika-c-mag-hs7-01"], joins[0][3])] and joins[0][3]
+        assert joins == [("https://gw.lab.local", "ab12-cd34", ["ika-c-mag-hs7-01"], joins[0][3])] and joins[0][3], (joins, s.said)
         assert s.asked("not an address and a code") and s.heard("paired with https://gw.lab.local")
-        assert installs == [(root, 18900)] and out["service"]["ok"] and out["serve"] is False
-        assert s.heard("installed; running now.", "through the gateway")
-        # already paired, service installed: restart; and "no" to the service means serve here
+        assert installs == [(root, base)] and out["service"]["ok"] and out["serve"] is False
+        assert s.heard("serving in the background", "running now.", "through the gateway")
+        assert not s.asked("background") and not s.asked("Restart")
+        # already paired, service installed: restarted without asking
         restarts = []
         fake_svc2 = types.SimpleNamespace(status=lambda: {"installed": True}, install=lambda r, b: None,
                                           restart=lambda r, b: (restarts.append((r, b)), {"ok": True})[1])
         relay.load_node_config = lambda: {"gateway": "https://gw.lab.local", "name": "bench-3"}
         try:
-            s = Script("y")
-            out = NS.finish(root, 18900, s.ask, s.say, joiner=joiner, svc=fake_svc2)
-            assert restarts == [(root, 18900)] and s.heard("paired with https://gw.lab.local as 'bench-3'") and not out["serve"]
-            s = Script("n")
-            out = NS.finish(root, 18900, s.ask, s.say, joiner=joiner, svc=fake_svc)
-            assert out["serve"] is True
+            s = Script()
+            out = NS.finish(root, base, s.ask, s.say, joiner=joiner, svc=fake_svc2)
+            assert restarts == [(root, base)] and s.heard("paired with https://gw.lab.local as 'bench-3'") and not out["serve"]
+            assert s.heard("restarted the background service") and not s.prompts
+            # the service cannot be installed: say why and how to serve by hand; never take over the window
+            broken = types.SimpleNamespace(status=lambda: {"installed": False}, restart=lambda r, b: None,
+                                           install=lambda r, b: {"ok": False, "error": "no Startup folder"})
+            s = Script()
+            out = NS.finish(root, base, s.ask, s.say, joiner=joiner, svc=broken)
+            assert out["serve"] is False and s.heard("could not set up the background service: no Startup folder")
+            assert s.heard("mhp node")
         finally:
             relay.load_node_config = real_load
         # a package that is not set up stops the flow before the gateway is mentioned
         _copy("globalfia-flopro-sampler", root)
         s = Script()
-        out = NS.finish(root, 18900, s.ask, s.say, joiner=joiner, svc=fake_svc)
+        out = NS.finish(root, base, s.ask, s.say, joiner=joiner, svc=fake_svc)
         assert not out["serve"] and s.heard("not serving yet") and s.heard("mhp node setup globalfia-flopro-sampler") and not s.prompts
         assert NS.parse_pair_line("ab12-cd34 https://gw.lab.local/") == ("https://gw.lab.local", "ab12-cd34")
         assert NS.parse_pair_line("https://gw.lab.local") is None
@@ -253,13 +263,17 @@ def test_cli_setup_with_yes_and_set_asks_nothing_and_check_then_passes():
         r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 1 and "port still need an answer" in r.stderr and "--set" in r.stderr, r.stderr
         assert not (folder / "config.json").exists() or json.loads((folder / "config.json").read_text())["port"] == "COM21"
-        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip", "--set", "port=COM4"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
+        import socket
+        with socket.socket() as sock:                   # a free port: 18900 may be serving on the machine running this
+            sock.bind(("127.0.0.1", 0))
+            free = str(sock.getsockname()[1])
+        r = subprocess.run([*cli, "setup", "globalfia-flopro-sampler", "--yes", "--no-pip", "--set", "port=COM4", "--http", free], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 0, r.stderr
         installed = list((pathlib.Path(td) / "services").glob("*.service"))   # "installed", into this test's own folder
         assert [p.name for p in installed] == ["openmhp-node.service"], (installed, r.stderr)
         assert json.loads((folder / "config.json").read_text())["port"] == "COM4" and "saved" in r.stderr, r.stderr
         assert "pip install -U pyserial" in r.stderr, r.stderr                               # --no-pip: named, not run
-        r = subprocess.run([*cli, "--check"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
+        r = subprocess.run([*cli, "--check", "--http", free], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 0 and "ready to serve" in r.stderr, r.stderr
         r = subprocess.run([*cli, "setup", "nope"], capture_output=True, text=True, env=env, cwd=td, stdin=subprocess.DEVNULL, timeout=120)
         assert r.returncode == 1 and "no package named nope" in r.stderr

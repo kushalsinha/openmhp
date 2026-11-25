@@ -97,6 +97,7 @@ def test_only_real_gateway_processes_count():
     assert S.is_openmhp_command(["/home/mhp/.venv/bin/python3.12", "/home/mhp/.venv/bin/mhp", "gateway", "serve"], v)
     assert S.is_openmhp_command(["python3", "-m", "openmhp.cli", "gateway", "serve"], v)
     assert S.is_openmhp_command(["C:\\Py\\Scripts\\mhp.exe", "gateway", "serve"], v)
+    assert S.is_openmhp_command(["C:\\Py\\pythonw.exe", "-m", "openmhp.cli", "gateway", "serve"], v)
     assert not S.is_openmhp_command(["grep", "--color=auto", "gateway", "serve"], v)
     assert not S.is_openmhp_command(["grep", "gateway serve"], v)
     assert not S.is_openmhp_command(["mhp", "gateway", "status"], v)
@@ -117,6 +118,8 @@ def test_the_python_a_service_starts():
         "plist": ("<key>ProgramArguments</key>\n  <array>\n      <string>/opt/v/bin/python</string>\n", "/opt/v/bin/python"),
         "bat": ('@echo off\r\nstart "" /min "C:\\Program Files\\Py\\python.exe" -m openmhp.cli gateway serve\r\n',
                 "C:\\Program Files\\Py\\python.exe"),
+        "batw": ('@echo off\r\nstart "" "C:\\Program Files\\Py\\pythonw.exe" -m openmhp.cli gateway serve\r\n',
+                 "C:\\Program Files\\Py\\python.exe"),          # the windowless twin reports the python beside it
     }
     real = S.target_path
     try:

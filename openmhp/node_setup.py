@@ -644,32 +644,19 @@ def finish(root: Path, base: int, ask=default_ask, say=default_say, *, host: str
             break
         if not out["joined"]:
             say("  (later:  mhp node" + ("" if root == _default_dir() else f" {short(root)}") + " --join https://<gateway>:<port> <code>)")
-    # the service
+    # the service: an instrument PC serves in the background, now and after every restart; the prompt comes back
     st = svc.status()
-    if st.get("installed"):
-        try:
-            go = _yes(ask("\nA background service already runs mhp node on this PC. Restart it so it picks up the new instrument? [Y/n]", "y"))
-        except Unanswered:
-            go = True
-        if go:
-            r = svc.restart(root, base)
-            out["service"] = r
-            say("restarted; the service serves the new instrument now." if r.get("ok") else f"could not restart the service: {r.get('error') or r.get('steps')}")
-            return out
+    r = svc.restart(root, base) if st.get("installed") else svc.install(root, base)
+    out["service"] = r
+    if r.get("ok"):
+        say(("restarted the background service; it serves the new instrument now. " if st.get("installed") else
+             "serving in the background: ") + (r.get("note") or "running now, and after every restart.")
+            + (" Agents can find this PC's instruments through the gateway." if out["joined"] else ""))
+        say("  mhp node --service-status  says how it is doing;  mhp status  checks everything;"
+            "  mhp node --uninstall-service  stops it for good")
     else:
-        try:
-            go = _yes(ask("\nRun in the background from now on, also after reboots? [Y/n]", "y"))
-        except Unanswered:
-            go = False
-        if go:
-            r = svc.install(root, base)
-            out["service"] = r
-            if r.get("ok"):
-                say(f"installed; {r.get('note', 'running')}" + (" Agents can find this PC's instruments through the gateway now." if out["joined"] else ""))
-                say("  (mhp node --service-status  says how it is doing;  mhp node --uninstall-service  removes it)")
-                return out
-            say(f"could not install the service: {r.get('error') or '; '.join(r.get('steps', []))}. Serving in this window instead.")
-    out["serve"] = True
+        say(f"could not set up the background service: {r.get('error') or '; '.join(r.get('steps', []))}")
+        say("  to serve from this window instead (Ctrl+C stops it):  mhp node" + ("" if root == _default_dir() else f" {short(root)}"))
     return out
 
 
@@ -691,7 +678,7 @@ def interactive(yes: bool = False, no_setup: bool = False) -> bool:
 
 def run(folders: list[Path], root: Path, base: int, *, yes: bool = False, sets: list[str] | None = None, all_fields: bool = False,
         no_pip: bool = False, ask=None, say=default_say, **kw) -> int | str:
-    """Set up each folder, then finish. Returns 0, 1, or 'serve:<dir>' when the node should start in this window."""
+    """Set up each folder, then finish: the background service serves them. Returns 0 once it does, else 1."""
     answers = {}
     for s in sets or []:
         k, _, v = s.partition("=")
@@ -709,7 +696,7 @@ def run(folders: list[Path], root: Path, base: int, *, yes: bool = False, sets: 
     except KeyboardInterrupt:
         say("\nstopped. Run  mhp node setup  to continue later.")
         return 1
-    return f"serve:{root}" if fin["serve"] and ask is not auto_ask else 0
+    return 0 if (fin.get("service") or {}).get("ok") else 1
 
 
 def main(args: list[str], root: Path | None = None, base: int = 18900, **opts) -> int | str:
