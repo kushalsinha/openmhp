@@ -802,7 +802,7 @@ class Bridge:
                     "next": ("The lab is empty. Ask the user whether their instruments already have an OpenMHP address (then op='scan' "
                              "or op='add'), whether a community package exists (op='registry'), or whether to onboard one by interview "
                              "(op='onboard'). Offer op='scan' first; it is free. To try without hardware: op='add' target=<bundled package> sim=true "
-                             "or `npx -y openmhp-cli@latest demo`.")
+                             "or `mhp lab demo`.")
                             if n == 0 else
                             ("Lab has %d device(s); mhp_find searches them. Recipes: op='recipes'. To add more: op='scan', op='registry', "
                              "or op='onboard' for an instrument with no OpenMHP address yet." % n)}

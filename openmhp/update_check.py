@@ -115,12 +115,25 @@ def watch(on_newer, every_s: float = 3600, stop: threading.Event | None = None) 
 
 
 def installed_by_npx() -> bool:
+    """True for the runtime the npm package keeps in ~/.openmhp/venv (started by npx or a global install)."""
     return Path(sys.prefix).resolve() == (home() / "venv").resolve()
 
 
+def launcher_kind() -> str:
+    """How the npm package was last started here: "npm" (`npm install -g openmhp-cli`, which puts `mhp` on
+    PATH) or "npx". The launcher writes ~/.openmhp/launcher; without it, npx."""
+    try:
+        kind = (home() / "launcher").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "npx"
+    return kind if kind in ("npm", "npx") else "npx"
+
+
 def upgrade_command() -> str:
-    """The command that upgrades THIS install: the npx launcher's venv, or whatever pip put it in."""
+    """The command that upgrades THIS install: the npm package's runtime, or whatever pip put it in."""
     if installed_by_npx():
+        if launcher_kind() == "npm":
+            return "npm install -g openmhp-cli@latest && openmhp update"
         return "npx -y openmhp-cli@latest update"
     return 'pip install -U "openmhp[all]" && mhp skills install'
 
@@ -136,9 +149,14 @@ def node_upgrade_command(folder: str | Path, as_service: bool, python: str | Non
     so the update lands where the node actually runs."""
     f = str(folder) if str(folder).startswith("<") else _q(Path(folder).expanduser().resolve())
     exe = Path(python or sys.executable)
-    if exe.resolve().parent == (home() / "venv" / ("Scripts" if os.name == "nt" else "bin")).resolve():
+    # the folder, not the file: a venv's python is a symlink to the interpreter it was made from
+    if exe.absolute().parent.resolve() == (home() / "venv" / ("Scripts" if os.name == "nt" else "bin")).resolve():
+        if launcher_kind() == "npm":
+            return (f"npm install -g openmhp-cli@latest && mhp node {f} --install-service" if as_service
+                    else f"npm install -g openmhp-cli@latest, then start `mhp node {f}` again")
         return f"npx -y openmhp-cli@latest node {f}"
-    on_path = all((w := shutil.which(t)) and Path(w).resolve().parent == exe.resolve().parent for t in ("pip", "mhp"))
+    here = exe.absolute().parent.resolve()
+    on_path = all((w := shutil.which(t)) and Path(w).absolute().parent.resolve() == here for t in ("pip", "mhp"))
     pip, mhp = ("pip", "mhp") if on_path else (f"{_q(exe)} -m pip", f"{_q(exe)} -m openmhp.cli")
     if as_service:
         return f'{pip} install -U "openmhp[node]" && {mhp} node {f} --install-service'

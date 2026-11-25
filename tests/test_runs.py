@@ -268,6 +268,20 @@ def test_update_notice_reaches_the_agent_once():
     assert "elsewhere" in other and '-m pip install -U "openmhp[node]"' in other and other.endswith("--install-service")
     assert "start `" in U.node_upgrade_command("/lab/devices", False, python=os.path.join(tempfile.gettempdir(), "x", "python"))
     assert U.node_upgrade_command("<devices folder>", True).count("<devices folder>") == 1
+    if os.name != "nt":            # a venv's python is a symlink to the interpreter it was made from: still the venv
+        npx_py.parent.mkdir(parents=True, exist_ok=True)
+        if not npx_py.exists():
+            npx_py.symlink_to(sys.executable)
+        assert U.node_upgrade_command("/lab/devices", True, python=str(npx_py)).startswith("npx -y openmhp-cli@latest node")
+    # `npm install -g openmhp-cli` puts `mhp` on PATH: its hints use it, and say to update the npm package first
+    (U.home() / "launcher").write_text("npm\n", encoding="utf-8")
+    try:
+        assert U.node_upgrade_command("/lab/devices", True, python=str(npx_py)) == \
+            "npm install -g openmhp-cli@latest && mhp node /lab/devices --install-service"
+        assert U.launcher_kind() == "npm"
+    finally:
+        (U.home() / "launcher").unlink()
+    assert U.launcher_kind() == "npx"
 
     os.environ["OPENMHP_NO_UPDATE_CHECK"] = "1"
     try:

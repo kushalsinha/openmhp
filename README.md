@@ -53,64 +53,53 @@ hardwired e-stops, PLC safety logic, and lab procedures; it does not replace the
 
 ## Try it in five minutes
 
-No hardware needed. You need Python 3.10+ and an agent such as Claude Code or Codex. Install one of two
-ways; both give the same result.
+No hardware needed. You need Python 3.10+ and an agent such as Claude Code or Codex.
 
-**With pip** (Python only):
+1. Install OpenMHP, one of two ways. Both give the same `mhp` commands, so every command below and in
+   the guides works either way.
 
-```bash
-pip install -U "openmhp[all]"
-```
+   With pip:
+   ```bash
+   pip install -U "openmhp[all]"
+   ```
+   Or with npm (Node.js 18+; it keeps its own Python environment in `~/.openmhp`):
+   ```bash
+   npm install -g openmhp-cli
+   ```
+   If your shell then says `mhp: command not found` after pip, pip installed into a different Python than
+   the one on your PATH. Install with `python3 -m pip install -U "openmhp[all]"` instead; with pyenv, run
+   `pyenv rehash` afterwards. If pip refuses with `externally-managed-environment` (Homebrew or system
+   Python), use [pipx](https://pipx.pypa.io): `pipx install "openmhp[all]"`, or use npm.
+2. Install the Agent Skills into the harnesses on this machine:
+   ```bash
+   mhp skills install
+   ```
+3. Register the MCP server with your agent. For Claude Code:
+   ```bash
+   claude mcp add --scope user openmhp -- mhp-mcp
+   ```
+   Any other harness takes `{"mcpServers": {"openmhp": {"command": "mhp-mcp"}}}`.
+4. Add two simulated instruments, a thermocycler and a plate-handling arm:
+   ```bash
+   mhp lab demo
+   ```
+5. Restart your agent and ask:
+   ```text
+   Find a thermocycler, show me its operating instructions, and rehearse a
+   3-cycle PCR at 95/58/72 °C before running it.
+   ```
+   Ask for a 200 °C setpoint too: the driver refuses it and returns the allowed range.
 
-```bash
-mhp skills install
-```
-
-If your shell then says `mhp: command not found`, pip installed into a different Python than the one on
-your PATH. Install with `python3 -m pip install -U "openmhp[all]"` instead; with pyenv, run `pyenv rehash`
-afterwards. If pip refuses with `externally-managed-environment` (Homebrew or system Python), use
-[pipx](https://pipx.pypa.io): `pipx install "openmhp[all]"`.
-
-Register the MCP server with your agent. For Claude Code:
-
-```bash
-claude mcp add --scope user openmhp -- mhp-mcp
-```
-
-Any other harness takes `{"mcpServers": {"openmhp": {"command": "mhp-mcp"}}}`. Then add two simulated
-instruments, a thermocycler and a plate-handling arm:
-
-```bash
-mhp lab demo
-```
-
-**With npx** (needs Node.js 18+ as well): one command installs everything and registers the MCP server with
-Claude Code and Codex.
-
-```bash
-npx -y openmhp-cli@latest setup
-```
-
-```bash
-npx -y openmhp-cli@latest demo
-```
-
-**Then restart your agent and ask:**
-
-```text
-Find a thermocycler, show me its operating instructions, and rehearse a
-3-cycle PCR at 95/58/72 °C before running it.
-```
-
-Ask for a 200 °C setpoint too: the driver refuses it and returns the allowed range. To check the install
-at any time:
+To check the install at any time:
 
 ```bash
 mhp status
 ```
 
-(With npx: `npx -y openmhp-cli@latest mhp status`.) It shows each part of this machine's setup, its state, and
-the exact command for anything that needs doing.
+It shows each part of this machine's setup, its state, and the exact command for anything that needs doing.
+
+Rather not install anything? `npx -y openmhp-cli@latest setup` does steps 2 and 3 (for Claude Code and
+Codex), and `npx -y openmhp-cli@latest mhp <command>` runs any `mhp` command.
 
 ## What you can ask for
 
@@ -185,10 +174,9 @@ You need the gateway when the lab network is closed to the outside (instrument P
 is opened inbound), or when scientists hand whole experiments to the lab. On an open lab network, agent
 machines find instrument PCs directly.
 
-Two rules avoid most surprises: start npx as `npx -y openmhp-cli@latest`, and pip as `pip install -U`.
-Plain `npx openmhp-cli` reuses whatever version npx cached the first time, and plain `pip install` keeps
-whatever version is already installed. Installed with npx, run each `mhp ...` command below as
-`npx -y openmhp-cli@latest mhp ...`: the launcher keeps its own copy and does not put `mhp` on your PATH.
+Install each machine with `pip install -U ...` or `npm install -g openmhp-cli`; every `mhp` command below
+is the same either way. Always give pip the `-U`: plain `pip install` keeps whatever version is already
+installed.
 
 ### 1. Lab gateway (the operator, once)
 
@@ -246,9 +234,13 @@ Guide: [Gateway and relay](https://openmhp.com/gateway).
 
 No agent is needed on it. Every ready-made package ships inside OpenMHP, so this needs no web or git access.
 
-1. Install OpenMHP:
+1. Install OpenMHP, with pip:
    ```bash
    pip install -U "openmhp[node]"
+   ```
+   or with npm:
+   ```bash
+   npm install -g openmhp-cli
    ```
 2. List the ready-made packages:
    ```bash
@@ -266,22 +258,17 @@ No agent is needed on it. Every ready-made package ships inside OpenMHP, so this
    mhp status
    ```
 
-With Node instead of pip: `npx -y openmhp-cli@latest node add waters-empower-hplc`. For an instrument not on
-the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Guides:
+For an instrument not on the list, tell your agent *“Onboard my IKA hotplate. I have the manual.”* Guides:
 [Add an instrument](https://openmhp.com/add-a-device), [Lab nodes](https://openmhp.com/lab-nodes).
 
 ### 3. Scientist's machine (once per scientist)
 
-1. Install OpenMHP as in [Try it in five minutes](#try-it-in-five-minutes) (pip, `mhp skills install` and
-   the MCP server; or `npx -y openmhp-cli@latest setup`).
+1. Install OpenMHP, the skills and the MCP server: steps 1 to 3 of
+   [Try it in five minutes](#try-it-in-five-minutes).
 2. Join the lab gateway with the code the operator sent. Use the gateway's address with its port, as
    `mhp gateway status` prints it:
    ```bash
    mhp agent --join https://gw.office:8443 <code>
-   ```
-   Installed with npx:
-   ```bash
-   npx -y openmhp-cli@latest join https://gw.office:8443 <code>
    ```
    It shows the gateway's certificate fingerprint. **Stop if it differs from what the operator's
    `pair-agent` printed.** If the operator ran `pair-agent` without a name, add `--name alice`: the name
@@ -345,16 +332,16 @@ The story behind it: [Experiment flow](https://openmhp.com/experiment-flow).
 
 ### Updating
 
-On an agent machine:
+On an agent machine, installed with pip:
 
 ```bash
 pip install -U "openmhp[all]" && mhp skills install
 ```
 
-Installed with npx:
+Installed with npm:
 
 ```bash
-npx -y openmhp-cli@latest update
+npm install -g openmhp-cli@latest && openmhp update
 ```
 
 Then restart the agent. Instrument PCs never update themselves; see

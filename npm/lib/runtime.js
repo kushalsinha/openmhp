@@ -11,7 +11,8 @@ const path = require("path");
 const HOME = process.env.OPENMHP_HOME || path.join(os.homedir(), ".openmhp");
 const VENV = path.join(HOME, "venv");
 const BIN = path.join(VENV, process.platform === "win32" ? "Scripts" : "bin");
-const SOURCE = process.env.OPENMHP_SOURCE || "openmhp[discovery]";   // PyPI name, or a path / git URL
+const SOURCE = process.env.OPENMHP_SOURCE || "openmhp[all]";   // PyPI name, or a path / git URL; [all] serves an
+                                                                // agent machine and an instrument PC alike
 const log = (...a) => console.error("[openmhp]", ...a);
 
 function findPython() {
@@ -119,6 +120,30 @@ function mirrorBehind(got) {
   log("");
 }
 
+// How this launcher was started: `npx ...` (a copy in npx's cache) or `npm install -g` (a command on PATH).
+// Written to ~/.openmhp/launcher so the Python side can print the update command that fits this install.
+const KIND = /[\\/]_npx[\\/]/.test(__dirname) ? "npx" : "npm";
+function recordKind() {
+  try {
+    const f = path.join(HOME, "launcher");
+    if (!fs.existsSync(f) || fs.readFileSync(f, "utf8").trim() !== KIND) {
+      fs.mkdirSync(HOME, { recursive: true });
+      fs.writeFileSync(f, KIND + "\n");
+    }
+  } catch { /* read-only home: the Python side then assumes npx */ }
+}
+
+// `mhp` and `mhp-mcp` installed by `npm install -g openmhp-cli`: the same commands a pip install gives,
+// forwarded to the runtime in ~/.openmhp/venv, which is installed or brought up to date first.
+function forward(cmd) {
+  ensureRuntime();
+  recordKind();
+  const child = spawn(tool(cmd), process.argv.slice(2), { stdio: "inherit" });
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { try { child.kill(sig); } catch { /* gone */ } });
+  child.on("error", (e) => { log(`could not start ${tool(cmd)}: ${e.message}`); process.exit(1); });
+  child.on("exit", (code, sig) => process.exit(code ?? (sig ? 1 : 0)));
+}
+
 function run(cmd, args, opts = {}) {
   const r = spawnSync(tool(cmd), args, { stdio: "inherit", ...opts });
   return r.status ?? 1;
@@ -128,4 +153,4 @@ function spawnBg(cmd, args, opts = {}) {
   return spawn(tool(cmd), args, { stdio: "inherit", ...opts });
 }
 
-module.exports = { HOME, VENV, BIN, SOURCE, log, findPython, ensureRuntime, run, spawnBg, tool };
+module.exports = { HOME, VENV, BIN, SOURCE, KIND, log, findPython, ensureRuntime, recordKind, forward, run, spawnBg, tool };
